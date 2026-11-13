@@ -13,6 +13,7 @@ pub mod controller;
 pub mod hot;
 pub mod lifecycle;
 pub mod lock;
+pub mod pick;
 pub mod rt;
 pub mod store;
 pub mod telemetry;

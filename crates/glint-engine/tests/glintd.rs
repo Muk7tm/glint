@@ -607,3 +607,91 @@ fn hotkeys_start_stop_and_sample() {
     physical_key(&keys, keyboard, f7, false);
     assert!(!started(&mut c));
 }
+
+/// The next event `want` picks out, skipping others (at most 5 s).
+fn wait_event<T>(c: &mut Client, mut want: impl FnMut(Event) -> Option<T>) -> T {
+    let deadline = Instant::now() + WAIT;
+    while Instant::now() < deadline {
+        if let Some(t) = want(c.next_event(WAIT).unwrap().body) {
+            return t;
+        }
+    }
+    panic!("the event never came");
+}
+
+#[test]
+fn picking_a_color_with_the_mouse() {
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let Some(engine) = Engine::start() else { return };
+    let screen = Screen::open(&engine.x);
+    screen.show(true); // green at (300, 220)–(340, 260)
+    let mut c = engine.client();
+    assert!(matches!(c.call(Request::PickColor, WAIT).unwrap(), Event::PickStarted));
+
+    // The pointer moves over the green: a magnifier frame with the green at its center.
+    let x = conn::open(engine.x.display()).unwrap();
+    let root = x.setup().roots[0].root;
+    x.xtest_fake_input(6, 0, 0, root, 320, 240, 0).unwrap(); // MotionNotify, absolute
+    x.sync().unwrap();
+    let (size, pixels, center) = wait_event(&mut c, |e| match e {
+        Event::Magnifier { size, pixels, center } => Some((size, pixels, center)),
+        _ => None,
+    });
+    assert_eq!((size, pixels.len(), center), (11, 121, Rgb::from_u32(GREEN)));
+    // Near the square's edge, the frame shows both sides of it.
+    x.xtest_fake_input(6, 0, 0, root, 300, 240, 0).unwrap();
+    x.sync().unwrap();
+    let pixels = wait_event(&mut c, |e| match e {
+        Event::Magnifier { pixels, .. } => Some(pixels),
+        _ => None,
+    });
+    assert!(pixels.contains(&Rgb::from_u32(GREEN)) && pixels.contains(&Rgb::from_u32(0x10_10_10)));
+
+    // A left click picks the color under the pointer, and lets the pointer go.
+    x.xtest_fake_input(6, 0, 0, root, 330, 250, 0).unwrap();
+    x.xtest_fake_input(4, 1, 0, root, 0, 0, 0).unwrap();
+    x.xtest_fake_input(5, 1, 0, root, 0, 0, 0).unwrap();
+    x.sync().unwrap();
+    let rgb = wait_event(&mut c, |e| match e {
+        Event::ColorPicked { rgb, .. } => Some(rgb),
+        _ => None,
+    });
+    assert_eq!(rgb, Rgb::from_u32(GREEN));
+
+    // A pick over the click-counting window: the click goes to the engine's grab, not to it.
+    assert!(matches!(c.call(Request::PickColor, WAIT).unwrap(), Event::PickStarted));
+    x.xtest_fake_input(6, 0, 0, root, 100, 100, 0).unwrap();
+    x.xtest_fake_input(4, 1, 0, root, 0, 0, 0).unwrap();
+    x.xtest_fake_input(5, 1, 0, root, 0, 0, 0).unwrap();
+    x.sync().unwrap();
+    let rgb = wait_event(&mut c, |e| match e {
+        Event::ColorPicked { rgb, .. } => Some(rgb),
+        _ => None,
+    });
+    assert_eq!(rgb, Rgb::from_u32(0x10_10_10));
+    assert_eq!(screen.presses(100), (0, 0));
+
+    // Picking again works; a right click cancels, and so does a request.
+    assert!(matches!(c.call(Request::PickColor, WAIT).unwrap(), Event::PickStarted));
+    x.xtest_fake_input(4, 3, 0, root, 0, 0, 0).unwrap();
+    x.xtest_fake_input(5, 3, 0, root, 0, 0, 0).unwrap();
+    x.sync().unwrap();
+    wait_event(&mut c, |e| matches!(e, Event::PickCancelled).then_some(()));
+    assert!(matches!(c.call(Request::PickColor, WAIT).unwrap(), Event::PickStarted));
+    assert!(matches!(
+        c.call(Request::CancelPick, WAIT).unwrap(),
+        Event::PickCancelled
+    ));
+    // The pointer is free: clicks reach the window again.
+    x.xtest_fake_input(4, 1, 0, root, 0, 0, 0).unwrap();
+    x.xtest_fake_input(5, 1, 0, root, 0, 0, 0).unwrap();
+    x.sync().unwrap();
+    assert_eq!(screen.wait_for((1, 1)), (1, 1));
+    // No picking while watching.
+    let mut p = green_profile();
+    p.name = "Green".into();
+    c.call(Request::SetProfile { profile: Box::new(p) }, WAIT).unwrap();
+    screen.show(false);
+    c.call(Request::Start, WAIT).unwrap();
+    assert!(matches!(c.call(Request::PickColor, WAIT).unwrap(), Event::Error { .. }));
+}

@@ -193,12 +193,24 @@ impl App {
                 }
             }
             Event::Error { message, .. } => {
+                self.set_picking(false);
                 self.toast(&message, Tone::Error);
                 // What the window sent was refused: show what the engine really has.
                 self.link.send(Request::GetProfile { name: None });
                 self.link.send(Request::GetSettings);
             }
             Event::Warning { message, .. } => self.toast(&message, Tone::Warning),
+            Event::PickStarted => self.set_picking(true),
+            Event::Magnifier { size, pixels, .. } => self.magnifier(size, &pixels),
+            Event::ColorPicked { rgb, .. } => {
+                self.set_picking(false);
+                self.set_color(rgb);
+            }
+            Event::PickCancelled => self.set_picking(false),
+            Event::ColorSampled { rgb, .. } => {
+                self.set_color(rgb);
+                self.toast(&format!("Sampled {rgb} at the watched spot."), Tone::Neutral);
+            }
             _ => {}
         }
     }
@@ -350,6 +362,61 @@ impl App {
             settings: Box::new(settings.clone()),
         });
         self.settings = settings;
+        self.refresh();
+    }
+}
+
+impl App {
+    /// *Pick*: the engine grabs the pointer and streams the magnifier.
+    pub fn pick_color(&mut self) {
+        if self.state.started {
+            return self.toast("Stop watching to pick a color.", Tone::Warning);
+        }
+        self.link.send(Request::PickColor);
+    }
+
+    pub fn cancel_pick(&mut self) {
+        self.link.send(Request::CancelPick);
+    }
+
+    fn set_picking(&self, on: bool) {
+        if let Some(ui) = self.ui.upgrade() {
+            let form = ui.global::<Form>();
+            form.set_picking_color(on);
+            if !on {
+                form.set_magnifier_ready(false);
+            }
+        }
+    }
+
+    fn magnifier(&self, size: u16, pixels: &[Rgb]) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let n = u32::from(size);
+        if pixels.len() != (n * n) as usize {
+            return;
+        }
+        let mut buffer = slint::SharedPixelBuffer::<slint::Rgb8Pixel>::new(n, n);
+        for (out, rgb) in buffer.make_mut_slice().iter_mut().zip(pixels) {
+            *out = slint::Rgb8Pixel::new(rgb.r(), rgb.g(), rgb.b());
+        }
+        let form = ui.global::<Form>();
+        form.set_magnifier(slint::Image::from_rgb8(buffer));
+        form.set_magnifier_ready(true);
+    }
+
+    /// Makes `rgb` the color to watch for, with the shades chosen now.
+    fn set_color(&mut self, rgb: Rgb) {
+        let preset = bind::shade_preset(self.shown.shades);
+        let mut profile = self.profile.clone();
+        let entry = preset.entry(profile.color.model, rgb);
+        match profile.color.include.first_mut() {
+            Some(first) => *first = entry,
+            None => profile.color.include.push(entry),
+        }
+        self.link.send(Request::SetProfile {
+            profile: Box::new(profile.clone()),
+        });
+        self.profile = profile;
         self.refresh();
     }
 }

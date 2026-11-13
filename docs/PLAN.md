@@ -550,7 +550,7 @@ Hotkeys live in the engine, so they keep working with the UI closed, which is wh
 | `get_settings` | — | `settings {settings}` (added in Phase 4 for the UI's hotkey and close-policy rows) |
 | `start` · `stop` · `toggle` · `emergency_stop` · `release_all` | — | `state` |
 | `pick_window` | — | `pick_started`, then `window_picked` or `pick_cancelled` |
-| `pick_color` | — | `pick_started`, `magnifier` frames, then `color_picked` or `pick_cancelled` |
+| `pick_color` | — | `pick_started`, `magnifier` frames, then `color_picked` or `pick_cancelled` (the engine grabs the pointer with a crosshair; Escape or another button cancels; refused while watching) |
 | `cancel_pick` | — | `pick_cancelled` |
 | `sample_center` | — | `color_sampled {rgb, oklch}` |
 | `record_palette` | `ms` | `palette {entries}` |
@@ -568,7 +568,7 @@ Hotkeys live in the engine, so they keep working with the UI closed, which is wh
 | `live` | The color at the watched spot right now and its verdict |
 | `fired` | Click count and engine-side latency (coalesced to at most 20 per second) |
 | `trace` | Only with `subscribe {trace}`, never coalesced, times in `CLOCK_MONOTONIC` ns: `fired` (check requested, pixels back, decided, press written), `maybe_missed`, `blind` (no check for longer than the check gap), `stopped` (self-stop and cause). For `glint-lab`'s report (ADR 0010) |
-| `magnifier` | Width, height, RGBA pixels (base64) and the center color |
+| `magnifier` | `size` (11), the `size` × `size` pixels around the pointer as hex colors, row by row, and the `center` color (Phase 4; at most about 30 per second) |
 | `warning` · `error` | Stable `code`, human-readable message, optional `field` |
 
 **Rates and backpressure.** Telemetry is sent at most 10 times a second and the live swatch at most 20 times a second, and only while a UI is subscribed and visible. Each client has an outbound queue of 256 messages; when it fills, the oldest telemetry and live messages are dropped, and the controller never blocks. The hot thread is three hops away from any socket (ring → telemetry thread → controller), so no client can ever slow it down.

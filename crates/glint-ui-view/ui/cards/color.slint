@@ -2,9 +2,9 @@
 // COLOR (PLAN §12.3): what to watch for, and the live swatch of what the engine sees.
 
 import { Theme } from "../pulse/theme.slint";
-import { PButton, Card, Note, Segmented, FieldRow } from "../pulse/components.slint";
+import { PButton, ButtonKind, Card, Note, Segmented, FieldRow } from "../pulse/components.slint";
 import { Form, Actions } from "../state.slint";
-import { Swatch, ColorValue } from "../widgets.slint";
+import { Swatch, ColorValue, Magnifier } from "../widgets.slint";
 
 export component ColorCard inherits Card {
     title: "COLOR";
@@ -17,10 +17,46 @@ export component ColorCard inherits Card {
         }
 
         PButton {
-            text: "Pick";
-            enabled: Form.editable;
+            text: Form.picking-color ? "Picking…" : "Pick";
+            enabled: Form.editable && !Form.picking-color;
             clicked => {
                 Actions.pick-color();
+            }
+        }
+    }
+
+    if Form.picking-color: HorizontalLayout {
+        padding-left: Theme.label-width + Theme.gap-s;
+        spacing: Theme.gap-m;
+        Magnifier {
+            source: Form.magnifier;
+            ready: Form.magnifier-ready;
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: Theme.gap-xs;
+            Text {
+                text: "Click the color you want.";
+                color: Theme.text;
+            }
+
+            Text {
+                text: "Esc or a right click cancels.";
+                color: Theme.text-muted;
+                font-size: Theme.font-caption;
+            }
+
+            HorizontalLayout {
+                alignment: start;
+                padding-top: Theme.gap-xs;
+                PButton {
+                    text: "Cancel";
+                    kind: ButtonKind.ghost;
+                    clicked => {
+                        Actions.cancel-pick();
+                    }
+                }
             }
         }
     }

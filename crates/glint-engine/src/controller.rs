@@ -37,6 +37,7 @@ use x11rb::rust_connection::RustConnection;
 
 use crate::hot::{CompiledProfile, Control, HotHandle, HotShared, Preview, StopReason};
 use crate::lifecycle::Emergency;
+use crate::pick::{self, PickInput};
 use crate::store::Store;
 use crate::telemetry::{Notice, Stats, TraceNotice};
 
@@ -208,7 +209,34 @@ pub enum Command {
     },
     /// The keyboard mapping changed: hotkeys and modifiers need resolving again.
     KeymapChanged,
+    /// The pointer or keyboard during a color pick (§10 `pick_color`).
+    Pick(PickInput),
 }
+
+/// The core events a pick's grab delivers.
+fn pick_input(event: &x11rb::protocol::Event) -> Option<PickInput> {
+    use x11rb::protocol::Event as E;
+    match event {
+        E::MotionNotify(e) => Some(PickInput::Moved(e.root_x, e.root_y)),
+        E::ButtonPress(e) => Some(PickInput::Clicked(e.detail, e.root_x, e.root_y)),
+        E::KeyPress(e) => Some(PickInput::Key(e.detail)),
+        _ => None,
+    }
+}
+
+/// A color pick in progress.
+struct Picking {
+    client: ClientId,
+    escape: Option<u8>,
+    /// Where the pointer went since the last magnifier frame.
+    pending: Option<(i16, i16)>,
+    last_frame: Option<Instant>,
+}
+
+/// About 30 magnifier frames a second.
+const PICK_FRAME: Duration = Duration::from_millis(33);
+/// `XK_Escape`.
+const ESCAPE: u32 = 0xff1b;
 
 /// Reads connection C's events: hotkeys from XI2 raw key events (§9) and keymap changes.
 ///
@@ -237,6 +265,10 @@ pub fn spawn_x_events(
                     let _ = emergency.release_everything();
                 }
                 if commands.send(Command::Hotkey { action, press }).is_err() {
+                    break;
+                }
+            } else if let Some(input) = pick_input(&event) {
+                if commands.send(Command::Pick(input)).is_err() {
                     break;
                 }
             } else if matches!(event, x11rb::protocol::Event::MappingNotify(_)) {
@@ -365,6 +397,9 @@ pub struct Controller {
     fired: Option<(u64, u32)>,
     last_fired: Instant,
     quit: bool,
+    picking: Option<Picking>,
+    /// The crosshair for picking, made on first use.
+    cursor: Option<u32>,
 }
 
 impl Controller {
@@ -420,6 +455,8 @@ impl Controller {
             fired: None,
             last_fired: Instant::now(),
             quit: false,
+            picking: None,
+            cursor: None,
         }
     }
 
@@ -632,6 +669,9 @@ impl Controller {
                 self.send(client, None, Event::error("malformed", message, None));
             }
             Command::Disconnected { client } => {
+                if self.picking.as_ref().is_some_and(|p| p.client == client) {
+                    self.end_pick(None);
+                }
                 let removed = self.clients.remove(&client);
                 self.update_tracing();
                 if let Some(c) = removed {
@@ -648,6 +688,7 @@ impl Controller {
                 }
             }
             Command::Notice(n) => self.notice(n),
+            Command::Pick(input) => self.pick_input(input),
             Command::Signal(_) => {
                 self.stop(None);
                 self.quit = true;
@@ -712,6 +753,97 @@ impl Controller {
     }
 
     /// The color at the watched spot right now, read on connection C (§12.9 *Sample center*).
+    /// Starts a color pick for `client`: grabs the pointer with a crosshair (§10).
+    fn pick_color(&mut self, client: ClientId) -> Event {
+        if self.started {
+            return Event::error("busy", "Stop watching to pick a color.", None);
+        }
+        if self.picking.as_ref().is_some_and(|p| p.client != client) {
+            return Event::error("busy", "Another Glint window is picking a color.", None);
+        }
+        let cursor = match self.cursor {
+            Some(c) => c,
+            None => match pick::crosshair(&self.conn) {
+                Ok(c) => *self.cursor.insert(c),
+                Err(e) => return Event::error("pick", e, None),
+            },
+        };
+        if let Err(e) = pick::grab(&self.conn, self.root, cursor) {
+            return Event::error("pick", e, None);
+        }
+        self.picking = Some(Picking {
+            client,
+            escape: self.keymap.keycode(ESCAPE),
+            pending: pick::pointer(&self.conn, self.root),
+            last_frame: None,
+        });
+        Event::PickStarted
+    }
+
+    /// Ends the pick, tells its window `event` if there is one, and lets go of the pointer.
+    fn end_pick(&mut self, event: Option<Event>) {
+        if let Some(p) = self.picking.take() {
+            pick::ungrab(&self.conn);
+            if let Some(e) = event {
+                self.send(p.client, None, e);
+            }
+        }
+    }
+
+    fn pick_input(&mut self, input: PickInput) {
+        let Some(p) = self.picking.as_mut() else { return };
+        match input {
+            PickInput::Moved(x, y) => {
+                p.pending = Some((x, y));
+                self.pick_frame();
+            }
+            PickInput::Clicked(1, x, y) => {
+                let event = match pick::around(&self.conn, self.root, &self.root_format, self.screen_size(), (x, y)) {
+                    Ok((_, center)) => {
+                        let rgb = Rgb::from_u32(center);
+                        let lch = Oklch::from_rgb(rgb);
+                        Event::ColorPicked {
+                            rgb,
+                            oklch: [lch.l as f32, lch.c as f32, lch.h as f32],
+                        }
+                    }
+                    Err(e) => Event::error("pick", e, None),
+                };
+                self.end_pick(Some(event));
+            }
+            PickInput::Clicked(..) => self.end_pick(Some(Event::PickCancelled)),
+            PickInput::Key(k) if Some(k) == p.escape => self.end_pick(Some(Event::PickCancelled)),
+            PickInput::Key(_) => {}
+        }
+    }
+
+    /// Sends a magnifier frame for where the pointer went, at most every [`PICK_FRAME`].
+    fn pick_frame(&mut self) {
+        let Some(p) = self.picking.as_mut() else { return };
+        if p.last_frame.is_some_and(|t| t.elapsed() < PICK_FRAME) {
+            return;
+        }
+        let Some(at) = p.pending.take() else { return };
+        p.last_frame = Some(Instant::now());
+        let client = p.client;
+        if let Ok((pixels, center)) = pick::around(&self.conn, self.root, &self.root_format, self.screen_size(), at) {
+            let frame = Event::Magnifier {
+                size: pick::SIZE,
+                pixels: pixels.into_iter().map(Rgb::from_u32).collect(),
+                center: Rgb::from_u32(center),
+            };
+            self.send(client, None, frame);
+        }
+    }
+
+    fn screen_size(&self) -> (u16, u16) {
+        self.conn
+            .setup()
+            .roots
+            .get(usize::from(self.display.screen))
+            .map_or((0, 0), |s| (s.width_in_pixels, s.height_in_pixels))
+    }
+
     pub fn sample_center(&self) -> Event {
         let profile = self.active_profile();
         let (x, y) = watched_spot(&self.monitors, &profile);
@@ -796,6 +928,13 @@ impl Controller {
                     },
                     None => Event::error("no_profile", format!("There's no profile named {name:?}."), None),
                 }
+            }
+            Request::PickColor => self.pick_color(client),
+            Request::CancelPick => {
+                if self.picking.as_ref().is_some_and(|p| p.client == client) {
+                    self.end_pick(None);
+                }
+                Event::PickCancelled
             }
             Request::GetSettings => Event::Settings {
                 settings: Box::new(self.settings.clone()),
@@ -919,6 +1058,7 @@ impl Controller {
 
     fn tick(&mut self) {
         self.hot.free_retired();
+        self.pick_frame();
         let now = Instant::now();
         for problem in self.store.flush_due(now) {
             eprintln!("glintd: saving {problem}");
@@ -989,7 +1129,10 @@ impl Controller {
 
     fn send(&mut self, client: ClientId, id: Option<u64>, event: Event) {
         let Some(c) = self.clients.get(&client) else { return };
-        let droppable = matches!(event, Event::Telemetry(_) | Event::Live { .. } | Event::Fired { .. });
+        let droppable = matches!(
+            event,
+            Event::Telemetry(_) | Event::Live { .. } | Event::Fired { .. } | Event::Magnifier { .. }
+        );
         match c.outbox.try_send(glint_ipc::encode(&Envelope::new(id, event))) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) if droppable => {}

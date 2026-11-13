@@ -38,6 +38,10 @@ export global Form {
     in property <bool> seeing-known;
     in property <color> seeing-color;
     in property <string> seeing-text: "Not watching";
+    // Picking a color: the magnifier shows the pixels around the pointer.
+    in property <bool> picking-color;
+    in property <image> magnifier;
+    in property <bool> magnifier-ready;
     in-out property <int> watch-index;
     in property <string> watch-note;
 
@@ -73,6 +77,7 @@ export global Actions {
     callback main-button();
     callback form-changed();
     callback pick-color();
+    callback cancel-pick();
     callback key-captured(string);
     callback key-chosen(string);
     callback hotkey-captured(string);

@@ -54,6 +54,15 @@ pub struct Hero {
     pub hint: String,
 }
 
+/// The shade preset at the *Shades* index, Normal for a range set by hand.
+pub fn shade_preset(index: i32) -> ShadePreset {
+    usize::try_from(index)
+        .ok()
+        .and_then(|i| SHADES.get(i))
+        .copied()
+        .unwrap_or(ShadePreset::Normal)
+}
+
 fn index_of<T: PartialEq>(items: &[T], item: &T) -> i32 {
     items.iter().position(|i| i == item).map_or(-1, |i| i as i32)
 }

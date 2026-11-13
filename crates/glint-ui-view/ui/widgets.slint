@@ -44,3 +44,31 @@ export component ColorValue inherits Rectangle {
         }
     }
 }
+
+// The magnifier (§12.6): 11 × 11 screen pixels at ×8, the center cell outlined in white.
+export component Magnifier inherits Rectangle {
+    in property <image> source;
+    in property <bool> ready;
+    width: 90px;
+    height: 90px;
+    border-width: 1px;
+    border-color: Theme.border-strong;
+    background: Theme.elevated;
+    clip: true;
+    if root.ready: Image {
+        x: 1px;
+        y: 1px;
+        width: 88px;
+        height: 88px;
+        source: root.source;
+        image-rendering: pixelated;
+    }
+    Rectangle {
+        x: 1px + 40px;
+        y: 1px + 40px;
+        width: 8px;
+        height: 8px;
+        border-width: 1px;
+        border-color: #FFFFFF;
+    }
+}

@@ -89,6 +89,10 @@ pub enum Request {
     EmergencyStop,
     ReleaseAll,
     SampleCenter,
+    /// Pick a color with the mouse: `pick_started`, `magnifier` frames, then `color_picked` or
+    /// `pick_cancelled` (§10).
+    PickColor,
+    CancelPick,
     /// Up to [`MAX_CLASSIFY`] colors, classified with the engine's own lookup table.
     Classify {
         colors: Vec<Rgb>,
@@ -124,6 +128,19 @@ pub enum Event {
         rgb: Rgb,
         oklch: [f32; 3],
     },
+    PickStarted,
+    /// The pixels around the pointer while picking: `size` × `size`, row by row, and the one
+    /// under the pointer.
+    Magnifier {
+        size: u16,
+        pixels: Vec<Rgb>,
+        center: Rgb,
+    },
+    ColorPicked {
+        rgb: Rgb,
+        oklch: [f32; 3],
+    },
+    PickCancelled,
     Classified {
         verdicts: Vec<Class>,
     },
@@ -497,6 +514,8 @@ mod tests {
             Request::UseProfile { name: "Sober".into() },
             Request::EmergencyStop,
             Request::GetSettings,
+            Request::PickColor,
+            Request::CancelPick,
             Request::Classify {
                 colors: vec![Rgb::new(1, 2, 3)],
             },
@@ -535,6 +554,12 @@ mod tests {
                 sent_ns: 4,
             }),
             Event::Trace(Trace::Blind { from_ns: 5, to_ns: 9 }),
+            Event::Magnifier {
+                size: 1,
+                pixels: vec![Rgb::new(1, 2, 3)],
+                center: Rgb::new(1, 2, 3),
+            },
+            Event::PickCancelled,
             Event::Trace(Trace::Stopped {
                 at_ns: 7,
                 cause: StopCause::SafetyStop,
