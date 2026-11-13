@@ -107,6 +107,8 @@ pub enum StartError {
     ForeignSocketDir(String),
     #[error(transparent)]
     Lock(#[from] crate::lock::LockError),
+    #[error(transparent)]
+    Hotkeys(#[from] glint_x11::hotkeys::HotkeyError),
 }
 
 impl StartError {
@@ -137,11 +139,15 @@ pub fn run(options: Options) -> Result<(), StartError> {
     use glint_x11::wire::RawConn;
     use glint_x11::{caps, monitors};
 
-    use crate::controller::{Command, Controller, compile, release_keycodes, spawn_listener, watched_spot};
+    use crate::controller::{
+        Command, Controller, compile, release_keycodes, spawn_listener, spawn_x_events, watched_spot,
+    };
     use crate::hot::HotHandle;
     use crate::lock::InstanceLock;
     use crate::store::{self, Store};
     use crate::telemetry::{self, Stats};
+    use arc_swap::ArcSwap;
+    use glint_x11::hotkeys::{self, Matcher, ModifierKeys};
 
     // 1. The display; remote displays are refused.
     let display = LocalDisplay::from_env()?;
@@ -150,13 +156,13 @@ pub fn run(options: Options) -> Result<(), StartError> {
     let _lock = InstanceLock::acquire(&glint_ipc::socket_dir(), display)?;
 
     // 3. X connections A–D and the capability probe; missing XTEST is fatal.
-    let c = conn::open(display)?;
-    let caps = caps::probe(&c)?;
+    let c = Arc::new(conn::open(display)?);
+    let caps = caps::probe(&*c)?;
     let (a, setup) = RawConn::connect(display)?;
     let (b, _) = RawConn::connect(display)?;
     let screen = ScreenInfo::from_setup(&setup, display.screen).ok_or(StartError::NoScreen(display.screen))?;
-    let keymap = Keymap::fetch(&c)?;
-    let monitors = monitors::list(&c, screen.root, (screen.width, screen.height), caps.randr)?;
+    let keymap = Keymap::fetch(&*c)?;
+    let monitors = monitors::list(&*c, screen.root, (screen.width, screen.height), caps.randr)?;
     let compositor = compositor_running(&c, display.screen);
 
     // 5. Settings and profiles from disk, migrating older schemas (§11).
@@ -228,11 +234,50 @@ pub fn run(options: Options) -> Result<(), StartError> {
             let _ = commands.send(Command::Signal(s));
         })?;
     }
-    spawn_listener(listener, commands)?;
+    spawn_listener(listener, commands.clone())?;
 
+    // 7. Hotkeys: XI2 raw key events on the root window, ignoring XTEST input (§9).
+    let (bindings, problems) = hotkeys::bindings(&settings.hotkeys, &keymap);
+    for p in problems {
+        eprintln!("glintd: hotkey {p}");
+    }
+    let bindings = Arc::new(ArcSwap::from_pointee(bindings));
+    let root_format = PixelFormat::root(&setup, display.screen.into())?;
+    if caps.xinput.is_some() {
+        hotkeys::select_raw_keys(&*c, screen.root)?;
+        let matcher = Matcher::new(hotkeys::xtest_devices(&*c)?, ModifierKeys::new(&keymap));
+        spawn_x_events(
+            Arc::clone(&c),
+            matcher,
+            Arc::clone(&bindings),
+            Arc::clone(hot.shared()),
+            Arc::clone(&emergency),
+            commands.clone(),
+        )?;
+    } else {
+        eprintln!("glintd: the X server has no XInput 2; hotkeys are off");
+    }
     let mut controller = Controller::new(
-        display, caps, compositor, keymap, monitors, hot, preview, stats, emergency, settings, profiles, active, lut,
-        receiver, pool, store,
+        display,
+        caps,
+        compositor,
+        keymap,
+        monitors,
+        hot,
+        preview,
+        stats,
+        emergency,
+        settings,
+        profiles,
+        active,
+        lut,
+        receiver,
+        pool,
+        store,
+        Arc::clone(&c),
+        screen.root,
+        root_format,
+        bindings,
     );
     // 8. Ready and stopped; watching starts only when asked.
     if options.start_on_launch

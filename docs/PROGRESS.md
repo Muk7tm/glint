@@ -49,7 +49,7 @@ listed in §13 (written as their content appears).
 - [x] Hot loop, speed presets, control word, epoch restarts, event ring, telemetry thread. *(Control word with armed and gate bits (C3); retired profiles freed by the controller, never the hot thread; allocation-free, checked by assert_no_alloc in debug builds (proven to abort on a deliberate allocation); Xvfb tests: one click per appearance, short dropouts, arm-while-present, gate, safety stop, ~2,000 checks/s.)*
 - [x] IPC server (newline-delimited JSON) and `glint-ctl`. *(Same-user socket, 256-message client queues, telemetry and live streams; `glintd` startup per §4.3 with exit code 3 for a second engine; `glint-ctl` incl. `release-all` without an engine; C3, C9, C10, L2 and `get_profile`: ADR 0009. Tested end to end on Xvfb.)*
 - [x] Single-instance lock; settings store with debounced atomic writes. *(flock keyed by the canonical display (C6); 300 ms debounce, temp file + fsync + rename; `.bak` on migration; unreadable files reported and left alone; persistence across restarts tested on Xvfb.)*
-- [ ] Hotkeys through XI2 raw events (F7/F8/F6) with the XTEST-source filter.
+- [x] Hotkeys through XI2 raw events (F7/F8/F6) with the XTEST-source filter. *(F8 disarms and releases from the X-events thread without waiting for the controller; toggle and hold modes; F6 samples on connection C; keymap changes followed. Tested end to end on Xvfb with keys typed "on" Xvfb's own keyboard device.)*
 - **Exit:** from the command line alone, Glint clicks once per appearance on a real desktop, and `basic`, `near-miss` and `arm-while-present` pass under Xvfb.
 
 ## Phase 3 — Lab and CI (M)

@@ -293,3 +293,110 @@ fn releasing_everything_from_either_connection() {
     assert_eq!(rx.collect(50), [Got::ButtonPress(1), Got::ButtonRelease(1)]);
     assert!(!inj.is_held());
 }
+
+#[test]
+fn raw_key_events_and_the_xtest_filter() {
+    use std::time::{Duration, Instant};
+
+    use x11rb::protocol::xinput::ConnectionExt as _;
+    use x11rb::protocol::xtest::ConnectionExt as _;
+
+    use crate::hotkeys::{self, Matcher, ModifierKeys};
+    use crate::keymap::{Keymap, keysym_from_name};
+
+    let Some(x) = xvfb() else { return };
+    let c = conn::open(x.display()).unwrap();
+    caps::probe(&c).unwrap(); // announces XI 2.2
+    let root = c.setup().roots[0].root;
+    hotkeys::select_raw_keys(&c, root).unwrap();
+    let xtest = hotkeys::xtest_devices(&c).unwrap();
+    let devices = c.xinput_xi_query_device(0u16).unwrap().reply().unwrap();
+    for d in &devices.infos {
+        eprintln!(
+            "device {} {:?} {:?}",
+            d.deviceid,
+            String::from_utf8_lossy(&d.name),
+            d.type_
+        );
+    }
+    assert!(!xtest.is_empty());
+
+    let map = Keymap::fetch(&c).unwrap();
+    let f8 = map.keycode(keysym_from_name("F8").unwrap()).unwrap();
+    let injector = conn::open(x.display()).unwrap();
+    injector.xtest_fake_input(2, f8, 0, root, 0, 0, 0).unwrap();
+    injector.xtest_fake_input(3, f8, 0, root, 0, 0, 0).unwrap();
+    injector.sync().unwrap();
+
+    let mut keys = Vec::new();
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < deadline && keys.len() < 2 {
+        match c.poll_for_event().unwrap() {
+            Some(e) => keys.extend(hotkeys::raw_key(&e)),
+            None => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+    assert_eq!(
+        keys.iter().map(|k| (k.keycode, k.press)).collect::<Vec<_>>(),
+        [(f8, true), (f8, false)]
+    );
+    assert!(keys.iter().all(|k| xtest.contains(&k.source)), "{keys:?} vs {xtest:?}");
+    // F8 made by XTest is Glint-style input: the matcher ignores it.
+    let (bindings, _) = hotkeys::bindings(&glint_core::settings::Hotkeys::default(), &map);
+    let mut m = Matcher::new(xtest.clone(), ModifierKeys::new(&map));
+    assert!(keys.iter().all(|&k| m.feed(k, &bindings).is_none()));
+
+    // The same key "typed on the Xvfb keyboard" is a real hotkey.
+    let keyboard = physical_keyboard(&c);
+    physical_key(&injector, root, keyboard, f8, true);
+    physical_key(&injector, root, keyboard, f8, false);
+    let mut keys = Vec::new();
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < deadline && keys.len() < 2 {
+        match c.poll_for_event().unwrap() {
+            Some(e) => keys.extend(hotkeys::raw_key(&e)),
+            None => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+    assert!(
+        keys.len() == 2 && keys.iter().all(|k| k.source == u16::from(keyboard)),
+        "{keys:?}"
+    );
+    assert_eq!(
+        m.feed(keys[0], &bindings),
+        Some((hotkeys::HotkeyAction::EmergencyStop, true))
+    );
+    assert_eq!(
+        m.feed(keys[1], &bindings),
+        Some((hotkeys::HotkeyAction::EmergencyStop, false))
+    );
+}
+
+/// The id of Xvfb's own keyboard device, which isn't an XTEST device.
+pub(crate) fn physical_keyboard(conn: &RustConnection) -> u8 {
+    use x11rb::protocol::xinput::{ConnectionExt as _, DeviceType};
+    let devices = conn.xinput_xi_query_device(0u16).unwrap().reply().unwrap();
+    let d = devices
+        .infos
+        .iter()
+        .find(|d| d.type_ == DeviceType::SLAVE_KEYBOARD && !String::from_utf8_lossy(&d.name).contains("XTEST"))
+        .expect("a non-XTEST keyboard");
+    u8::try_from(d.deviceid).unwrap()
+}
+
+/// A key press or release that comes from `device`, as if typed on it: XTest with an XInput
+/// device-key event type and the device id, so the raw events' source is that device.
+pub(crate) fn physical_key(conn: &RustConnection, root: u32, device: u8, keycode: u8, press: bool) {
+    use x11rb::connection::RequestConnection as _;
+    use x11rb::protocol::xinput;
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let base = conn
+        .extension_information(xinput::X11_EXTENSION_NAME)
+        .unwrap()
+        .unwrap()
+        .first_event;
+    // XInput 1 event offsets: DeviceKeyPress 1, DeviceKeyRelease 2.
+    let ty = base + if press { 1 } else { 2 };
+    conn.xtest_fake_input(ty, keycode, 0, root, 0, 0, device).unwrap();
+    conn.sync().unwrap();
+}

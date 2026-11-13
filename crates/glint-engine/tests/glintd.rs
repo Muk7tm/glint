@@ -458,3 +458,138 @@ fn profiles_and_settings_survive_a_restart() {
     };
     assert_eq!(*profile, p);
 }
+
+/// Xvfb's own keyboard, which isn't an XTEST device.
+fn physical_keyboard(conn: &RustConnection) -> u8 {
+    use x11rb::protocol::xinput::{ConnectionExt as _, DeviceType};
+    let devices = conn.xinput_xi_query_device(0u16).unwrap().reply().unwrap();
+    let d = devices
+        .infos
+        .iter()
+        .find(|d| d.type_ == DeviceType::SLAVE_KEYBOARD && !String::from_utf8_lossy(&d.name).contains("XTEST"))
+        .unwrap();
+    u8::try_from(d.deviceid).unwrap()
+}
+
+/// A key typed "on" `device`: XTest with an XInput device-key event type, so the hotkey filter
+/// sees a real keyboard as the source.
+fn physical_key(conn: &RustConnection, device: u8, keycode: u8, press: bool) {
+    use x11rb::connection::RequestConnection as _;
+    use x11rb::protocol::xinput;
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let root = conn.setup().roots[0].root;
+    let base = conn
+        .extension_information(xinput::X11_EXTENSION_NAME)
+        .unwrap()
+        .unwrap()
+        .first_event;
+    conn.xtest_fake_input(base + if press { 1 } else { 2 }, keycode, 0, root, 0, 0, device)
+        .unwrap();
+    conn.sync().unwrap();
+}
+
+fn tap(conn: &RustConnection, device: u8, keycode: u8) {
+    physical_key(conn, device, keycode, true);
+    physical_key(conn, device, keycode, false);
+}
+
+fn started(c: &mut Client) -> bool {
+    std::thread::sleep(Duration::from_millis(50));
+    match c.call(Request::GetState, WAIT).unwrap() {
+        Event::State(s) => s.started,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn hotkeys_start_stop_and_sample() {
+    use glint_x11::keymap::{Keymap, keysym_from_name};
+    use x11rb::protocol::xtest::ConnectionExt as _;
+
+    let Some(engine) = Engine::start() else { return };
+    let screen = Screen::open(&engine.x);
+    let mut c = engine.client();
+    assert!(matches!(
+        c.call(
+            Request::SetProfile {
+                profile: Box::new(green_profile())
+            },
+            WAIT
+        )
+        .unwrap(),
+        Event::ProfileApplied { .. }
+    ));
+    let keys = conn::open(engine.x.display()).unwrap();
+    let keyboard = physical_keyboard(&keys);
+    let map = Keymap::fetch(&keys).unwrap();
+    let code = |name: &str| map.keycode(keysym_from_name(name).unwrap()).unwrap();
+    let (f6, f7, f8) = (code("F6"), code("F7"), code("F8"));
+
+    // F7 made through the XTEST device (the way Glint's own keys are made) is ignored.
+    let root = keys.setup().roots[0].root;
+    keys.xtest_fake_input(2, f7, 0, root, 0, 0, 0).unwrap();
+    keys.xtest_fake_input(3, f7, 0, root, 0, 0, 0).unwrap();
+    keys.sync().unwrap();
+    assert!(!started(&mut c));
+
+    // F7 on a real keyboard starts watching; the engine clicks; F7 again stops.
+    tap(&keys, keyboard, f7);
+    assert!(started(&mut c));
+    assert_eq!(screen.presses(100), (0, 0));
+    screen.show(true);
+    assert_eq!(screen.presses(100), (1, 1));
+    tap(&keys, keyboard, f7);
+    assert!(!started(&mut c));
+
+    // F8 stops at once and Start is ignored for half a second.
+    tap(&keys, keyboard, f7);
+    assert!(started(&mut c));
+    tap(&keys, keyboard, f8);
+    std::thread::sleep(Duration::from_millis(50)); // the key travels through the X server first
+    let Event::State(s) = c.call(Request::GetState, WAIT).unwrap() else {
+        panic!()
+    };
+    assert!(!s.started && s.last_stop.as_deref() == Some("Emergency stop."), "{s:?}");
+    tap(&keys, keyboard, f7);
+    assert!(!started(&mut c));
+    std::thread::sleep(Duration::from_millis(500));
+    tap(&keys, keyboard, f7);
+    assert!(started(&mut c));
+
+    // F6 samples the color at the watched spot, even while stopped.
+    tap(&keys, keyboard, f7);
+    assert!(!started(&mut c));
+    tap(&keys, keyboard, f6);
+    let deadline = Instant::now() + WAIT;
+    let sampled = loop {
+        assert!(Instant::now() < deadline, "no color_sampled");
+        if let Event::ColorSampled { rgb, .. } = c.next_event(WAIT).unwrap().body {
+            break rgb;
+        }
+    };
+    assert_eq!(sampled, Rgb::from_u32(GREEN));
+
+    // Hold to start: watching only while F7 is held.
+    let settings = glint_core::Settings {
+        active_profile: "Green".into(),
+        hotkeys: glint_core::settings::Hotkeys {
+            mode: glint_core::settings::HotkeyMode::Hold,
+            ..Default::default()
+        },
+        ..glint_core::Settings::default()
+    };
+    assert!(matches!(
+        c.call(
+            Request::SetSettings {
+                settings: Box::new(settings)
+            },
+            WAIT
+        )
+        .unwrap(),
+        Event::SettingsApplied
+    ));
+    physical_key(&keys, keyboard, f7, true);
+    assert!(started(&mut c));
+    physical_key(&keys, keyboard, f7, false);
+    assert!(!started(&mut c));
+}

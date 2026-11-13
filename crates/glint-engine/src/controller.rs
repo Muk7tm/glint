@@ -12,9 +12,11 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TryS
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use arc_swap::ArcSwap;
 use glint_core::color::oklab::Oklch;
 use glint_core::pattern::PatternError;
 use glint_core::profile::{ActionKind, ClickAt, Modifier, Profile, TargetMode};
+use glint_core::settings::HotkeyMode;
 use glint_core::settings::{ClosePolicy, Settings};
 use glint_core::validate::{self, Issue};
 use glint_core::{Lut, Rgb};
@@ -24,11 +26,16 @@ use glint_ipc::{
 };
 use glint_x11::caps::Caps;
 use glint_x11::env::LocalDisplay;
+use glint_x11::format::PixelFormat;
+use glint_x11::hotkeys::{self, Binding, HotkeyAction, Matcher, ModifierKeys};
 use glint_x11::inject::{Action, Input, MAX_MODIFIERS};
 use glint_x11::keymap::{Keymap, keysym};
 use glint_x11::monitors::{self, Monitor};
+use x11rb::connection::Connection as _;
+use x11rb::protocol::xproto::{ConnectionExt as _, ImageFormat};
+use x11rb::rust_connection::RustConnection;
 
-use crate::hot::{CompiledProfile, HotHandle, Preview, StopReason};
+use crate::hot::{CompiledProfile, Control, HotHandle, HotShared, Preview, StopReason};
 use crate::lifecycle::Emergency;
 use crate::store::Store;
 use crate::telemetry::{Notice, Stats};
@@ -145,6 +152,7 @@ pub enum Command {
     Connected {
         client: ClientId,
         outbox: SyncSender<String>,
+        writer: std::thread::JoinHandle<()>,
     },
     Request {
         client: ClientId,
@@ -160,6 +168,55 @@ pub enum Command {
     },
     Notice(Notice),
     Signal(i32),
+    /// A hotkey was pressed (`true`) or released.
+    Hotkey {
+        action: HotkeyAction,
+        press: bool,
+    },
+    /// The keyboard mapping changed: hotkeys and modifiers need resolving again.
+    KeymapChanged,
+}
+
+/// Reads connection C's events: hotkeys from XI2 raw key events (§9) and keymap changes.
+///
+/// The emergency stop doesn't wait for the controller, which may be busy building a lookup table:
+/// this thread disarms the hot loop and releases everything on connection D itself, then tells the
+/// controller.
+pub fn spawn_x_events(
+    conn: Arc<RustConnection>,
+    mut matcher: Matcher,
+    bindings: Arc<ArcSwap<Vec<Binding>>>,
+    hot: Arc<HotShared>,
+    emergency: Arc<Emergency>,
+    commands: Sender<Command>,
+) -> std::io::Result<()> {
+    std::thread::Builder::new().name("glintd-x".into()).spawn(move || {
+        while let Ok(event) = conn.wait_for_event() {
+            if let Some(key) = hotkeys::raw_key(&event) {
+                let Some((action, press)) = matcher.feed(key, &bindings.load()) else {
+                    continue;
+                };
+                if action == HotkeyAction::EmergencyStop && press {
+                    hot.control.update(|c| Control {
+                        armed: false,
+                        ..c.bumped()
+                    });
+                    let _ = emergency.release_everything();
+                }
+                if commands.send(Command::Hotkey { action, press }).is_err() {
+                    break;
+                }
+            } else if matches!(event, x11rb::protocol::Event::MappingNotify(_)) {
+                if let Ok(keymap) = Keymap::fetch(&*conn) {
+                    matcher.set_modifier_keys(ModifierKeys::new(&keymap));
+                }
+                if commands.send(Command::KeymapChanged).is_err() {
+                    break;
+                }
+            }
+        }
+    })?;
+    Ok(())
 }
 
 /// Accepts connections from the same user only (§10) and turns each client's lines into
@@ -182,11 +239,10 @@ fn accept(stream: UnixStream, client: ClientId, commands: &Sender<Command>) {
     let (Ok(mut writer), Ok(closer)) = (stream.try_clone(), stream.try_clone()) else {
         return;
     };
+    // A client that stops reading can hold a write up for at most this long, also at shutdown.
+    let _ = writer.set_write_timeout(Some(Duration::from_secs(1)));
     let (outbox, lines) = mpsc::sync_channel::<String>(OUTBOX);
-    if commands.send(Command::Connected { client, outbox }).is_err() {
-        return;
-    }
-    let _ = std::thread::Builder::new()
+    let writer = std::thread::Builder::new()
         .name("glintd-client-w".into())
         .spawn(move || {
             for line in lines {
@@ -196,6 +252,10 @@ fn accept(stream: UnixStream, client: ClientId, commands: &Sender<Command>) {
             }
             let _ = writer.shutdown(std::net::Shutdown::Both);
         });
+    let Ok(writer) = writer else { return };
+    if commands.send(Command::Connected { client, outbox, writer }).is_err() {
+        return;
+    }
     let commands = commands.clone();
     let _ = std::thread::Builder::new()
         .name("glintd-client-r".into())
@@ -230,6 +290,8 @@ fn accept(stream: UnixStream, client: ClientId, commands: &Sender<Command>) {
 
 struct Client {
     outbox: SyncSender<String>,
+    /// Joined at shutdown, so everything queued (the final `bye`) reaches the client.
+    writer: Option<std::thread::JoinHandle<()>>,
     kind: Option<ClientKind>,
     detached: bool,
     telemetry_every: Option<Duration>,
@@ -256,6 +318,12 @@ pub struct Controller {
     pub commands: Receiver<Command>,
     pub pool: rayon::ThreadPool,
     pub store: Store,
+    /// Connection C, shared with the X-events thread.
+    pub conn: Arc<RustConnection>,
+    pub root: u32,
+    pub root_format: PixelFormat,
+    /// The hotkeys as the X-events thread matches them.
+    pub bindings: Arc<ArcSwap<Vec<Binding>>>,
     revision: u64,
     started: bool,
     last_stop: Option<String>,
@@ -285,6 +353,10 @@ impl Controller {
         commands: Receiver<Command>,
         pool: rayon::ThreadPool,
         store: Store,
+        conn: Arc<RustConnection>,
+        root: u32,
+        root_format: PixelFormat,
+        bindings: Arc<ArcSwap<Vec<Binding>>>,
     ) -> Self {
         Self {
             display,
@@ -303,6 +375,10 @@ impl Controller {
             commands,
             pool,
             store,
+            conn,
+            root,
+            root_format,
+            bindings,
             revision: 1,
             started: false,
             last_stop: None,
@@ -329,7 +405,14 @@ impl Controller {
             }
         }
         self.broadcast(Event::Bye);
-        self.clients.clear();
+        // Close every queue, then wait for its writer to deliver what's left.
+        for (_, client) in self.clients.drain() {
+            let Client { outbox, writer, .. } = client;
+            drop(outbox);
+            if let Some(w) = writer {
+                let _ = w.join();
+            }
+        }
         for problem in self.store.flush_all() {
             eprintln!("glintd: saving {problem}");
         }
@@ -482,12 +565,13 @@ impl Controller {
 
     fn handle(&mut self, cmd: Command) {
         match cmd {
-            Command::Connected { client, outbox } => {
+            Command::Connected { client, outbox, writer } => {
                 let now = Instant::now();
                 self.clients.insert(
                     client,
                     Client {
                         outbox,
+                        writer: Some(writer),
                         kind: None,
                         detached: false,
                         telemetry_every: None,
@@ -528,6 +612,86 @@ impl Controller {
                 self.stop(None);
                 self.quit = true;
             }
+            Command::Hotkey { action, press } => {
+                let before = self.state();
+                self.hotkey(action, press);
+                let after = self.state();
+                if after != before {
+                    self.broadcast(Event::State(after));
+                }
+            }
+            Command::KeymapChanged => {
+                if let Ok(keymap) = Keymap::fetch(&*self.conn) {
+                    self.keymap = keymap;
+                    self.emergency
+                        .set_keycodes(release_keycodes(self.profiles.values(), &self.keymap));
+                    self.update_bindings();
+                }
+            }
+        }
+    }
+
+    /// Resolves the hotkeys of the current settings on the current keymap (§9).
+    pub fn update_bindings(&mut self) {
+        let (bindings, problems) = hotkeys::bindings(&self.settings.hotkeys, &self.keymap);
+        for p in problems {
+            eprintln!("glintd: hotkey {p}");
+        }
+        self.bindings.store(Arc::new(bindings));
+    }
+
+    fn hotkey(&mut self, action: HotkeyAction, press: bool) {
+        match (action, press, self.settings.hotkeys.mode) {
+            (HotkeyAction::StartStop, true, HotkeyMode::Toggle) => {
+                if self.started {
+                    self.stop(None);
+                } else {
+                    self.start_quietly();
+                }
+            }
+            (HotkeyAction::StartStop, true, HotkeyMode::Hold) => self.start_quietly(),
+            (HotkeyAction::StartStop, false, HotkeyMode::Hold) => self.stop(None),
+            (HotkeyAction::EmergencyStop, true, _) => {
+                // The X-events thread has already disarmed the hot loop and released everything.
+                self.stop(Some("Emergency stop.".into()));
+                self.start_blocked_until = Some(Instant::now() + EMERGENCY_HOLDOFF);
+            }
+            (HotkeyAction::SampleCenter, true, _) => {
+                let event = self.sample_center();
+                self.broadcast(event);
+            }
+            _ => {}
+        }
+    }
+
+    /// Start from a hotkey: a refusal goes to every client as a warning, since nobody asked.
+    fn start_quietly(&mut self) {
+        if let Event::Error { code, message, field } = self.start() {
+            self.broadcast(Event::Warning { code, message, field });
+        }
+    }
+
+    /// The color at the watched spot right now, read on connection C (§12.9 *Sample center*).
+    pub fn sample_center(&self) -> Event {
+        let profile = self.active_profile();
+        let (x, y) = watched_spot(&self.monitors, &profile);
+        let reply = self
+            .conn
+            .get_image(ImageFormat::Z_PIXMAP, self.root, x, y, 1, 1, u32::MAX)
+            .map_err(|e| e.to_string())
+            .and_then(|c| c.reply().map_err(|e| e.to_string()));
+        let mut px = [0u32; 1];
+        match reply.map(|r| self.root_format.decode(&r.data, 1, 1, &mut px)) {
+            Ok(Ok(())) => {
+                let rgb = Rgb::from_u32(px[0]);
+                let lch = Oklch::from_rgb(rgb);
+                Event::ColorSampled {
+                    rgb,
+                    oklch: [lch.l as f32, lch.c as f32, lch.h as f32],
+                }
+            }
+            Ok(Err(e)) => Event::error("sample", e.to_string(), None),
+            Err(e) => Event::error("sample", e, None),
         }
     }
 
@@ -609,6 +773,7 @@ impl Controller {
                         settings.active_profile = self.active.clone();
                         self.store.save_settings(&settings, Instant::now());
                         self.settings = settings;
+                        self.update_bindings();
                         Event::SettingsApplied
                     }
                 }
@@ -636,22 +801,7 @@ impl Controller {
                 Ok(()) => Event::State(self.state()),
                 Err(e) => Event::error("x11", e.to_string(), None),
             },
-            Request::SampleCenter => {
-                let preview = *self.preview.read();
-                if preview.verdict.is_none() {
-                    return Event::error(
-                        "not_watching",
-                        "Start watching to sample the color at the watched spot.",
-                        None,
-                    );
-                }
-                let rgb = Rgb::from_u32(preview.rgb);
-                let lch = Oklch::from_rgb(rgb);
-                Event::ColorSampled {
-                    rgb,
-                    oklch: [lch.l as f32, lch.c as f32, lch.h as f32],
-                }
-            }
+            Request::SampleCenter => self.sample_center(),
             Request::Classify { colors } => {
                 if colors.len() > MAX_CLASSIFY {
                     return Event::error("too_many", format!("At most {MAX_CLASSIFY} colors at once."), None);
