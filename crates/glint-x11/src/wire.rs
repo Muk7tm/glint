@@ -89,8 +89,13 @@ impl RawConn {
                 .map_err(|_| path_err)?,
         };
         let host = rustix::system::uname().nodename().to_bytes().to_vec();
-        let (mut connect, setup_request) =
-            Connect::new(Family::LOCAL, &host, display.number).map_err(|e| WireError::Setup(e.to_string()))?;
+        // Like x11rb's own connection: a missing or unreadable Xauthority file means no
+        // authorization data, not a failed connection (a fresh account or a CI runner has none,
+        // and an X server started without -auth doesn't ask for any).
+        let (name, data) = x11rb_protocol::xauth::get_auth(Family::LOCAL, &host, display.number)
+            .unwrap_or(None)
+            .unwrap_or_default();
+        let (mut connect, setup_request) = Connect::with_authorization(name, data);
         (&stream).write_all(&setup_request)?;
         loop {
             let n = (&stream).read(connect.buffer())?;
