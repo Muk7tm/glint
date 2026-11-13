@@ -231,6 +231,50 @@ session (the environment above, no compositor running). The lab's full-screen wi
 - Well inside p99 ≤ 2 ms and max ≤ 10 ms, but 100 trials say little about p99, and no trial met an X server
   stall. The v1.0 timing verdict is Phase 6's 10,000-trial run (ADR 0004).
 
+## 9. Phase 3: every lab scenario at full count, and CI
+
+`glint-lab all --minutes 2` (release build) on 2026-11-13, each scenario in its own sandbox (Xvfb 1280×720 with its
+own `glintd`). Part of the run overlapped a full `cargo nextest` run on the same machine, which is where the X
+server stalls in `arm-while-present` and `live-edit` came from; the report lists the trials they touched apart.
+
+| Scenario (count) | Appearances | Clicks | Extra | Missed | Possible misses, reported | Response p50 / p99 / max |
+| --- | --- | --- | --- | --- | --- | --- |
+| `basic` (100) | 100 | 100 | 0 | 0 | 0 | 0.32 / 0.56 / 0.56 ms |
+| `shades` (100, 64 shades) | 100 | 100 | 0 | 0 | 0 | 0.30 / 0.55 / 0.55 ms |
+| `near-miss` (100) | 0 | 0 | 0 | — | 0 | — |
+| `distractor` (80 distractors, 20 real) | 20 | 20 | 0 | 0 | 0 | 0.29 / 0.54 / 0.54 ms |
+| `flicker` (50) | 50 | 50 | 0 | 0 | 0 | 0.30 / 0.61 / 0.61 ms |
+| `boundary-noise` (50) | 50 | 50 | 0 | 0 | 0 | 0.23 / 0.59 / 0.59 ms |
+| `fade` (30) | 30 | 30 | 0 | 0 | 0 | 0.29 / 0.56 / 0.56 ms |
+| `rapid` (10 rounds) | 60 | 58 | 0 | 0 | 2 | 0.29 / 0.56 / 0.56 ms |
+| `arm-while-present` (20) | 20 | 16 | 0 | 0 | 4 | 0.37 / 3.85 / 3.85 ms |
+| `live-edit` (10 rounds, 50 edits) | 30 | 28 | 0 | 0 | 2 | 0.29 / 0.60 / 0.60 ms |
+| `stall` (50, 54 freezes of 30 ms) | 45 | 25 | 0 | 0 | 20 | 0.54 / 15.34 / 15.34 ms |
+| `soak` (2 min, 149 random steps) | 241 | 241 | 0 | 0 | 0 | 0.31 / 0.54 / 0.55 ms |
+
+- Every appearance that called for a click got exactly one, or the engine reported a possible miss: 790
+  appearances, 0 extra clicks, 0 unexplained misses. `stall` forces possible misses on purpose (ADR 0010), and 11
+  of its clicks were late by the 15 ms freeze, as designed.
+- The other scenarios:
+  - `two-engines`: the second engine exited with code 3.
+  - `feedback` (3 rounds): each round tripped the safety stop 151 ms after its first click, after 3 clicks.
+  - `action-matrix` (29 cases): one press and one release each. The server saw holds of 0–1, 10–11 and 50 ms.
+  - `kill-mid-press`: the button, and Ctrl+a, stayed held after SIGKILL until the restarted engine released them.
+  - `action-equals-hotkey`: F7, F8, F6 and the reverse case were rejected.
+- The response at p50, by stage: wait 0.18–0.49 ms, capture 11–21 µs, decide about 1 µs, inject about 3 µs,
+  delivery 21–33 µs. The wait is half a check period on average, and longer after a freeze.
+- `soak`'s engine memory grew 5 MiB in its first steps, then stayed flat: 9.0 → 14.2 MiB in the release build,
+  and the same +5 MiB after 8 s and after 2 min in debug builds. That is the allocator keeping one freed 4 MiB color
+  table from a profile edit, not a leak.
+- **CI** (GitHub Actions, ubuntu-24.04, run 43426780742):
+  - `tests and lab scenarios (Xvfb)`: all 170 tests, the 17 scenarios included, in 154 s (4.5 min with the
+    build).
+  - `lab scenarios under picom`: 17 of 17 in 127 s.
+  - `fmt and clippy` and `cargo-deny`: under a minute each.
+- The lab found two bugs, both fixed:
+  - the trigger timed each check by its reply only (ADR 0011);
+  - the raw X connection failed without an Xauthority file, so the first CI run failed every Xvfb test.
+
 ## Conclusions for the defaults (Phase 0 exit)
 
 - **Speed preset: Balanced (2,000/s) confirmed.** Paced response is dominated by the server's own busy periods

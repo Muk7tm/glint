@@ -5,8 +5,10 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 ## Status
 
-- **Active phase:** Phase 3 (lab and CI), started 2026-11-13 after the owner's go-ahead. The lab is done: 17
-  scenarios pass under Xvfb. CI is next.
+- **Active phase:** none. Phase 3 (lab and CI) is complete, and Phase 4 waits for the owner's go-ahead and two
+  decisions: where the shared UI kit lives (§21.3), and permission to change Pulse's repository for the extraction.
+  All 17 lab scenarios pass in CI (https://github.com/Muk7tm/glint/actions/runs/43426780742) and at full count
+  locally (MEASUREMENTS.md §9).
 - **Repository:** public at https://github.com/Muk7tm/glint (the owner chose GitHub, public, for CI).
 - Phase 2 is complete: the real-desktop exit run passed on 2026-11-13 (`glint-lab basic --real-desktop --count
   100`: 100 clicks for 100 appearances, 0 extra, 0 missed, p50 0.48 ms, p99 0.71 ms; MEASUREMENTS.md §8).
@@ -59,8 +61,8 @@ listed in §13 (written as their content appears).
 ## Phase 3 — Lab and CI (M)
 
 - [x] `glint-lab`: test window, timing, report, every correctness scenario. *(17 scenarios; `move`, `focus` and `ui-overlap` wait for window mode in Phase 5. A trace stream from the engine (every click with its stage times, possible misses, blind gaps, self-stops), a stall probe, and a judge that replays the drawing through the trigger's rules with time bounds: ADR 0010. `cargo test` runs all 17 in about 35 s, and they pass with 8 CPU-burning loops alongside. The `stall` scenario found a trigger bug: a check reads the screen between its request and its reply, and timing it by the reply alone could hide a possible miss or stretch an absence (ADR 0011, fixed, with the ground-truth test now modelling replies).)*
-- [ ] GitHub Actions: fmt, clippy, nextest, exhaustive test, Xvfb integration, cargo-deny.
-- **Exit:** every scenario in §16 that needs neither real hardware nor window mode passes in CI (`move`, `focus` and `ui-overlap` are Phase 5's exit, ADR 0010).
+- [x] GitHub Actions: fmt, clippy, nextest, exhaustive test, Xvfb integration, cargo-deny. *(`.github/workflows/ci.yml`: four jobs on ubuntu-24.04, about 5 minutes; nextest runs the exhaustive test alone and two sandboxes at a time; the optional picom job passes too. The first run found that the raw X connection needed an Xauthority file; fixed.)*
+- **Exit:** every scenario in §16 that needs neither real hardware nor window mode passes in CI (`move`, `focus` and `ui-overlap` are Phase 5's exit, ADR 0010). *(Met 2026-11-13: CI run 43426780742, all four jobs green.)*
 
 ## Phase 4 — UI on Pulse's kit (M)
 
