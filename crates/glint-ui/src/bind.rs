@@ -20,14 +20,19 @@ const BUTTONS: [MouseButton; 5] = [
     MouseButton::Forward,
 ];
 pub const KEYBOARD_KEY: i32 = BUTTONS.len() as i32;
-const SHADES: [ShadePreset; 3] = [ShadePreset::Tight, ShadePreset::Normal, ShadePreset::Loose];
+const SHADES: [ShadePreset; 4] = [
+    ShadePreset::Tight,
+    ShadePreset::Normal,
+    ShadePreset::Loose,
+    ShadePreset::LoosePlus,
+];
 const CLOSING: [ClosePolicy; 3] = [ClosePolicy::Ask, ClosePolicy::KeepRunning, ClosePolicy::Quit];
 
 /// The editable values the window shows.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct Fields {
     pub color: Option<Rgb>,
-    /// Tight, Normal, Loose; -1 when the range was set by hand (More options).
+    /// Tight, Normal, Loose, Loose+; -1 when the range was set by hand (More options).
     pub shades: i32,
     /// Screen center, window center.
     pub watch: i32,
@@ -316,6 +321,21 @@ mod tests {
         let mut f = fields(&p, &s);
         f.hold_ms = 900;
         assert_eq!(edited(&p, &s, &f).0.action.hold_ms, 200);
+    }
+
+    #[test]
+    fn loose_plus_is_the_fourth_shades_option() {
+        let (mut p, s) = (green(), Settings::default());
+        p.color.include = vec![ShadePreset::LoosePlus.entry(ColorModel::Oklch, Rgb::from_u32(0x86_04_A0))];
+        assert_eq!(fields(&p, &s).shades, 3);
+        let mut f = fields(&green(), &s);
+        f.shades = 3;
+        let (p2, _) = edited(&green(), &s, &f);
+        assert_eq!(
+            p2.color.include[0],
+            ShadePreset::LoosePlus.entry(ColorModel::Oklch, Rgb::from_u32(0x3B_D1_6F))
+        );
+        assert_eq!(shade_preset(3), ShadePreset::LoosePlus);
     }
 
     #[test]

@@ -329,8 +329,9 @@ Pixel agreement is Glint's main noise filter, and it adds zero delay: a single o
 | Tight | 0.05 | 0.03 | 4° | Lightness ± 5 · Colorfulness ± 3 · Hue ± 4° |
 | **Normal (default)** | 0.10 | 0.05 | 7° | Lightness ± 10 · Colorfulness ± 5 · Hue ± 7° |
 | Loose | 0.16 | 0.08 | 12° | Lightness ± 16 · Colorfulness ± 8 · Hue ± 12° |
+| Loose+ | 0.22 | 0.08 | 12° | Lightness ± 22 · Colorfulness ± 8 · Hue ± 12° (ADR 0015) |
 
-The UI shows ΔL and ΔC multiplied by 100 so they fit Pulse's whole-number steppers. HSV and RGB have their own presets (ADR 0005): ΔH · ΔS · ΔV of 4° · 0.08 · 0.08, 7° · 0.15 · 0.15 and 12° · 0.25 · 0.25, and t of 6, 12 and 20. A color entry keeps the tolerance fields of every model and only the profile's model reads them, so switching models loses nothing; a missing field takes the Normal value for an include color and the Tight value for an exclude color.
+The UI shows ΔL and ΔC multiplied by 100 so they fit Pulse's whole-number steppers. HSV and RGB have their own presets (ADR 0005): ΔH · ΔS · ΔV of 4° · 0.08 · 0.08, 7° · 0.15 · 0.15, 12° · 0.25 · 0.25 and (Loose+) 12° · 0.25 · 0.35, and t of 6, 12, 20 and 28. *Loose+* is *Loose* with only the lightness widened, for colors that begin lighter or darker than they settle (a glow, a fade, a flash); measured in Sober, ADR 0015. A color entry keeps the tolerance fields of every model and only the profile's model reads them, so switching models loses nothing; a missing field takes the Normal value for an include color and the Tight value for an exclude color.
 
 **Several include colors.** A profile can hold several include colors (the same object under different lighting, for example). A pixel matches if it's inside any include range and inside no exclude range.
 
@@ -690,7 +691,7 @@ The typeface looks like the desktop's default sans (Noto Sans); check Pulse's so
 │ ┌──────────────────────────────────────────────────────────────┐ │
 │ │ COLOR                                                        │ │
 │ │ Color           [■ #3BD16F         ]   [ Pick ]              │ │
-│ │ Shades          ( Tight  [Normal]  Loose )                   │ │
+│ │ Shades          ( Tight  [Normal]  Loose  Loose+ )           │ │
 │ │ Seeing          ■ #1E2A20 · no match                         │ │
 │ │ Watch           ( Screen center  [Window center] )           │ │
 │ └──────────────────────────────────────────────────────────────┘ │

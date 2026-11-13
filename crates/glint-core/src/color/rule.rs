@@ -36,12 +36,15 @@ pub enum ColorModel {
 
 /// The *Shades* control: starting tolerances for a color.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum ShadePreset {
     Tight,
     #[default]
     Normal,
     Loose,
+    /// *Loose+*: Loose, plus much lighter and darker shades of the same hue, for colors that
+    /// fade, glow or flash lighter as they appear (ADR 0015).
+    LoosePlus,
 }
 
 /// One color's tolerances, resolved for a model.
@@ -56,24 +59,36 @@ pub enum Tolerances {
 }
 
 impl ShadePreset {
-    /// The OKLCh values are the plan's (§5.4); the HSV and RGB values are ADR 0005's.
+    /// The OKLCh values are the plan's (§5.4); the HSV and RGB values are ADR 0005's; Loose+ is
+    /// ADR 0015's: Loose with the lightness (value) range widened.
     pub fn tolerances(self, model: ColorModel) -> Tolerances {
         let i = match self {
             Self::Tight => 0,
             Self::Normal => 1,
             Self::Loose => 2,
+            Self::LoosePlus => 3,
         };
         match model {
             ColorModel::Oklch => {
-                let (l, c, h) = [(0.05, 0.03, 4.0), (0.10, 0.05, 7.0), (0.16, 0.08, 12.0)][i];
+                let (l, c, h) = [
+                    (0.05, 0.03, 4.0),
+                    (0.10, 0.05, 7.0),
+                    (0.16, 0.08, 12.0),
+                    (0.22, 0.08, 12.0),
+                ][i];
                 Tolerances::Oklch { l, c, h }
             }
             ColorModel::Hsv => {
-                let (h, s, v) = [(4.0, 0.08, 0.08), (7.0, 0.15, 0.15), (12.0, 0.25, 0.25)][i];
+                let (h, s, v) = [
+                    (4.0, 0.08, 0.08),
+                    (7.0, 0.15, 0.15),
+                    (12.0, 0.25, 0.25),
+                    (12.0, 0.25, 0.35),
+                ][i];
                 Tolerances::Hsv { h, s, v }
             }
             ColorModel::Rgb => Tolerances::Rgb {
-                t: [6.0, 12.0, 20.0][i],
+                t: [6.0, 12.0, 20.0, 28.0][i],
             },
         }
     }
@@ -471,12 +486,36 @@ mod tests {
     #[test]
     fn the_target_itself_is_tight_in_every_model_and_preset() {
         for model in [ColorModel::Oklch, ColorModel::Hsv, ColorModel::Rgb] {
-            for preset in [ShadePreset::Tight, ShadePreset::Normal, ShadePreset::Loose] {
+            for preset in [
+                ShadePreset::Tight,
+                ShadePreset::Normal,
+                ShadePreset::Loose,
+                ShadePreset::LoosePlus,
+            ] {
                 for hex in ["#3BD16F", "#808080", "#000000", "#FFFFFF", "#E03078"] {
                     let r = rules(model, &[preset.entry(model, rgb(hex))], &[]);
                     assert_eq!(r.classify(rgb(hex)), Class::Tight, "{model:?} {preset:?} {hex}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn loose_plus_takes_the_pink_start_of_a_purple() {
+        // Measured in Sober (MEASUREMENTS.md §10, ADR 0015): an appearance of #8604A0 begins light
+        // pink, the same hue and chroma but 0.17–0.20 lighter. Loose only keeps such a pink ("still
+        // there"); Loose+ starts an appearance on it.
+        let entry = |p: ShadePreset| p.entry(ColorModel::Oklch, rgb("#8604A0"));
+        let loose = rules(ColorModel::Oklch, &[entry(ShadePreset::Loose)], &[]);
+        let plus = rules(ColorModel::Oklch, &[entry(ShadePreset::LoosePlus)], &[]);
+        for pink in ["#C243DE", "#CB49DE", "#CF50DF", "#D051DE"] {
+            assert_eq!(loose.classify(rgb(pink)), Class::Wide, "{pink}");
+            assert_eq!(plus.classify(rgb(pink)), Class::Tight, "{pink}");
+        }
+        // Only lightness widens: neighboring hues stay out (Δh −23.6° and +23.4°, outside even
+        // the wide range), and so does a pale lilac far lighter still (ΔL +0.39).
+        for other in ["#5B0FB0", "#A0047A", "#F0B0FF"] {
+            assert_eq!(plus.classify(rgb(other)), Class::Absent, "{other}");
         }
     }
 

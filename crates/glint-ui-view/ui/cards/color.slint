@@ -69,7 +69,7 @@ export component ColorCard inherits Card {
         label: "Shades";
         Segmented {
             width: 220px;
-            options: ["Tight", "Normal", "Loose"];
+            options: ["Tight", "Normal", "Loose", "Loose+"];
             current <=> Form.shades-index;
             enabled: Form.editable && Form.has-color;
             changed => {

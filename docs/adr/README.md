@@ -19,6 +19,7 @@ plan also updates the affected plan section in the same commit.
 | [0012](0012-copy-pulses-ui-instead-of-a-shared-kit.md) | Copy Pulse's Slint files instead of sharing a kit | Accepted (owner decision) | §2, §12, §13, §14, §19–§21, A.7 |
 | [0013](0013-hold-to-watch-typed-colors-and-side-button-hotkeys.md) | Hold to watch, typed color codes, and mouse side buttons as hotkeys | Accepted (owner requests) | §9, §12.3, §19 |
 | [0014](0014-window-buffer-gap-and-lock-detection.md) | The window-buffer backend: its check gap and its self-check; D-Bus lock detection moves to Phase 6 | Accepted | §5.2, §8, §12.3, §19 |
+| [0015](0015-loose-plus-shades.md) | *Loose+*: a fourth shades option that takes much lighter and darker shades | Accepted (owner request) | §5.4, §12.3 |
 
 ## Template
 
