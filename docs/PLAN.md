@@ -88,7 +88,7 @@ Rust is in the same speed class as C and C++, not faster than them. What makes i
 
 Pulse already proves it: it's built with Rust and Slint and has exactly the look you want, so Glint can share its theme and components instead of re-creating them (§12.1). Beyond that, Slint fits well. Its declarative `.slint` files compile to native code, it has a small footprint, its software renderer keeps the UI completely off the GPU your game is using, and its live preview makes matching Pulse's look fast. Since 1.17 it also has built-in tooltips and a system-tray icon element; the current stable line is 1.18.x. Because the UI is a separate process, its performance can't affect clicking anyway, so the choice comes down to design control and developer experience, and Slint wins there.
 
-**License: GPLv3.** Glint is open source, so it uses Slint under GPLv3, which needs no on-screen credit, so no About screen is required. Under Slint's GPLv3 option the distributed `glint` UI binary must be GPLv3; to keep things simple this plan licenses the whole project GPL-3.0-or-later. The one exception is the shared Slint kit (§12.1), which stays MIT OR Apache-2.0 so Pulse can keep using it whatever Pulse's own license is (§21).
+**License: GPLv3.** Glint is open source, so it uses Slint under GPLv3, which needs no on-screen credit, so no About screen is required. Under Slint's GPLv3 option the distributed `glint` UI binary must be GPLv3; to keep things simple this plan licenses the whole project GPL-3.0-or-later. The files copied from Pulse (§12.1) come from MIT code, which a GPL project may include; they keep a note of their origin.
 
 | Alternative considered | Verdict | Why |
 |---|---|---|
@@ -622,45 +622,17 @@ socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/glint/glintd-0.sock"
 
 ## 12. UI plan matched to Pulse
 
-### 12.1 Reuse Pulse's Slint code first
+### 12.1 Copy Pulse's Slint code
 
-Pulse is already Rust + Slint, which changes the best path. Rather than rebuilding its look from screenshots, move Pulse's theme and components into a small shared crate that both apps use. Pulse and Glint then stay identical as either one evolves, and Glint's UI work shrinks to laying out its own cards.
+Glint is a separate project that borrows Pulse's look (ADR 0012). At the start of Phase 4, Pulse's theme and components are copied into `glint-ui-view/ui/pulse/`: the `Theme` global, its fonts, and its components (card, section label, row, dropdown, key picker, stepper, segmented control, toggle, the button variants, the disclosure row, and the dialog overlay). Glint's own pieces (swatch, shade strip, magnifier) are added next to them in the same style.
 
-1. Create a kit crate (call it `slint-kit`, or anything you like) containing Pulse's `Theme` global, its fonts, and its components: card, section label, row, dropdown, key picker, stepper, segmented control, toggle, the button variants, the disclosure row, and the dialog overlay.
-2. Point Pulse at the kit first and confirm with a screenshot comparison that it still looks pixel-identical. Only then build Glint on it.
-3. Pin both apps to the same Slint version so the shared `.slint` files compile the same way in both.
-4. Add Glint's new pieces (swatch, shade strip, magnifier) to the kit in Pulse's style; Pulse simply doesn't use them.
-
-Because Glint is open source, the kit is published along with it, which makes those Pulse components public. You own that code, so license the kit MIT OR Apache-2.0: Glint can use it under GPLv3, and Pulse can keep using it whatever Pulse's own license is.
-
-The kit crate exposes the path of its `ui/` folder, and each app hands that path to the Slint compiler as a library path, which makes `@kit/…` imports resolve:
-
-```rust
-// slint-kit/src/lib.rs
-pub const SLINT_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/ui");
-
-// glint-ui-view/build.rs  (slint-kit is listed under [build-dependencies]; ADR 0002)
-fn main() {
-    let config = slint_build::CompilerConfiguration::new().with_library_paths(
-        std::collections::HashMap::from([(
-            "kit".to_string(),
-            std::path::PathBuf::from(slint_kit::SLINT_DIR),
-        )]),
-    );
-    slint_build::compile_with_config("ui/app.slint", config).unwrap();
-}
-```
-
-```slint
-// glint-ui-view/ui/app.slint
-import { Theme, Card, Row, Stepper, Segmented, Toggle, PrimaryButton } from "@kit/index.slint";
-```
-
-Check the library-path section of the current Slint documentation for the exact API before wiring this up.
+- Pulse's repository is never changed. A later restyle of Pulse reaches Glint only when it is copied again.
+- The copied files keep a header that names where they came from (Pulse, MIT).
+- Glint keeps Pulse's Slint version and feature set (`=1.18.1`), so the copied files compile the same way.
 
 ### 12.2 The visual language
 
-These measurements come from your two screenshots (1920×1080, so they're close to logical pixels). Use them to verify the extracted kit, or as the spec for any piece that turns out to be missing from Pulse's source.
+These measurements come from your two screenshots (1920×1080, so they're close to logical pixels). Use them to verify the copied components, or as the spec for any piece that turns out to be missing from Pulse's source.
 
 Pulse is a compact, single-column, monochrome dark panel. There's no accent color at all: white plays the accent role (primary buttons, the selected segment, a switched-on toggle), and every other element is a step on a neutral gray ramp that matches Tailwind's "neutral" scale. That gives Glint one striking opportunity: **the only color anywhere in Glint's interface is the color you're tracking.** Swatches, shade strips and the magnifier are the only chromatic pixels on screen, so your target color always stands out.
 
@@ -690,7 +662,7 @@ Pulse is a compact, single-column, monochrome dark panel. There's no accent colo
 | Dialog title | ~17 px semibold | `text` |
 | Helper text | ~12–13 px | `text-muted` |
 
-The typeface looks like the desktop's default sans (Noto Sans); check Pulse's source. If Pulse relies on the system font, bundle that font in the kit so both apps look identical on every distribution.
+The typeface looks like the desktop's default sans (Noto Sans); check Pulse's source. If Pulse relies on the system font, bundle that font with Glint's UI so it looks the same on every distribution.
 
 | Element | Measurement |
 |---|---|
@@ -835,7 +807,7 @@ Write the way Pulse does: short, plain, sentence case, status facts joined with 
 
 ### 12.8 Slint implementation notes
 
-- **Files:** `ui/app.slint` (the window), `ui/cards/*.slint` (one file per card), `ui/dialogs.slint`; everything shared comes from `@kit`. They live in `glint-ui-view`, whose `build.rs` compiles them with `slint-build` and whose only Rust is the re-export of the generated components. Slint's generated code carries `allow(unsafe_code)`, which `#![forbid(unsafe_code)]` rejects, so all hand-written UI code lives in `glint-ui` under `forbid` (ADR 0002).
+- **Files:** `ui/app.slint` (the window), `ui/cards/*.slint` (one file per card), `ui/dialogs.slint`; the copied Pulse pieces live in `ui/pulse/` (§12.1). They live in `glint-ui-view`, whose `build.rs` compiles them with `slint-build` and whose only Rust is the re-export of the generated components. Slint's generated code carries `allow(unsafe_code)`, which `#![forbid(unsafe_code)]` rejects, so all hand-written UI code lives in `glint-ui` under `forbid` (ADR 0002).
 - **Window:** native decorations, like Pulse (it uses the window manager's title bar). Fixed width of 400 px; the content sits in a `Flickable` that only scrolls once *More options* is open. Set the XDG app id to `glint` so the window manager matches the window to `glint.desktop` (check the current Slint API for the app-id setter).
 - **Renderer:** the software renderer keeps the UI completely off the GPU. Select it with `SLINT_BACKEND=winit-software` in the `.desktop` file, or with Slint's `BackendSelector` API.
 - **Threads:** an IO thread reads the socket and hands each event to the UI with `slint::Weak::upgrade_in_event_loop`; telemetry is coalesced to at most 15 updates per second. Callbacks only enqueue requests and never block.
@@ -862,7 +834,7 @@ glint/
 ├── Cargo.toml                    workspace root
 ├── rust-toolchain.toml           stable + rustfmt + clippy + musl target
 ├── deny.toml                     cargo-deny: licenses and advisories
-├── LICENSE                       GPL-3.0 text (the kit ships its own MIT and Apache-2.0 files)
+├── LICENSE                       GPL-3.0 text
 ├── crates/
 │   ├── glint-core/               pure logic, no I/O, #![forbid(unsafe_code)]
 │   │   ├── src/color/            oklab.rs · hsv.rs · rule.rs · lut.rs
@@ -878,8 +850,8 @@ glint/
 │   │   │                         rt.rs · store.rs · lock.rs
 │   │   └── tests/                hot loop, glintd and glint-ctl end to end, lab scenarios (all on Xvfb)
 │   ├── glint-ui-view/            lib: the Slint-generated view; its code needs allow(unsafe_code) (ADR 0002)
-│   │   ├── build.rs              compiles ui/ with the kit's library path (§12.1)
-│   │   └── ui/                   app.slint · dialogs.slint · cards/*.slint
+│   │   ├── build.rs              compiles ui/ with slint-build
+│   │   └── ui/                   app.slint · dialogs.slint · cards/*.slint · pulse/ (copied from Pulse, §12.1)
 │   ├── glint-ui/                 bin: glint; every hand-written UI line, #![forbid(unsafe_code)]
 │   │   └── src/                  main.rs · client.rs · spawn.rs · bind.rs
 │   ├── glint-ctl/                lib + bin: glint-ctl
@@ -891,9 +863,7 @@ glint/
 └── .github/workflows/ci.yml
 ```
 
-The shared Slint kit lives wherever suits both projects best: a sibling crate in one combined workspace, a git submodule, or a small published crate (§21).
-
-Every source file starts with `// SPDX-License-Identifier: GPL-3.0-or-later` (the kit's files use `MIT OR Apache-2.0`).
+Every source file starts with `// SPDX-License-Identifier: GPL-3.0-or-later`. The files copied from Pulse also name their origin (Pulse, MIT).
 
 ---
 
@@ -915,7 +885,7 @@ Every source file starts with `// SPDX-License-Identifier: GPL-3.0-or-later` (th
 | `thiserror`, `anyhow` | libraries, binaries | Errors |
 | `clap` | binaries | Command lines |
 | `directories` | engine, ui | XDG paths |
-| `slint`, `slint-build`, your `slint-kit` | ui | UI |
+| `slint`, `slint-build` | ui | UI |
 | `assert_no_alloc` (debug builds) | engine | Enforce zero allocation in the loop |
 | `proptest`, `criterion` (dev) | core, engine | Property tests and benchmarks |
 
@@ -928,7 +898,7 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "GPL-3.0-or-later"      # Slint is used under GPLv3 (§2); the shared kit crate stays MIT OR Apache-2.0
+license = "GPL-3.0-or-later"      # Slint is used under GPLv3 (§2)
 
 [workspace.dependencies]
 x11rb = { version = "0.13.2", features = ["xtest", "shm", "damage", "composite", "randr", "xinput", "xfixes", "screensaver"] }
@@ -952,7 +922,7 @@ thiserror = "2"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 directories = "6"
-# Exactly Pulse's Slint version and feature set, so the shared kit compiles identically (ADR 0001)
+# Exactly Pulse's Slint version and feature set, so the copied Pulse files compile identically (ADR 0001, 0012)
 slint = { version = "=1.18.1", default-features = false, features = [
     "std", "compat-1-18", "backend-winit-x11", "renderer-femtovg", "renderer-software", "accessibility",
 ] }
@@ -1196,9 +1166,9 @@ Effort sizes are relative: S is a few days, M about a week or two, L longer, for
 - [ ] GitHub Actions: fmt, clippy, nextest, exhaustive test, Xvfb integration, cargo-deny.
 - **Exit:** every scenario in §16 that needs neither real hardware nor window mode passes in CI (`move`, `focus` and `ui-overlap` are Phase 5's exit, ADR 0010).
 
-### Phase 4 — UI on Pulse's kit (M)
+### Phase 4 — UI in Pulse's style (M)
 
-- [ ] Extract Pulse's theme and components into the shared kit; Pulse stays pixel-identical.
+- [ ] Copy Pulse's theme and components into `glint-ui-view` (Pulse's repository untouched, ADR 0012).
 - [ ] Hero card, COLOR, CLICKING and GAME WINDOW cards; the *Quit Glint* button.
 - [ ] Connect to or spawn the engine, handshake, subscriptions, live swatch.
 - [ ] Close dialog and policies (Ask / Keep running / Quit), engine-crash handling.
@@ -1249,7 +1219,6 @@ Effort sizes are relative: S is a few days, M about a week or two, L longer, for
 | Hotkeys collide with app keys | Medium | Annoyance | Rebindable; *Listen* vs. *Capture* modes |
 | Running under XWayland | Medium | Wayland-native apps are invisible | Detection banner |
 | Laptop battery drain | Medium | Shorter battery life | Eco preset; stop while the window isn't in front |
-| Extracting the kit breaks Pulse | Low | A Pulse regression | Pixel-compare Pulse before and after (Phase 4) |
 | A game's rules forbid automation | Depends on the game | Account bans | Scope note at the top of this plan; your call per game |
 
 ---
@@ -1257,8 +1226,8 @@ Effort sizes are relative: S is a few days, M about a week or two, L longer, for
 ## 21. Decisions worth revisiting
 
 1. **Name.** "Glint" is a placeholder.
-2. **License — decided.** Glint is open source: Slint is used under GPLv3 and the project is GPL-3.0-or-later, while the shared kit stays MIT OR Apache-2.0. If you'd rather keep the engine crates permissive, MIT OR Apache-2.0 everywhere except the UI also works, because only the `glint` binary links Slint.
-3. **Where the shared kit lives.** One combined workspace for Pulse and Glint, a git submodule, or a small published crate.
+2. **License — decided.** Glint is open source: Slint is used under GPLv3 and the project is GPL-3.0-or-later. If you'd rather keep the engine crates permissive, MIT OR Apache-2.0 everywhere except the UI also works, because only the `glint` binary links Slint.
+3. **Where the shared kit lives — decided: no kit.** Glint is a separate project and copies Pulse's Slint files once (ADR 0012).
 4. **Default hotkeys.** F6/F7/F8, with F8 shared with Pulse on purpose. If Glint's emergency stop shouldn't affect Pulse, change one of them.
 5. **The 40 ms *Gone after* default.** Right for most content; lower it for content that legitimately disappears and comes back faster.
 6. **DAMAGE as the default backend.** Decide after the Phase 6 measurements.
@@ -1639,12 +1608,12 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-### A.7 Slint pieces (reference only — prefer Pulse's own kit)
+### A.7 Slint pieces (reference only — prefer the files copied from Pulse)
 
 If Pulse's source already has these, use Pulse's versions; these sketches show the shape and the measured values.
 
 ```slint
-// slint-kit/ui/theme.slint — values measured from Pulse; Pulse's own source wins if it differs
+// glint-ui-view/ui/pulse/theme.slint — values measured from Pulse; Pulse's own source wins if it differs
 export global Theme {
     out property <color> bg: #0a0a0a;
     out property <color> surface: #141414;
@@ -1680,7 +1649,7 @@ export global Theme {
 ```
 
 ```slint
-// slint-kit/ui/components.slint (excerpt)
+// glint-ui-view/ui/pulse/components.slint (excerpt)
 import { Theme } from "theme.slint";
 
 export component Card inherits Rectangle {
@@ -1767,7 +1736,7 @@ export component Toggle inherits Rectangle {
 
 ```slint
 // glint-ui/ui/app.slint (excerpt: the close dialog overlay)
-import { Theme, TextButton, SecondaryButton, PrimaryButton } from "@kit/index.slint";
+import { Theme, TextButton, SecondaryButton, PrimaryButton } from "pulse/index.slint";
 
 export enum ClosePolicy { ask, keep-running, quit }
 

@@ -5,8 +5,8 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 ## Status
 
-- **Active phase:** none. Phase 3 (lab and CI) is complete, and Phase 4 waits for the owner's go-ahead and two
-  decisions: where the shared UI kit lives (§21.3), and permission to change Pulse's repository for the extraction.
+- **Active phase:** Phase 4 (UI in Pulse's style), started 2026-11-13. The owner decided against a shared kit:
+  Glint copies Pulse's Slint files and never changes Pulse (ADR 0012). Phase 3 is complete.
   All 17 lab scenarios pass in CI (https://github.com/Muk7tm/glint/actions/runs/43426780742) and at full count
   locally (MEASUREMENTS.md §9).
 - **Repository:** public at https://github.com/Muk7tm/glint (the owner chose GitHub, public, for CI).
@@ -64,9 +64,9 @@ listed in §13 (written as their content appears).
 - [x] GitHub Actions: fmt, clippy, nextest, exhaustive test, Xvfb integration, cargo-deny. *(`.github/workflows/ci.yml`: four jobs on ubuntu-24.04, about 5 minutes; nextest runs the exhaustive test alone and two sandboxes at a time; the optional picom job passes too. The first run found that the raw X connection needed an Xauthority file; fixed.)*
 - **Exit:** every scenario in §16 that needs neither real hardware nor window mode passes in CI (`move`, `focus` and `ui-overlap` are Phase 5's exit, ADR 0010). *(Met 2026-11-13: CI run 43426780742, all four jobs green.)*
 
-## Phase 4 — UI on Pulse's kit (M)
+## Phase 4 — UI in Pulse's style (M)
 
-- [ ] Extract Pulse's theme and components into the shared kit; Pulse stays pixel-identical.
+- [ ] Copy Pulse's theme and components into `glint-ui-view` (Pulse's repository untouched, ADR 0012).
 - [ ] Hero card, COLOR, CLICKING and GAME WINDOW cards; the *Quit Glint* button.
 - [ ] Connect to or spawn the engine, handshake, subscriptions, live swatch.
 - [ ] Close dialog and policies (Ask / Keep running / Quit), engine-crash handling.

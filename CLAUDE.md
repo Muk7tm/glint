@@ -75,14 +75,14 @@ When the plan proves wrong (an API differs, a measurement contradicts it, or a b
 The user's Rust + Slint app Pulse lives at `/home/muk7tm/Documents/VSCode/Tools/Pulse`. Its look is Glint's
 UI spec (PLAN §12).
 
-- Read it freely, for reference and for Phase 0's `spike-ui`.
-- Ask before changing anything in Pulse's repository (the kit extraction in Phase 4).
-- After extraction, Pulse must stay pixel-identical: compare screenshots to confirm.
-- Use the same Slint version and features as Pulse (currently `=1.18.1`); bump both together.
+- Read it freely. Glint copies Pulse's theme and components into `glint-ui-view/ui/pulse/` (ADR 0012); there is
+  no shared kit, and Glint is a separate project.
+- Never change anything in Pulse's repository.
+- Keep the copied files' origin note (Pulse, MIT), and use Pulse's Slint version and features (`=1.18.1`).
 
 ## Defaults and questions
 
-Use the plan's defaults. Ask only about choices the plan leaves open (PLAN §21: name, license, kit location,
+Use the plan's defaults. Ask only about choices the plan leaves open (PLAN §21: name, license,
 hotkeys), and only when they are actually reached.
 
 ## Environment notes
