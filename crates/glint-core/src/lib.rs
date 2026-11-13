@@ -7,6 +7,13 @@
 pub mod color;
 pub mod pattern;
 pub mod profile;
+pub mod schema;
 pub mod settings;
 pub mod trigger;
 pub mod validate;
+
+pub use color::{Class, Lut, Rgb};
+pub use pattern::{SamplePattern, Verdict};
+pub use profile::Profile;
+pub use settings::Settings;
+pub use trigger::{Hold, Step, Trigger, TriggerCfg};

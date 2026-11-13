@@ -593,7 +593,9 @@ socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/glint/glintd-0.sock"
 
 **Ownership.** The engine is the only writer, so headless use, the CLI and hotkeys all see the same state. The UI edits through `set_profile` and `set_settings`. Every change saves automatically: writes are debounced (300 ms after the last change) and atomic (write a temporary file, `fsync`, rename), so holding a stepper button doesn't hammer the disk.
 
-**Validation.** The engine rejects bad values with an `error` naming the field, and the UI shows it inline next to that field.
+**Defaults and typos.** Every section and field has a default (the values in Appendix B; a new profile watches the screen center and has no color yet), so a hand-written file needs only `schema_version` and `name`. Unknown fields are errors, so a typo can't silently fall back to a default (ADR 0008).
+
+**Validation.** The engine rejects bad values with an `error` naming the field, and the UI shows it inline next to that field. Warnings ("Gone after" under 15 ms, Max speed, a gray color, a hold that sets the real minimum gap, an exclusion that cuts into the range) are shown but don't block the change. A valid profile without a color, or in window mode without a window, can't be started yet.
 
 | Rule | Why |
 |---|---|
@@ -604,9 +606,12 @@ socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/glint/glintd-0.sock"
 | `rearm_absent_ms` 0–2000 (warning below 15) | Below 15 ms, flicker can count as a new appearance |
 | `max_clicks_per_sec` 1–100 | The safety stop must always exist |
 | Hotkeys distinct; action key ≠ any hotkey; no Ctrl+Alt+F1…F12 or Ctrl+Alt+Backspace | §9 |
-| Offset keeps the whole pattern on the monitor or inside the window | §5.1 |
+| Offset keeps the whole pattern on the monitor or inside the window (checked at Start; ±16,384 before that) | §5.1 |
+| Name 1–64 characters, no control characters; at most 16 include and 32 exclude colors | Sane files and table builds |
+| Tolerances at most ΔL 1, ΔC 0.5, Δh 180°, ΔS and ΔV 1 | Beyond these a range already covers the whole axis |
+| Hotkeys written `F7` or `Ctrl+Shift+F9`; `""` leaves start/stop or sample unbound; the emergency stop is always bound | §9, ADR 0008 |
 
-**Migrations.** Every file carries `schema_version`. On upgrade the engine migrates in memory, writes a `.bak` copy of the original, and saves the new version.
+**Migrations.** Every file carries `schema_version`. On upgrade the engine migrates in memory, one version at a time, writes a `.bak` copy of the original, and saves the new version. A file without `schema_version` is an error, and a file from a newer Glint is refused ("update Glint") rather than guessed at.
 
 **Import and export.** Profiles are plain TOML; `glint-ctl profile export` and `profile import` copy them, and *More options* in the UI offers the same.
 
@@ -1881,9 +1886,9 @@ close_policy = "ask"            # ask | keep-running | quit
 reacquire_window = true
 
 [hotkeys]
-start_stop = "F7"
-emergency_stop = "F8"
-sample_center = "F6"
+start_stop = "F7"               # e.g. "Ctrl+Shift+F9"; "" leaves it unbound
+emergency_stop = "F8"           # always bound
+sample_center = "F6"            # "" leaves it unbound
 mode = "toggle"                 # toggle | hold
 delivery = "listen"             # listen (XI2 raw; the app also gets the key) | capture (XGrabKey)
 

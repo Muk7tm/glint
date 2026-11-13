@@ -12,6 +12,7 @@ plan also updates the affected plan section in the same commit.
 | [0005](0005-color-rule-details.md) | Color rules: HSV and RGB tolerances, exclusion defaults, and a gray-pixel guard | Accepted | §5.4, §11, Appendix B |
 | [0006](0006-sample-pattern-details.md) | Sample patterns: k_stay = ⌈k_enter / 2⌉, plus and custom fields, the anchor pixel | Accepted | §5.1, §5.3, Appendix B |
 | [0007](0007-trigger-restarts-gaps-and-observed-absence.md) | Trigger: every restart latches, the hold sets a minimum gap, stalls aren't absence | Accepted | §1, §5.5, §7, A.1–A.2 |
+| [0008](0008-profile-and-settings-format.md) | Profile and settings files: defaults, strictness, limits and hotkey syntax | Accepted | §11, Appendix B |
 
 ## Template
 
