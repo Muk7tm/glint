@@ -5,7 +5,8 @@
 //! globals.
 
 use glint_core::color::ShadePreset;
-use glint_core::profile::{ActionKind, MouseButton, TargetMode};
+use glint_core::pattern::PatternKind;
+use glint_core::profile::{ActionKind, Backend, MouseButton, Speed, TargetMode};
 use glint_core::settings::{ClosePolicy, HotkeyMode, Settings};
 use glint_core::{Profile, Rgb};
 use glint_ui_view::{AppWindow, Form, Ui};
@@ -27,6 +28,127 @@ const SHADES: [ShadePreset; 4] = [
     ShadePreset::LoosePlus,
 ];
 const CLOSING: [ClosePolicy; 3] = [ClosePolicy::Ask, ClosePolicy::KeepRunning, ClosePolicy::Quit];
+/// *Pattern* (§12.4); a custom pattern selects none.
+const PATTERNS: [PatternKind; 5] = [
+    PatternKind::Pixel,
+    PatternKind::Center2x2,
+    PatternKind::Square3,
+    PatternKind::Square5,
+    PatternKind::Plus,
+];
+/// *Checks*; a number of checks per second selects none.
+const SPEEDS: [Speed; 3] = [Speed::Eco, Speed::Balanced, Speed::Max];
+/// *Read from*: Auto, Screen, Shared memory, Window buffer, Damage.
+const BACKENDS: [Backend; 5] = [
+    Backend::Auto,
+    Backend::Screen,
+    Backend::ScreenShm,
+    Backend::WindowBuffer,
+    Backend::Damage,
+];
+
+/// More options → DETECTION (§12.4).
+#[derive(Clone, PartialEq, Debug, Default)]
+pub struct Detection {
+    /// An index into [`PATTERNS`]; -1 for a custom pattern.
+    pub pattern: i32,
+    /// *Must match*: `k_enter`, of `pixels`.
+    pub must_match: i32,
+    pub pixels: i32,
+    /// An index into [`SPEEDS`]; -1 for a number of checks per second.
+    pub speed: i32,
+    pub speed_text: String,
+    /// *Gone after*, *Min gap*, *Safety stop*.
+    pub gone_after: i32,
+    pub min_gap: i32,
+    pub safety_stop: i32,
+    /// An index into [`BACKENDS`].
+    pub backend: i32,
+    pub offset_x: i32,
+    pub offset_y: i32,
+}
+
+/// `n` with a thousands separator, the way the window writes counts.
+pub fn thousands(n: u32) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn detection(profile: &Profile) -> Detection {
+    let (s, t) = (&profile.sampling, &profile.trigger);
+    let (must_match, pixels) = profile
+        .pattern()
+        .map_or((1, 1), |p| (i32::from(p.k_enter()), p.pixel_count() as i32));
+    Detection {
+        pattern: index_of(&PATTERNS, &s.pattern),
+        must_match,
+        pixels,
+        speed: index_of(&SPEEDS, &s.speed),
+        speed_text: match s.speed.checks_per_second() {
+            Some(n) => format!("{}/sec", thousands(n)),
+            None => "as fast as possible".into(),
+        },
+        gone_after: t.rearm_absent_ms as i32,
+        min_gap: t.min_fire_interval_ms as i32,
+        safety_stop: t.max_clicks_per_sec as i32,
+        backend: index_of(&BACKENDS, &s.backend).max(0),
+        offset_x: profile.target.offset.x,
+        offset_y: profile.target.offset.y,
+    }
+}
+
+/// The item at index `i`, if there is one.
+fn pick<T: Copy>(items: &[T], i: i32) -> Option<T> {
+    usize::try_from(i).ok().and_then(|i| items.get(i).copied())
+}
+
+/// The profile with the window's DETECTION edits `d` (`before` is what it showed).
+fn edit_detection(p: &mut Profile, d: &Detection, before: &Detection) {
+    if d.pattern != before.pattern {
+        if let Some(kind) = pick(&PATTERNS, d.pattern) {
+            // A new pattern starts from its own *Must match*.
+            p.sampling.pattern = kind;
+            p.sampling.k_enter = None;
+            p.sampling.k_stay = None;
+        }
+    } else if d.must_match != before.must_match {
+        p.sampling.k_enter = u8::try_from(d.must_match.max(1)).ok();
+        p.sampling.k_stay = None;
+    }
+    if d.speed != before.speed
+        && let Some(speed) = pick(&SPEEDS, d.speed)
+    {
+        p.sampling.speed = speed;
+    }
+    if d.backend != before.backend
+        && let Some(backend) = pick(&BACKENDS, d.backend)
+    {
+        p.sampling.backend = backend;
+    }
+    let t = &mut p.trigger;
+    if d.gone_after != before.gone_after {
+        t.rearm_absent_ms = d.gone_after.clamp(0, 2000) as u32;
+    }
+    if d.min_gap != before.min_gap {
+        t.min_fire_interval_ms = d.min_gap.clamp(0, 1000) as u32;
+    }
+    if d.safety_stop != before.safety_stop {
+        t.max_clicks_per_sec = d.safety_stop.clamp(1, 100) as u32;
+    }
+    if d.offset_x != before.offset_x {
+        p.target.offset.x = d.offset_x;
+    }
+    if d.offset_y != before.offset_y {
+        p.target.offset.y = d.offset_y;
+    }
+}
 
 /// The editable values the window shows.
 #[derive(Clone, PartialEq, Debug, Default)]
@@ -48,6 +170,7 @@ pub struct Fields {
     pub only_in_window: bool,
     /// Ask, keep running, quit.
     pub closing: i32,
+    pub detection: Detection,
 }
 
 /// The hero card (§12.3, §12.7).
@@ -104,6 +227,7 @@ pub fn fields(profile: &Profile, settings: &Settings) -> Fields {
         },
         only_in_window: profile.guards.only_in_window,
         closing: index_of(&CLOSING, &settings.close_policy).max(0),
+        detection: detection(profile),
     }
 }
 
@@ -134,6 +258,7 @@ pub fn edited(profile: &Profile, settings: &Settings, f: &Fields) -> (Profile, S
         None => p.action.kind = ActionKind::Key,
     }
     p.action.hold_ms = f.hold_ms.clamp(0, 200) as u32;
+    edit_detection(&mut p, &f.detection, &before.detection);
     p.guards.only_in_window = f.only_in_window;
     s.hotkeys.mode = if f.mode == 1 {
         HotkeyMode::Hold
@@ -227,6 +352,18 @@ pub fn apply(ui: &AppWindow, f: &Fields, hero: &Hero) {
     form.set_window_name(f.window_name.as_str().into());
     form.set_only_in_window(f.only_in_window);
     form.set_closing_index(f.closing);
+    let d = &f.detection;
+    form.set_pattern_index(d.pattern);
+    form.set_must_match(d.must_match);
+    form.set_pattern_pixels(d.pixels);
+    form.set_speed_index(d.speed);
+    form.set_speed_text(d.speed_text.as_str().into());
+    form.set_gone_after(d.gone_after);
+    form.set_min_gap(d.min_gap);
+    form.set_safety_stop(d.safety_stop);
+    form.set_backend_index(d.backend);
+    form.set_offset_x(d.offset_x);
+    form.set_offset_y(d.offset_y);
 
     let ui_state = ui.global::<Ui>();
     ui_state.set_button_text(hero.button.as_str().into());
@@ -248,6 +385,18 @@ pub fn read(ui: &AppWindow, shown: &Fields) -> Fields {
         mode: form.get_mode_index(),
         only_in_window: form.get_only_in_window(),
         closing: form.get_closing_index(),
+        detection: Detection {
+            pattern: form.get_pattern_index(),
+            must_match: form.get_must_match(),
+            speed: form.get_speed_index(),
+            gone_after: form.get_gone_after(),
+            min_gap: form.get_min_gap(),
+            safety_stop: form.get_safety_stop(),
+            backend: form.get_backend_index(),
+            offset_x: form.get_offset_x(),
+            offset_y: form.get_offset_y(),
+            ..shown.detection.clone()
+        },
         ..shown.clone()
     }
 }
@@ -321,6 +470,39 @@ mod tests {
         let mut f = fields(&p, &s);
         f.hold_ms = 900;
         assert_eq!(edited(&p, &s, &f).0.action.hold_ms, 200);
+    }
+
+    #[test]
+    fn detection_shows_and_edits_the_profile() {
+        let s = Settings::default();
+        let p = green();
+        let f = fields(&p, &s);
+        let d = &f.detection;
+        assert_eq!((d.pattern, d.must_match, d.pixels), (2, 5, 9));
+        assert_eq!((d.speed, d.speed_text.as_str()), (1, "2,000/sec"));
+        assert_eq!((d.gone_after, d.min_gap, d.safety_stop, d.backend), (40, 25, 15, 0));
+        // A new pattern starts from its own Must match.
+        let mut g = f.clone();
+        g.detection.pattern = 3;
+        g.detection.must_match = 2;
+        let (p2, _) = edited(&p, &s, &g);
+        assert_eq!((p2.sampling.pattern, p2.sampling.k_enter), (PatternKind::Square5, None));
+        // Then Must match, speed, Gone after, Read from and the offset.
+        let mut g = fields(&p2, &s);
+        g.detection.must_match = 7;
+        g.detection.speed = 2;
+        g.detection.gone_after = 120;
+        g.detection.backend = 4;
+        g.detection.offset_x = -12;
+        let (p3, _) = edited(&p2, &s, &g);
+        assert_eq!(p3.sampling.k_enter, Some(7));
+        assert_eq!((p3.sampling.speed, p3.sampling.backend), (Speed::Max, Backend::Damage));
+        assert_eq!((p3.trigger.rearm_absent_ms, p3.target.offset.x), (120, -12));
+        assert_eq!(fields(&p3, &s).detection.speed_text, "as fast as possible");
+        // Untouched values stay as they were.
+        assert_eq!(p3.trigger.min_fire_interval_ms, p.trigger.min_fire_interval_ms);
+        assert_eq!(thousands(500), "500");
+        assert_eq!(thousands(10_000), "10,000");
     }
 
     #[test]

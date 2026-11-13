@@ -12,6 +12,7 @@ import { HeroCard } from "cards/hero.slint";
 import { ColorCard } from "cards/color.slint";
 import { ClickingCard } from "cards/clicking.slint";
 import { WindowCard } from "cards/window.slint";
+import { DetectionCard } from "cards/detection.slint";
 import { EngineCard } from "cards/engine.slint";
 
 export { Ui, Form, Actions, Tone }
@@ -64,6 +65,8 @@ export component AppWindow inherits Window {
                         Actions.more-toggled();
                     }
                 }
+
+                if Ui.more-open: DetectionCard { }
 
                 if Ui.more-open: EngineCard { }
             }

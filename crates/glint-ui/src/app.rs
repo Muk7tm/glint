@@ -140,6 +140,13 @@ impl App {
         form.set_window_state(text.into());
         form.set_window_tone(tone);
         form.set_watch_note(self.watch_note().into());
+        // What *Read from* chose, and why (§12.4).
+        let now = if !self.connected || self.state.backend.is_empty() {
+            String::new()
+        } else {
+            format!("now: {}", self.state.backend)
+        };
+        form.set_backend_now(now.into());
         let banner = if self.xwayland {
             "This is XWayland: only X11 apps can be watched and clicked."
         } else {

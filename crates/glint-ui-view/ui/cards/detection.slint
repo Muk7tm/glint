@@ -1,0 +1,170 @@
+// SPDX-License-Identifier: MIT
+// More options → DETECTION (PLAN §12.4): plain words for the settings of §5. *Must match* is
+// k_enter, *Gone after* rearm_absent_ms, *Min gap* min_fire_interval_ms, *Safety stop*
+// max_clicks_per_sec, and *Read from* the capture backend.
+
+import { Theme } from "../pulse/theme.slint";
+import { Card, Segmented, FieldRow, NumberField, Select } from "../pulse/components.slint";
+import { Form, Actions } from "../state.slint";
+
+component Unit inherits Text {
+    color: Theme.text-muted;
+    font-size: Theme.font-caption;
+    vertical-alignment: center;
+    overflow: elide;
+}
+
+export component DetectionCard inherits Card {
+    title: "DETECTION";
+    FieldRow {
+        label: "Pattern";
+        Segmented {
+            width: 240px;
+            options: ["Pixel", "2×2", "3×3", "5×5", "Plus"];
+            current <=> Form.pattern-index;
+            enabled: Form.editable;
+            changed => {
+                Actions.form-changed();
+            }
+        }
+    }
+
+    FieldRow {
+        label: "Must match";
+        NumberField {
+            value <=> Form.must-match;
+            minimum: 1;
+            maximum: Form.pattern-pixels;
+            enabled: Form.editable && Form.pattern-pixels > 1;
+            edited => {
+                Actions.form-changed();
+            }
+        }
+
+        Unit {
+            text: "of " + Form.pattern-pixels + (Form.pattern-pixels == 1 ? " pixel" : " pixels");
+        }
+    }
+
+    FieldRow {
+        label: "Checks";
+        warning: Form.speed-index == 2 ? "Max keeps one CPU core busy." : "";
+        Segmented {
+            width: 168px;
+            options: ["Eco", "Balanced", "Max"];
+            current <=> Form.speed-index;
+            enabled: Form.editable;
+            changed => {
+                Actions.form-changed();
+            }
+        }
+
+        Unit {
+            text: Form.speed-text;
+        }
+    }
+
+    FieldRow {
+        label: "Gone after";
+        warning: Form.gone-after < 15 ? "Under 15 ms, flicker can count as a new appearance." : "";
+        NumberField {
+            value <=> Form.gone-after;
+            minimum: 0;
+            maximum: 2000;
+            enabled: Form.editable;
+            edited => {
+                Actions.form-changed();
+            }
+        }
+
+        Unit {
+            text: "ms without the color";
+        }
+    }
+
+    FieldRow {
+        label: "Min gap";
+        NumberField {
+            value <=> Form.min-gap;
+            minimum: 0;
+            maximum: 1000;
+            enabled: Form.editable;
+            edited => {
+                Actions.form-changed();
+            }
+        }
+
+        Unit {
+            text: "ms between clicks";
+        }
+    }
+
+    FieldRow {
+        label: "Safety stop";
+        NumberField {
+            value <=> Form.safety-stop;
+            minimum: 1;
+            maximum: 100;
+            enabled: Form.editable;
+            edited => {
+                Actions.form-changed();
+            }
+        }
+
+        Unit {
+            text: "clicks/sec";
+        }
+    }
+
+    FieldRow {
+        label: "Read from";
+        Select {
+            width: 140px;
+            name: "Read from";
+            model: ["Auto", "Screen", "Shared memory", "Window buffer", "Damage"];
+            current-index <=> Form.backend-index;
+            enabled: Form.editable;
+            open-upward: true;
+            selected => {
+                Actions.form-changed();
+            }
+        }
+
+        Unit {
+            text: Form.backend-now;
+        }
+    }
+
+    FieldRow {
+        label: "Offset";
+        Unit {
+            text: "X";
+        }
+
+        NumberField {
+            width: 96px;
+            value <=> Form.offset-x;
+            minimum: -2000;
+            maximum: 2000;
+            enabled: Form.editable;
+            edited => {
+                Actions.form-changed();
+            }
+        }
+
+        Unit {
+            text: "Y";
+        }
+
+        NumberField {
+            width: 96px;
+            value <=> Form.offset-y;
+            minimum: -2000;
+            maximum: 2000;
+            enabled: Form.editable;
+            edited => {
+                Actions.form-changed();
+            }
+        }
+    }
+}
