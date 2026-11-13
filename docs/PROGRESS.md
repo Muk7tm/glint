@@ -5,7 +5,7 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 ## Status
 
-- **Active phase:** Phase 0 (measure before building)
+- **Active phase:** Phase 1 (`glint-core`). Phase 0 is done except `spike-inject`, which waits for Xvfb/Xephyr.
 - **Waiting on the user:** install Xephyr and Xvfb, needed for `spike-inject` and every input-injecting run
   before Phase 2's exit:
   `sudo pacman -S --needed xorg-server-xephyr xorg-server-xvfb xorg-xwininfo xorg-xev`
@@ -29,7 +29,7 @@ listed in §13 (written as their content appears).
 
 ## Phase 1 — `glint-core` (M)
 
-- [ ] OKLab/OKLCh, HSV and RGB rules; include and exclude colors; hysteresis; achromatic guard.
+- [x] OKLab/OKLCh, HSV and RGB rules; include and exclude colors; hysteresis; achromatic guard. *(HSV/RGB fields and presets, exclusion defaults, gray-pixel guard: ADR 0005.)*
 - [ ] 2-bit lookup-table builder (rayon) + the exhaustive equality test.
 - [ ] Sample patterns and pixel agreement.
 - [ ] Trigger state machine + the six invariants as property tests.

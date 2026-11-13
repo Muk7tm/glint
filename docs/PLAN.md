@@ -319,8 +319,8 @@ Pixel agreement is Glint's main noise filter, and it adds zero delay: a single o
 | Model | Range shape | Use when |
 |---|---|---|
 | **OKLCh (default)** | L ± ΔL, C ± ΔC, h ± Δh | Shades of one hue, with the best separation from neighboring colors |
-| HSV | H ± ΔH, S and V within bounds | You think in color-picker terms |
-| RGB box | Each channel ± t | Exact-color matching, or compatibility with other tools |
+| HSV | H ± ΔH, S ± ΔS, V ± ΔV (`tol_h`, `tol_s`, `tol_v`) | You think in color-picker terms |
+| RGB box | Each channel ± t (`tol_rgb`, 0–255; 0 = exact) | Exact-color matching, or compatibility with other tools |
 
 **Shade presets** (starting values; Phase 1 tunes them against recorded palettes):
 
@@ -330,7 +330,7 @@ Pixel agreement is Glint's main noise filter, and it adds zero delay: a single o
 | **Normal (default)** | 0.10 | 0.05 | 7° | Lightness ± 10 · Colorfulness ± 5 · Hue ± 7° |
 | Loose | 0.16 | 0.08 | 12° | Lightness ± 16 · Colorfulness ± 8 · Hue ± 12° |
 
-The UI shows ΔL and ΔC multiplied by 100 so they fit Pulse's whole-number steppers.
+The UI shows ΔL and ΔC multiplied by 100 so they fit Pulse's whole-number steppers. HSV and RGB have their own presets (ADR 0005): ΔH · ΔS · ΔV of 4° · 0.08 · 0.08, 7° · 0.15 · 0.15 and 12° · 0.25 · 0.25, and t of 6, 12 and 20. A color entry keeps the tolerance fields of every model and only the profile's model reads them, so switching models loses nothing; a missing field takes the Normal value for an include color and the Tight value for an exclude color.
 
 **Several include colors.** A profile can hold several include colors (the same object under different lighting, for example). A pixel matches if it's inside any include range and inside no exclude range.
 
@@ -338,7 +338,7 @@ The UI shows ΔL and ΔC multiplied by 100 so they fit Pulse's whole-number step
 
 **Hysteresis.** Every include color has two ranges: a **tight** range (the tolerances above) that is needed to *start* an appearance, and a **wide** range (tolerances × `exit_margin`, default 1.5) that is enough to count as *still there*. A color wobbling right at the edge (gradients, anti-aliasing, lighting changes, video noise) therefore can't flicker in and out and re-fire. Exclusions apply to both ranges identically, so the tight range always stays inside the wide one.
 
-**Achromatic guard.** When your color has very low chroma (C < 0.02: grays, near-white, near-black), hue is meaningless and is ignored; only L and C are compared. The UI warns that grays are hard to tell apart from backgrounds.
+**Achromatic guard.** When your color has very low chroma (C < 0.02: grays, near-white, near-black), hue is meaningless and is ignored; only L and C are compared. The UI warns that grays are hard to tell apart from backgrounds. The guard also works the other way (ADR 0005): when your color *is* colored, a pixel with chroma below 0.02 fails the hue test, because a gray pixel's hue is noise (`#818080` has h 17°, `#808180` h 146°), so a muted target can't match gray noise in a speckled pattern. HSV uses the same rule with chroma `(max − min) / 255`, which, unlike saturation, stays near 0 for dark noise.
 
 **Auto range from samples.** Collect 3–10 real occurrences with the *Sample center* hotkey or *Record 5 s* (§12.9). Glint computes the min and max of L, C and h (circularly, so 355° and 5° are 10° apart), adds a margin of 20% of the spread with floors of ΔL 0.02, ΔC 0.015 and Δh 3°, and proposes the result for you to accept.
 
@@ -598,7 +598,7 @@ socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/glint/glintd-0.sock"
 | Checks per second 100–10,000, or `max` | Sane pacing |
 | `hold_ms` 0–200 | Stay far below key auto-repeat |
 | `k_stay ≤ k_enter ≤` pattern size | Enter must imply Present |
-| `exit_margin` 1.0–3.0; all tolerances > 0 | The wide range must contain the tight range |
+| `exit_margin` 1.0–3.0; all tolerances > 0 (`tol_rgb` may be 0: exact match) | The wide range must contain the tight range |
 | `rearm_absent_ms` 0–2000 (warning below 15) | Below 15 ms, flicker can count as a new appearance |
 | `max_clicks_per_sec` 1–100 | The safety stop must always exist |
 | Hotkeys distinct; action key ≠ any hotkey; no Ctrl+Alt+F1…F12 or Ctrl+Alt+Backspace | §9 |
@@ -1949,7 +1949,10 @@ exit_margin = 1.5               # wide range = tight range × 1.5
 hex = "#3BD16F"
 tol_l = 0.10                    # lightness ± (the UI shows 10)
 tol_c = 0.05                    # colorfulness ± (the UI shows 5)
-tol_h = 7.0                     # hue ± degrees
+tol_h = 7.0                     # hue ± degrees (oklch and hsv)
+# tol_s = 0.15, tol_v = 0.15    # hsv: saturation and value ± (0–1)
+# tol_rgb = 12                  # rgb: each channel ± (0–255; 0 = exact)
+# a missing tolerance takes the Normal preset's value (Tight for exclude colors), ADR 0005
 
 [[color.exclude]]
 hex = "#6BD13B"
