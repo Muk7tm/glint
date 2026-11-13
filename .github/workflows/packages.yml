@@ -65,9 +65,10 @@ jobs:
           need="$(objdump -T stage/glint | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)"
           echo "The window needs $need"
           test "$(printf '%s\n' "$need" GLIBC_2.35 | sort -V | tail -n 1)" = GLIBC_2.35
-          files="usr/bin/glint usr/bin/glintd usr/bin/glint-ctl usr/bin/glint-lab
-            usr/share/applications/glint.desktop usr/share/icons/hicolor/scalable/apps/glint.svg
-            usr/lib/systemd/user/glintd.service"
+          programs="usr/bin/glint usr/bin/glintd usr/bin/glint-ctl usr/bin/glint-lab
+            usr/share/applications/glint.desktop usr/share/icons/hicolor/scalable/apps/glint.svg"
+          # The installed packages also carry the optional systemd user unit; the AppImage doesn't.
+          files="$programs usr/lib/systemd/user/glintd.service"
           dpkg-deb --info glint_*.deb
           dpkg-deb --contents glint_*.deb | tee deb.txt
           for f in $files usr/share/doc/glint/copyright; do grep -q " \./$f\$" deb.txt; done
@@ -75,7 +76,7 @@ jobs:
           rpm -qlp glint-*.rpm | tee rpm.txt
           for f in $files usr/share/licenses/glint/LICENSE; do grep -qx "/$f" rpm.txt; done
           ./Glint-*-x86_64.AppImage --appimage-extract > /dev/null
-          for f in $files usr/share/licenses/glint/LICENSE LICENSE glint.desktop glint.svg AppRun; do
+          for f in $programs usr/share/licenses/glint/LICENSE LICENSE glint.desktop glint.svg AppRun; do
             test -e "squashfs-root/$f" || { echo "missing in the AppImage: $f"; exit 1; }
           done
           desktop-file-validate squashfs-root/glint.desktop
