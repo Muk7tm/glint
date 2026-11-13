@@ -186,3 +186,18 @@ fn soak() {
         assert!(r.appearances > 5, "{}", r.summary());
     }
 }
+
+#[test]
+fn moving_the_window() {
+    // Per round: the first appearance, and the one after the window is back home.
+    if let Some(r) = run("move", 3) {
+        assert_eq!(r.appearances - r.optional, 6, "{}", r.summary());
+    }
+}
+
+#[test]
+fn focus_changes() {
+    if let Some(r) = run("focus", 3) {
+        assert_eq!(r.appearances - r.optional, 6, "{}", r.summary());
+    }
+}

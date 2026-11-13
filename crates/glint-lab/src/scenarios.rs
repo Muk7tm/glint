@@ -8,14 +8,15 @@
 use std::time::{Duration, Instant};
 
 use glint_core::color::{ColorEntry, ColorModel, CompiledRules, ShadePreset};
-use glint_core::profile::{Action, ActionKind, KeySpec, Modifier, MouseButton};
+use glint_core::pattern::Rect;
+use glint_core::profile::{Action, ActionKind, KeySpec, Modifier, MouseButton, TargetMode};
 use glint_core::settings::Settings;
 use glint_core::{Class, Profile, Rgb};
 use glint_ipc::{Event, MAX_CLASSIFY, Request, StopCause};
 use glint_x11::keymap::{Keymap, keysym, keysym_from_name};
 use rustix::process::Signal;
 
-use crate::canvas::{Area, BACKGROUND, Drawn, GREEN, Input, InputKind, PATCH};
+use crate::canvas::{Area, BACKGROUND, Canvas, Drawn, GREEN, Input, InputKind, PATCH};
 use crate::host::Host;
 use crate::judge::{Change, Evidence, JudgeCfg, Mark, Report, Shown, judge};
 use crate::probe::Probe;
@@ -113,6 +114,20 @@ pub const SCENARIOS: &[Scenario] = &[
         run: live_edit,
     },
     Scenario {
+        name: "move",
+        about: "the target window moves, or resizes so the color lands under its new center: no click caused by it",
+        count: 8,
+        sandbox_only: Some("it moves windows around"),
+        run: moving,
+    },
+    Scenario {
+        name: "focus",
+        about: "another window takes the focus mid-appearance, then the target gets it back with the color showing: no click into the other window, none on refocus",
+        count: 8,
+        sandbox_only: Some("it moves the focus between windows"),
+        run: focus,
+    },
+    Scenario {
         name: "stall",
         about: "the engine frozen (SIGSTOP) for 30 ms around edges: no extra click; a miss only if the engine reported it",
         count: 50,
@@ -164,11 +179,7 @@ pub const SCENARIOS: &[Scenario] = &[
 ];
 
 /// The §16 scenarios that need later phases.
-pub const LATER: &[(&str, &str)] = &[
-    ("move", "needs window mode, which Phase 5 brings"),
-    ("focus", "needs window mode, which Phase 5 brings"),
-    ("ui-overlap", "needs the UI-overlap warning, which Phase 5 brings"),
-];
+pub const LATER: &[(&str, &str)] = &[("ui-overlap", "needs the UI-overlap warning, which Phase 5 brings")];
 
 /// The lab's profile: the green, Normal shades, everything else default.
 pub fn lab_profile() -> Profile {
@@ -763,6 +774,135 @@ fn live_edit(s: &mut Session) -> Result<Report, LabError> {
     let mut r = run.finish(s, title, false)?;
     r.notes.push(format!("{} profile edits while watching", n * 5));
     Ok(r)
+}
+
+/// The class of the lab's game window, and of the other window `focus` uses.
+const GAME: &str = "glint-lab-game";
+const OTHER: &str = "glint-lab-other";
+/// Where the game window starts.
+const HOME: Rect = Rect {
+    x: 200,
+    y: 150,
+    w: 400,
+    h: 300,
+};
+
+/// The engine follows a window change through an X event and the controller, so a move or a
+/// focus change takes effect a little after the request's round trip.
+fn settle_window(at: Drawn) -> Drawn {
+    Drawn {
+        sent: at.sent,
+        drawn: at.drawn + Duration::from_millis(20),
+    }
+}
+
+/// The lab's profile watching the game window's center.
+fn window_profile(s: &Session) -> Profile {
+    let mut p = s.profile();
+    p.target.mode = TargetMode::Window;
+    p.target.window.class = GAME.into();
+    p.guards.only_in_window = true;
+    p
+}
+
+/// Runs `body` with a game window as the session's canvas, then puts the full-screen canvas back
+/// (it stays mapped underneath, a uniform background).
+fn with_game_window(
+    s: &mut Session,
+    body: impl FnOnce(&mut Session) -> Result<Report, LabError>,
+) -> Result<Report, LabError> {
+    let game = Canvas::game(s.host.display(), HOME, GAME)?;
+    let full = std::mem::replace(&mut s.canvas, game);
+    let report = body(s);
+    s.canvas = full;
+    report
+}
+
+fn moving(s: &mut Session) -> Result<Report, LabError> {
+    with_game_window(s, |s| {
+        let n = s.count(8);
+        let title = s.title("move", n);
+        let mut rng = Rng::new(s.opts.seed);
+        let profile = window_profile(s);
+        let mut run = Run::begin(s, &profile, Duration::ZERO)?;
+        run.start(s)?;
+        for _ in 0..n {
+            appear(&mut run, s, &mut rng, GREEN, (100, 200), (100, 200))?;
+            // The window moves while the color shows: it moves with the window, and the
+            // engine's restart latches.
+            let (dx, dy) = (rng.below(120) as i32 - 60, rng.below(80) as i32 - 40);
+            let moved = Rect::new(HOME.x + dx, HOME.y + dy, HOME.w, HOME.h);
+            let at = s.canvas.set_rect(moved)?;
+            run.mark(settle_window(at), GREEN, Change::Restart);
+            sleep(rng.ms(120, 200));
+            // A patch 40 px right of the center; then the window widens by 80 px, which puts
+            // the patch under the new center.
+            run.clear(s)?;
+            sleep(rng.ms(100, 150));
+            let (ax, ay) = s.canvas.anchor();
+            let at = s.canvas.fill(GREEN, &[(ax + 30, ay - 10, 20, 20)])?;
+            run.mark(at, BACKGROUND, Change::Draw);
+            sleep(rng.ms(60, 120));
+            let wider = Rect::new(moved.x, moved.y, moved.w + 80, moved.h);
+            let at = s.canvas.set_rect(wider)?;
+            run.mark(settle_window(at), GREEN, Change::Restart);
+            sleep(rng.ms(120, 200));
+            // Back home, then a normal appearance clicks.
+            run.clear(s)?;
+            let at = s.canvas.set_rect(HOME)?;
+            run.mark(settle_window(at), BACKGROUND, Change::Restart);
+            sleep(rng.ms(120, 200));
+            appear(&mut run, s, &mut rng, GREEN, (60, 100), (100, 200))?;
+        }
+        let mut r = run.finish(s, title, false)?;
+        r.notes
+            .push(format!("{} moves and {} resizes while watching", n * 2, n));
+        Ok(r)
+    })
+}
+
+fn focus(s: &mut Session) -> Result<Report, LabError> {
+    with_game_window(s, |s| {
+        let n = s.count(8);
+        let title = s.title("focus", n);
+        let mut rng = Rng::new(s.opts.seed);
+        let profile = window_profile(s);
+        let other = Canvas::game(s.host.display(), Rect::new(700, 150, 300, 200), OTHER)?;
+        s.canvas.focus()?;
+        s.canvas.warp_inside()?;
+        let mut run = Run::begin(s, &profile, Duration::ZERO)?;
+        run.start(s)?;
+        for _ in 0..n {
+            appear(&mut run, s, &mut rng, GREEN, (100, 200), (100, 200))?;
+            run.clear(s)?;
+            sleep(rng.ms(100, 150));
+            // Another window takes the focus, with the pointer over it: watching pauses, and a
+            // click would land in the wrong window.
+            let at = other.focus()?;
+            other.warp_inside()?;
+            run.mark(settle_window(at), BACKGROUND, Change::Stop);
+            sleep(rng.ms(60, 100));
+            run.show(s, GREEN)?;
+            sleep(rng.ms(120, 200));
+            // Back in front with the color showing: the restart latches.
+            s.canvas.warp_inside()?;
+            let at = s.canvas.focus()?;
+            run.mark(settle_window(at), GREEN, Change::Restart);
+            sleep(rng.ms(120, 200));
+            appear(&mut run, s, &mut rng, GREEN, (100, 150), (100, 200))?;
+        }
+        let mut r = run.finish(s, title, false)?;
+        let strays = other
+            .take_inputs()
+            .iter()
+            .filter(|i| matches!(i.kind, InputKind::ButtonPress(_)))
+            .count();
+        if strays > 0 {
+            r.problems.push(format!("{strays} clicks landed in the other window"));
+        }
+        r.notes.push(format!("{n} focus changes away and back while watching"));
+        Ok(r)
+    })
 }
 
 /// Sends SIGCONT when dropped, so a scenario that fails mid-freeze never leaves the engine stopped.

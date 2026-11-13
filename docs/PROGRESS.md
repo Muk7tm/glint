@@ -76,8 +76,8 @@ listed in §13 (written as their content appears).
 ## Phase 5 — Window mode and guards (M)
 
 - [x] Pick window, client lookup, identity by `WM_CLASS`, automatic re-acquiring. *(glint-x11 `windows.rs`: the client carrying `WM_STATE`, its frame, class, title, PID, rectangle, the window list and the active window, tested on Xvfb. The engine's `Tracker` (`target.rs`) follows the picked window; `pick_window` uses the crosshair and refuses the desktop and Glint's own window. Checked on Xvfb with Openbox: picked, in front, closed ("waiting for it to open"), and re-acquired on reopening without starting.)*
-- [ ] Tracking through `StructureNotify`; epoch bump on move and resize.
-- [ ] *Only click in this window* (EWMH + fallback) with "In front" / "Not in front".
+- [x] Tracking through `StructureNotify`; epoch bump on move and resize. *(The tracker follows the client and its frame; a move or resize re-places the capture and restarts latched. The lab's `move` scenario moves the window while the color shows and resizes it so an off-center patch lands under the new center: no click from either.)*
+- [x] *Only click in this window* (EWMH + fallback) with "In front" / "Not in front". *(`_NET_ACTIVE_WINDOW` when the window manager publishes it, focus events otherwise; out of front pauses, back in front restarts latched. Checked on Xvfb with Openbox (EWMH) and by the lab's `focus` scenario without a window manager: no click into the other window, none on refocus.)*
 - [ ] `window-buffer` backend + self-check; compositor detection; XWayland banner; stop on screen lock; UI-overlap warning.
 - **Exit:** `move`, `focus` and `ui-overlap` pass, and the window-buffer backend is verified on your desktop with Sober.
 

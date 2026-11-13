@@ -12,7 +12,8 @@ use glint_x11::keymap::Keymap;
 use x11rb::connection::Connection;
 use x11rb::protocol::Event as XEvent;
 use x11rb::protocol::xproto::{
-    ChangeGCAux, ConnectionExt as _, CreateGCAux, CreateWindowAux, EventMask, InputFocus, Rectangle, WindowClass,
+    AtomEnum, ChangeGCAux, ConfigureWindowAux, ConnectionExt as _, CreateGCAux, CreateWindowAux, EventMask, Gravity,
+    InputFocus, PropMode, Rectangle, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
@@ -78,6 +79,17 @@ impl Canvas {
     /// Opens the canvas over `area` (in root coordinates), focuses it, and parks the pointer
     /// inside it away from the watched spot, so the engine's clicks and keys land on it.
     pub fn open(display: LocalDisplay, area: Rect) -> Result<Self, LabError> {
+        Self::create(display, area, None)
+    }
+
+    /// A game-like window at `area` for window mode (§8): managed, not override-redirect, with
+    /// `WM_CLASS` `class`, the title `class`, and `WM_STATE` (the sandbox has no window manager
+    /// to set it). It keeps its pixels when resized, so a resize moves the center over them.
+    pub fn game(display: LocalDisplay, area: Rect, class: &str) -> Result<Self, LabError> {
+        Self::create(display, area, Some(class))
+    }
+
+    fn create(display: LocalDisplay, area: Rect, class: Option<&str>) -> Result<Self, LabError> {
         let conn = Arc::new(glint_x11::conn::open(display).map_err(x)?);
         let root = conn.setup().roots[usize::from(display.screen)].root;
         let win = conn.generate_id().map_err(x)?;
@@ -86,7 +98,8 @@ impl Canvas {
             .event_mask(
                 EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::KEY_PRESS | EventMask::KEY_RELEASE,
             )
-            .override_redirect(1);
+            .bit_gravity(Gravity::NORTH_WEST)
+            .override_redirect(u32::from(class.is_none()));
         let (ax, ay) = (i16::try_from(area.x).map_err(x)?, i16::try_from(area.y).map_err(x)?);
         conn.create_window(
             0,
@@ -102,6 +115,31 @@ impl Canvas {
             &aux,
         )
         .map_err(x)?;
+        if let Some(class) = class {
+            let atom = |name: &[u8]| -> Result<u32, LabError> {
+                Ok(conn.intern_atom(false, name).map_err(x)?.reply().map_err(x)?.atom)
+            };
+            let wm_class = format!("{class}\0{class}\0");
+            conn.change_property8(
+                PropMode::REPLACE,
+                win,
+                AtomEnum::WM_CLASS,
+                AtomEnum::STRING,
+                wm_class.as_bytes(),
+            )
+            .map_err(x)?;
+            conn.change_property8(
+                PropMode::REPLACE,
+                win,
+                AtomEnum::WM_NAME,
+                AtomEnum::STRING,
+                class.as_bytes(),
+            )
+            .map_err(x)?;
+            let wm_state = atom(b"WM_STATE")?;
+            conn.change_property32(PropMode::REPLACE, win, wm_state, wm_state, &[1, 0])
+                .map_err(x)?;
+        }
         conn.map_window(win).map_err(x)?;
         conn.warp_pointer(x11rb::NONE, win, 0, 0, 0, 0, 20, 20).map_err(x)?;
         conn.set_input_focus(InputFocus::PARENT, win, x11rb::CURRENT_TIME)
@@ -141,9 +179,52 @@ impl Canvas {
         })
     }
 
-    /// The watched spot: the monitor's anchor pixel, in root coordinates.
+    /// The watched spot: the monitor's (or window's) anchor pixel, in root coordinates.
     pub fn anchor(&self) -> (i32, i32) {
         self.anchor
+    }
+
+    /// Moves or resizes the window, and puts the pointer back inside it.
+    pub fn set_rect(&mut self, area: Rect) -> Result<Drawn, LabError> {
+        let aux = ConfigureWindowAux::new()
+            .x(area.x)
+            .y(area.y)
+            .width(u32::from(area.w))
+            .height(u32::from(area.h));
+        let sent = Instant::now();
+        self.conn.configure_window(self.win, &aux).map_err(x)?;
+        self.conn
+            .warp_pointer(x11rb::NONE, self.win, 0, 0, 0, 0, 20, 20)
+            .map_err(x)?;
+        self.conn.sync().map_err(x)?;
+        self.origin = (area.x, area.y);
+        self.anchor = area.anchor();
+        Ok(Drawn {
+            sent,
+            drawn: Instant::now(),
+        })
+    }
+
+    /// Gives this window the keyboard focus (what *Only click in this window* follows without a
+    /// window manager).
+    pub fn focus(&self) -> Result<Drawn, LabError> {
+        let sent = Instant::now();
+        self.conn
+            .set_input_focus(InputFocus::PARENT, self.win, x11rb::CURRENT_TIME)
+            .map_err(x)?;
+        self.conn.sync().map_err(x)?;
+        Ok(Drawn {
+            sent,
+            drawn: Instant::now(),
+        })
+    }
+
+    /// Puts the pointer inside this window, so clicks land on it.
+    pub fn warp_inside(&self) -> Result<(), LabError> {
+        self.conn
+            .warp_pointer(x11rb::NONE, self.win, 0, 0, 0, 0, 20, 20)
+            .map_err(x)?;
+        self.conn.sync().map_err(x)
     }
 
     /// Fills `areas` (root coordinates) with `color` in one request, which the server carries out
