@@ -117,6 +117,10 @@ pub struct Binding {
     keycodes: Vec<u8>,
     button: Option<u8>,
     mods: Mods,
+    /// The hotkey as written, for messages.
+    name: String,
+    /// Grabbed in Capture mode, so the focused app doesn't get it (§9).
+    captured: bool,
 }
 
 /// The X button of a side-button hotkey name: `Mouse4` is button 8 (back), `Mouse5` button 9
@@ -166,9 +170,184 @@ pub fn bindings(settings: &Hotkeys, keymap: &Keymap) -> (Vec<Binding>, Vec<Strin
             keycodes,
             button,
             mods,
+            name: hotkey.to_string(),
+            captured: false,
         });
     }
     (out, problems)
+}
+
+/// Where the modifiers and lock keys sit in this server's modifier mapping (Shift, Lock and
+/// Control are fixed; Alt, Super, Num Lock and Scroll Lock are wherever the mapping puts them).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ModMasks {
+    pub alt: u16,
+    pub super_key: u16,
+    pub num_lock: u16,
+    pub scroll_lock: u16,
+}
+
+/// Num Lock and Scroll Lock (keysymdef.h).
+const NUM_LOCK: u32 = 0xff7f;
+const SCROLL_LOCK: u32 = 0xff14;
+/// The core modifier masks that never move.
+const SHIFT: u16 = 1;
+const LOCK: u16 = 2;
+const CONTROL: u16 = 4;
+
+impl ModMasks {
+    pub fn fetch(conn: &impl Connection, keymap: &Keymap) -> Result<Self, HotkeyError> {
+        use x11rb::protocol::xproto::ConnectionExt as _;
+        let map = conn.get_modifier_mapping()?.reply()?;
+        let per = usize::from(map.keycodes_per_modifier()).max(1);
+        let mut m = Self {
+            alt: 0,
+            super_key: 0,
+            num_lock: 0,
+            scroll_lock: 0,
+        };
+        // Mod1 to Mod5 are the 4th to 8th rows.
+        for (i, codes) in map.keycodes.chunks(per).enumerate().skip(3).take(5) {
+            let bit = 1u16 << i;
+            let has = |syms: &[u32]| syms.iter().any(|&s| keymap.keycodes(s).any(|k| codes.contains(&k)));
+            if has(&[keysym::ALT_L, keysym::ALT_R, keysym::META_L, keysym::META_R]) {
+                m.alt |= bit;
+            }
+            if has(&[keysym::SUPER_L, keysym::SUPER_R]) {
+                m.super_key |= bit;
+            }
+            if has(&[NUM_LOCK]) {
+                m.num_lock |= bit;
+            }
+            if has(&[SCROLL_LOCK]) {
+                m.scroll_lock |= bit;
+            }
+        }
+        Ok(m)
+    }
+
+    /// Every combination of the lock keys that are on this server: a grab is made for each, so
+    /// the hotkey works whatever Caps Lock, Num Lock and Scroll Lock are doing.
+    fn lock_combinations(&self) -> Vec<u16> {
+        let locks: Vec<u16> = [LOCK, self.num_lock, self.scroll_lock]
+            .into_iter()
+            .filter(|&m| m != 0)
+            .collect();
+        let mut out: Vec<u16> = (0..1u16 << locks.len())
+            .map(|set| {
+                locks
+                    .iter()
+                    .enumerate()
+                    .filter(|&(i, _)| set & (1 << i) != 0)
+                    .fold(0, |acc, (_, &m)| acc | m)
+            })
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+}
+
+impl Mods {
+    fn mask(self, m: &ModMasks) -> u16 {
+        let mut mask = 0;
+        if self.shift {
+            mask |= SHIFT;
+        }
+        if self.ctrl {
+            mask |= CONTROL;
+        }
+        if self.alt {
+            mask |= m.alt;
+        }
+        if self.super_key {
+            mask |= m.super_key;
+        }
+        mask
+    }
+}
+
+/// Capture mode (§9): grabs every hotkey's key or button on `root` (for each lock combination),
+/// so the focused app doesn't get it. Hotkeys are still recognized from raw events, which arrive
+/// whatever is grabbed. Returns what couldn't be grabbed (another program holds it), which the
+/// app then gets too.
+pub fn grab(conn: &impl Connection, root: u32, bindings: &mut [Binding], masks: &ModMasks) -> Vec<String> {
+    use x11rb::protocol::xproto::{ButtonIndex, ConnectionExt as _, EventMask, GrabMode, ModMask};
+    let locks = masks.lock_combinations();
+    let mut problems = Vec::new();
+    for b in bindings.iter_mut() {
+        let base = b.mods.mask(masks);
+        let mut ok = true;
+        for &lock in &locks {
+            let mods = ModMask::from(base | lock);
+            let checks: Vec<Result<(), String>> = match b.button {
+                Some(button) => vec![
+                    conn.grab_button(
+                        false,
+                        root,
+                        EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE,
+                        GrabMode::ASYNC,
+                        GrabMode::ASYNC,
+                        x11rb::NONE,
+                        x11rb::NONE,
+                        ButtonIndex::from(button),
+                        mods,
+                    )
+                    .map_err(|e| e.to_string())
+                    .and_then(|c| c.check().map_err(|e| e.to_string())),
+                ],
+                None => b
+                    .keycodes
+                    .iter()
+                    .map(|&k| {
+                        conn.grab_key(false, root, mods, k, GrabMode::ASYNC, GrabMode::ASYNC)
+                            .map_err(|e| e.to_string())
+                            .and_then(|c| c.check().map_err(|e| e.to_string()))
+                    })
+                    .collect(),
+            };
+            ok &= checks.iter().all(Result::is_ok);
+        }
+        b.captured = ok;
+        if !ok {
+            problems.push(format!("{}: another program holds it, so the game gets it too", b.name));
+        }
+    }
+    problems
+}
+
+/// Drops every key and button grab this client holds on `root`.
+pub fn ungrab(conn: &impl Connection, root: u32) -> Result<(), HotkeyError> {
+    use x11rb::protocol::xproto::{ButtonIndex, ConnectionExt as _, Grab, ModMask};
+    conn.ungrab_key(Grab::ANY, root, ModMask::ANY)?;
+    conn.ungrab_button(ButtonIndex::ANY, root, ModMask::ANY)?;
+    conn.flush()?;
+    Ok(())
+}
+
+/// What a grab took over when it fired.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Taken {
+    Keyboard,
+    Pointer,
+}
+
+/// Whether `event` is a captured hotkey's press, which made its passive grab active: the whole
+/// keyboard (or pointer) now comes to Glint, so the caller ungrabs it at once. The press itself
+/// stays swallowed; everything after it reaches the app again, so holding the key (Hold to watch)
+/// doesn't take the keyboard or mouse from the game, nor Glint's own clicks.
+pub fn captured_press(bindings: &[Binding], event: &Event) -> Option<Taken> {
+    match event {
+        Event::KeyPress(e) => bindings
+            .iter()
+            .any(|b| b.captured && b.keycodes.contains(&e.detail))
+            .then_some(Taken::Keyboard),
+        Event::ButtonPress(e) => bindings
+            .iter()
+            .any(|b| b.captured && b.button == Some(e.detail))
+            .then_some(Taken::Pointer),
+        _ => None,
+    }
 }
 
 /// Which modifier a keycode is, on `keymap`.

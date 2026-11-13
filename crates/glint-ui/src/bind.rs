@@ -7,7 +7,7 @@
 use glint_core::color::{ColorModel, ShadePreset, Tolerances};
 use glint_core::pattern::PatternKind;
 use glint_core::profile::{ActionKind, Backend, MouseButton, Speed, TargetMode};
-use glint_core::settings::{ClosePolicy, HotkeyMode, Settings};
+use glint_core::settings::{ClosePolicy, Delivery, HotkeyMode, Settings};
 use glint_core::{Profile, Rgb};
 use glint_ui_view::{AppWindow, Form, Ui};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -247,6 +247,8 @@ pub struct Fields {
     pub emergency: String,
     pub window_name: String,
     pub only_in_window: bool,
+    /// Capture mode: the game doesn't get the hotkeys (§9).
+    pub capture: bool,
     /// Ask, keep running, quit.
     pub closing: i32,
     pub detection: Detection,
@@ -306,6 +308,7 @@ pub fn fields(profile: &Profile, settings: &Settings) -> Fields {
             window.title_contains.clone()
         },
         only_in_window: profile.guards.only_in_window,
+        capture: settings.hotkeys.delivery == Delivery::Capture,
         closing: index_of(&CLOSING, &settings.close_policy).max(0),
         detection: detection(profile),
         range: range(profile),
@@ -347,6 +350,7 @@ pub fn edited(profile: &Profile, settings: &Settings, f: &Fields) -> (Profile, S
     } else {
         HotkeyMode::Toggle
     };
+    s.hotkeys.delivery = if f.capture { Delivery::Capture } else { Delivery::Listen };
     s.close_policy = usize::try_from(f.closing)
         .ok()
         .and_then(|i| CLOSING.get(i))
@@ -433,6 +437,7 @@ pub fn apply(ui: &AppWindow, f: &Fields, hero: &Hero) {
     form.set_emergency(f.emergency.as_str().into());
     form.set_window_name(f.window_name.as_str().into());
     form.set_only_in_window(f.only_in_window);
+    form.set_capture_hotkeys(f.capture);
     form.set_closing_index(f.closing);
     let d = &f.detection;
     form.set_pattern_index(d.pattern);
@@ -495,6 +500,7 @@ pub fn read(ui: &AppWindow, shown: &Fields) -> Fields {
         hold_ms: form.get_hold_ms(),
         mode: form.get_mode_index(),
         only_in_window: form.get_only_in_window(),
+        capture: form.get_capture_hotkeys(),
         closing: form.get_closing_index(),
         detection: Detection {
             pattern: form.get_pattern_index(),

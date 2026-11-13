@@ -3,7 +3,7 @@
 // watches while the key is held and stops the moment it's released (ADR 0013).
 
 import { Theme } from "../pulse/theme.slint";
-import { Card, Note, Tone, Segmented, Select, KeyField, NumberField, FieldRow } from "../pulse/components.slint";
+import { Card, Note, Tone, Segmented, Select, KeyField, NumberField, FieldRow, Toggle } from "../pulse/components.slint";
 import { Form, Actions } from "../state.slint";
 
 export component ClickingCard inherits Card {
@@ -97,6 +97,22 @@ export component ClickingCard inherits Card {
             font-size: Theme.font-caption;
             vertical-alignment: center;
         }
+    }
+
+    // Capture mode (§9): the game doesn't get the hotkeys.
+    Toggle {
+        text: "Keep the hotkeys from the game";
+        checked <=> Form.capture-hotkeys;
+        enabled: Form.editable;
+        toggled => {
+            Actions.form-changed();
+        }
+    }
+
+    if Form.capture-hotkeys: Note {
+        width: root.width - 2 * Theme.card-padding;
+        message: "They don't work while another program holds the whole keyboard.";
+        tone: Tone.warning;
     }
 
     if Form.err-general != "": Note {

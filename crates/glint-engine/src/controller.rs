@@ -32,6 +32,7 @@ use glint_x11::inject::{Action, Input, MAX_MODIFIERS};
 use glint_x11::keymap::{Keymap, keysym};
 use glint_x11::monitors::{self, Monitor};
 use x11rb::connection::Connection as _;
+use x11rb::protocol::xproto::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
 use crate::desktop::{DesktopEvent, Watch};
@@ -277,6 +278,15 @@ pub fn spawn_x_events(
 ) -> std::io::Result<()> {
     std::thread::Builder::new().name("glintd-x".into()).spawn(move || {
         while let Ok(event) = conn.wait_for_event() {
+            // A captured hotkey's grab just took the whole keyboard or pointer: give it back at
+            // once, so the game keeps its input while the key is held (§9, ADR 0020).
+            if let Some(taken) = hotkeys::captured_press(&bindings.load(), &event) {
+                let _ = match taken {
+                    hotkeys::Taken::Keyboard => conn.ungrab_keyboard(x11rb::CURRENT_TIME),
+                    hotkeys::Taken::Pointer => conn.ungrab_pointer(x11rb::CURRENT_TIME),
+                };
+                let _ = conn.flush();
+            }
             if let Some(key) = hotkeys::raw_key(&event) {
                 let Some((action, press)) = matcher.feed(key, &bindings.load()) else {
                     continue;
@@ -878,9 +888,25 @@ impl Controller {
 
     /// Resolves the hotkeys of the current settings on the current keymap (§9).
     pub fn update_bindings(&mut self) {
-        let (bindings, problems) = hotkeys::bindings(&self.settings.hotkeys, &self.keymap);
+        let (mut bindings, problems) = hotkeys::bindings(&self.settings.hotkeys, &self.keymap);
         for p in problems {
             eprintln!("glintd: hotkey {p}");
+        }
+        // Capture mode (§9): the hotkeys are grabbed, so the game doesn't get them.
+        if let Err(e) = hotkeys::ungrab(&*self.conn, self.root) {
+            eprintln!("glintd: hotkey grabs: {e}");
+        }
+        if self.settings.hotkeys.delivery == glint_core::settings::Delivery::Capture {
+            let taken = hotkeys::ModMasks::fetch(&*self.conn, &self.keymap)
+                .map(|masks| hotkeys::grab(&*self.conn, self.root, &mut bindings, &masks))
+                .unwrap_or_else(|e| vec![e.to_string()]);
+            for why in taken {
+                self.broadcast(Event::Warning {
+                    code: "capture".into(),
+                    message: format!("Hotkey {why}."),
+                    field: Some("hotkeys.delivery".into()),
+                });
+            }
         }
         self.bindings.store(Arc::new(bindings));
     }

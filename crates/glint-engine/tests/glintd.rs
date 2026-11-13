@@ -1029,3 +1029,64 @@ fn recording_the_spot_and_the_diagnostics() {
         assert!(text.contains(part), "{part:?} in\n{text}");
     }
 }
+
+/// §9 Capture, with Hold to watch (ADR 0020): holding the hotkey watches, the focused window (the
+/// game) never gets the hotkey, and keeps getting every other key while it's held.
+#[test]
+fn capture_with_hold_keeps_the_game_s_keyboard() {
+    use glint_x11::keymap::{Keymap, keysym_from_name};
+
+    let settings = "schema_version = 1\n[engine]\nrealtime = \"off\"\n\
+                    [hotkeys]\nstart_stop = \"F7\"\nmode = \"hold\"\ndelivery = \"capture\"\n";
+    let Some(engine) = Engine::start_with(Some(settings), &[]) else {
+        return;
+    };
+    let mut c = engine.client();
+    assert!(matches!(
+        c.call(
+            Request::SetProfile {
+                profile: Box::new(green_profile())
+            },
+            WAIT
+        )
+        .unwrap(),
+        Event::ProfileApplied { .. }
+    ));
+    // The game: a focused window that records the keys it gets.
+    let game = conn::open(engine.x.display()).unwrap();
+    let root = game.setup().roots[0].root;
+    let win = game.generate_id().unwrap();
+    let aux = CreateWindowAux::new()
+        .background_pixel(0x202020)
+        .event_mask(EventMask::KEY_PRESS | EventMask::KEY_RELEASE);
+    game.create_window(0, win, root, 10, 10, 300, 200, 0, WindowClass::INPUT_OUTPUT, 0, &aux)
+        .unwrap();
+    game.map_window(win).unwrap();
+    game.set_input_focus(InputFocus::PARENT, win, x11rb::CURRENT_TIME)
+        .unwrap();
+    game.sync().unwrap();
+    let keys = conn::open(engine.x.display()).unwrap();
+    let keyboard = physical_keyboard(&keys);
+    let map = Keymap::fetch(&keys).unwrap();
+    let code = |name: &str| map.keycode(keysym_from_name(name).unwrap()).unwrap();
+    let (f7, a) = (code("F7"), code("a"));
+
+    physical_key(&keys, keyboard, f7, true);
+    assert!(started(&mut c));
+    physical_key(&keys, keyboard, a, true);
+    physical_key(&keys, keyboard, a, false);
+    physical_key(&keys, keyboard, f7, false);
+    assert!(!started(&mut c));
+
+    let mut pressed = Vec::new();
+    let deadline = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < deadline {
+        match game.poll_for_event().unwrap() {
+            Some(XEvent::KeyPress(e)) if e.event == win => pressed.push(e.detail),
+            Some(_) => {}
+            None => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+    assert!(pressed.contains(&a), "the game lost the keyboard: {pressed:?}");
+    assert!(!pressed.contains(&f7), "the game got the hotkey: {pressed:?}");
+}

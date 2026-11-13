@@ -647,3 +647,111 @@ fn damage_wakes_for_changes_over_the_spot_only() {
     let _more = colored_window(&c, root, 390, 290, 30, 30, 0x10_10_10);
     assert!(!capture.wait_damage(Instant::now() + Duration::from_millis(60)).unwrap());
 }
+
+/// Capture mode (§9): a grabbed hotkey doesn't reach the focused window; its grab is dropped at
+/// once, so the keys after it do; without the grab the window gets the hotkey again.
+#[test]
+fn capture_keeps_the_hotkey_from_the_focused_window() {
+    use std::time::{Duration, Instant};
+
+    use glint_core::settings::Hotkeys;
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    use x11rb::protocol::xtest::ConnectionExt as _;
+
+    use crate::hotkeys::{self, ModMasks, Taken};
+    use crate::keymap::{Keymap, keysym_from_name};
+
+    let Some(x) = xvfb() else { return };
+    let rx = Receiver::open(x.display());
+    let c = conn::open(x.display()).unwrap();
+    let keymap = Keymap::fetch(&c).unwrap();
+    let f7 = keymap.keycode(keysym_from_name("F7").unwrap()).unwrap();
+    let a = keymap.keycode(keysym_from_name("a").unwrap()).unwrap();
+    let input = conn::open(x.display()).unwrap();
+    let tap = |key: u8| {
+        input.xtest_fake_input(2, key, 0, rx.root, 0, 0, 0).unwrap();
+        input.xtest_fake_input(3, key, 0, rx.root, 0, 0, 0).unwrap();
+        input.sync().unwrap();
+    };
+    let settings = Hotkeys {
+        start_stop: "F7".into(),
+        ..Hotkeys::default()
+    };
+    let (mut bindings, problems) = hotkeys::bindings(&settings, &keymap);
+    assert!(problems.is_empty(), "{problems:?}");
+
+    // Listening only: the window gets F7.
+    tap(f7);
+    assert!(rx.collect(150).contains(&Got::KeyPress(f7)));
+
+    // Captured: Glint gets the press instead, and gives the keyboard back at once.
+    let masks = ModMasks::fetch(&c, &keymap).unwrap();
+    assert!(hotkeys::grab(&c, rx.root, &mut bindings, &masks).is_empty());
+    tap(f7);
+    let mut taken = None;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while taken.is_none() && Instant::now() < deadline {
+        if let Some(event) = c.poll_for_event().unwrap() {
+            taken = hotkeys::captured_press(&bindings, &event);
+        }
+    }
+    assert_eq!(taken, Some(Taken::Keyboard));
+    c.ungrab_keyboard(x11rb::CURRENT_TIME).unwrap();
+    c.sync().unwrap();
+    tap(a);
+    let got = rx.collect(150);
+    assert!(!got.contains(&Got::KeyPress(f7)), "{got:?}");
+    assert!(got.contains(&Got::KeyPress(a)), "{got:?}");
+
+    // Grabs dropped: F7 reaches the window again.
+    hotkeys::ungrab(&c, rx.root).unwrap();
+    tap(f7);
+    assert!(rx.collect(150).contains(&Got::KeyPress(f7)));
+}
+
+/// Capture with a side button (§9): Mouse5's press is kept from the window under the pointer, the
+/// pointer is given back at once, and the next click reaches the window.
+#[test]
+fn capture_keeps_a_side_button_from_the_window() {
+    use std::time::{Duration, Instant};
+
+    use glint_core::settings::Hotkeys;
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    use x11rb::protocol::xtest::ConnectionExt as _;
+
+    use crate::hotkeys::{self, ModMasks, Taken};
+    use crate::keymap::Keymap;
+
+    let Some(x) = xvfb() else { return };
+    let rx = Receiver::open(x.display());
+    let c = conn::open(x.display()).unwrap();
+    let keymap = Keymap::fetch(&c).unwrap();
+    let input = conn::open(x.display()).unwrap();
+    let click = |button: u8| {
+        input.xtest_fake_input(4, button, 0, rx.root, 0, 0, 0).unwrap();
+        input.xtest_fake_input(5, button, 0, rx.root, 0, 0, 0).unwrap();
+        input.sync().unwrap();
+    };
+    let settings = Hotkeys {
+        start_stop: "Mouse5".into(),
+        ..Hotkeys::default()
+    };
+    let (mut bindings, _) = hotkeys::bindings(&settings, &keymap);
+    let masks = ModMasks::fetch(&c, &keymap).unwrap();
+    assert!(hotkeys::grab(&c, rx.root, &mut bindings, &masks).is_empty());
+    click(9);
+    let mut taken = None;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while taken.is_none() && Instant::now() < deadline {
+        if let Some(event) = c.poll_for_event().unwrap() {
+            taken = hotkeys::captured_press(&bindings, &event);
+        }
+    }
+    assert_eq!(taken, Some(Taken::Pointer));
+    c.ungrab_pointer(x11rb::CURRENT_TIME).unwrap();
+    c.sync().unwrap();
+    click(1);
+    let got = rx.collect(150);
+    assert!(!got.contains(&Got::ButtonPress(9)), "{got:?}");
+    assert!(got.contains(&Got::ButtonPress(1)), "{got:?}");
+}
