@@ -1,0 +1,16 @@
+[package]
+name = "glint-ui"
+description = "the Glint window (Slint)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "glint"
+path = "src/main.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "glint-core"
+description = "Glint's pure logic: color rules, lookup table, sample patterns, trigger state machine, profiles (no I/O)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bench]]
+name = "classify"
+harness = false
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,0 +1,70 @@
+# Glint workspace (docs/PLAN.md §13–§14). Version choices that differ from the
+# plan are recorded in docs/adr/0001-dependency-versions.md.
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+# Phase 0 spikes are throwaway crates in their own workspace.
+exclude = ["spikes"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later" # Slint is used under GPLv3 (§2); the shared kit crate stays MIT OR Apache-2.0
+
+[workspace.dependencies]
+glint-core = { path = "crates/glint-core" }
+glint-x11 = { path = "crates/glint-x11" }
+glint-ipc = { path = "crates/glint-ipc" }
+
+# Pure-Rust connection only: never enable `allow-unsafe-code` or `dl-libxcb` (§14).
+x11rb = { version = "0.13.2", features = ["xtest", "shm", "damage", "composite", "randr", "xinput", "xfixes", "screensaver"] }
+x11rb-protocol = { version = "0.13.2", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+arc-swap = "1"
+rtrb = "0.4"
+triple_buffer = "9"
+rayon = "1"
+rustix = { version = "1", features = ["fs", "process", "thread", "time", "mm"] }
+libc = "0.2"
+memmap2 = "0.9"
+signal-hook = "0.4"
+zbus = "5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+directories = "6"
+# Exactly Pulse's Slint version and feature set, so the shared kit compiles
+# identically in both apps (§12.1). Bump Pulse and Glint together.
+slint = { version = "=1.18.1", default-features = false, features = [
+    "std",
+    "compat-1-18",
+    "backend-winit-x11",
+    "renderer-femtovg",
+    "renderer-software",
+    "accessibility",
+] }
+slint-build = "=1.18.1"
+assert_no_alloc = "1"
+proptest = "1"
+criterion = "0.8"
+palette = "0.7"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = "line-tables-only" # readable perf and flamegraph traces
+panic = "abort"            # the engine's panic hook releases input first (§4.3)

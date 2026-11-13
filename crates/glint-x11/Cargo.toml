@@ -1,0 +1,12 @@
+[package]
+name = "glint-x11"
+description = "Glint's X11 backends: capture, XTest injection, monitors, windows, hotkeys, picking"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+
+[lints]
+workspace = true

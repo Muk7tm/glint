@@ -1,0 +1,16 @@
+[package]
+name = "glint-lab"
+description = "the Glint test lab"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "glint-lab"
+path = "src/main.rs"
+
+[dependencies]
+
+[lints]
+workspace = true
