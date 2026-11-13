@@ -1,4 +1,4 @@
-# Builds every package in a Debian 11 container, so the window needs no glibc newer than 2.31, and
+# Builds every package in an Ubuntu 22.04 container, so the window needs no glibc newer than 2.35, and
 # checks what each holds (PLAN §18, ADR 0022). Nothing is uploaded: Glint isn't published (ADR 0021).
 name: Packages
 
@@ -30,9 +30,11 @@ jobs:
   packages:
     name: build and check the packages (not uploaded)
     runs-on: ubuntu-24.04
-    container: debian:11
+    container: ubuntu:22.04
     steps:
       - name: Build tools, the window's libraries, and dpkg-deb and rpm for the checks
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: >-
           apt-get update && apt-get install -y --no-install-recommends
           ca-certificates curl git build-essential pkg-config libfontconfig-dev
@@ -62,7 +64,7 @@ jobs:
           set -eu
           need="$(objdump -T stage/glint | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)"
           echo "The window needs $need"
-          test "$(printf '%s\n' "$need" GLIBC_2.31 | sort -V | tail -n 1)" = GLIBC_2.31
+          test "$(printf '%s\n' "$need" GLIBC_2.35 | sort -V | tail -n 1)" = GLIBC_2.35
           files="usr/bin/glint usr/bin/glintd usr/bin/glint-ctl usr/bin/glint-lab
             usr/share/applications/glint.desktop usr/share/icons/hicolor/scalable/apps/glint.svg
             usr/lib/systemd/user/glintd.service"

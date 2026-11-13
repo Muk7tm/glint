@@ -1,4 +1,4 @@
-# 0022. Packaging: a static engine built apart from the window, staged files, a Debian 11 build in CI, and the engine copied out of the AppImage
+# 0022. Packaging: a static engine built apart from the window, staged files, an Ubuntu 22.04 build in CI, and the engine copied out of the AppImage
 
 - **Status:** Accepted
 - **Date:** 2026-11-13
@@ -30,6 +30,13 @@
    `main.rs`, whatever its help says.
 7. **AppStream metadata** (§13's `metainfo.xml`) only matters to software centers that list published
    packages.
+8. **Debian 11, the planned glibc 2.31 baseline, has reached its end of life.**
+   - Its security archive no longer serves the files its package index still lists, so `apt-get install`
+     failed in a `debian:11` container (CI run 43516401130).
+   - Ubuntu 22.04 is still supported, with glibc 2.35. Its programs run on Ubuntu 22.04, Debian 12, Fedora 36
+     and anything newer.
+   - `cargo zigbuild` could reach 2.31 without a container, but that is another toolchain to keep working, for
+     packages that are never published.
 
 ## Decision
 
@@ -47,10 +54,10 @@
   - A missing tool skips its package, or with `--require` fails the build.
 - **`[profile.dist]`** is the release profile with `debug = false` and `strip = "debuginfo"`. Function names
   stay, for backtraces.
-- **CI**, in `.github/workflows/packages.yml`, runs `build.sh --require` in a `debian:11` container, so the
-  window needs at most glibc 2.31 (point 4). It then checks:
+- **CI**, in `.github/workflows/packages.yml`, runs `build.sh --require` in an `ubuntu:22.04` container, so the
+  window needs at most glibc 2.35 (points 4 and 8). It then checks:
   - each package's contents;
-  - that the window needs no glibc newer than 2.31;
+  - that the window needs no glibc newer than 2.35;
   - that every program in the AppImage prints its version.
 
   It runs when packaging files change, or when started by hand, and uploads nothing.

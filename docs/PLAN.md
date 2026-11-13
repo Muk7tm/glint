@@ -1100,17 +1100,17 @@ Phase 3 implements every scenario above except `move`, `focus` and `ui-overlap`,
 | Artifact | How it's built | Runs on |
 |---|---|---|
 | `glintd`, `glint-ctl`, `glint-lab` | `--target x86_64-unknown-linux-musl --profile dist`, fully static (pure-Rust X11 and D-Bus), in a build command without the window (§14, ADR 0022) | Any x86_64 Linux with an X server |
-| `glint` (UI) | glibc build in CI's Debian 11 container (glibc 2.31); a local build needs the build machine's glibc (ADR 0022) | Any distribution with a normal X11 desktop |
+| `glint` (UI) | glibc build in CI's Ubuntu 22.04 container (glibc 2.35); a local build needs the build machine's glibc (ADR 0022) | Any distribution with a normal X11 desktop |
 | AppImage | All four programs, the `.desktop` file, the icon and the license, with an `AppRun` that runs any of them by name | Portable single file |
 | `glint` PKGBUILD (`packaging/aur/`) | Builds from source; install with `makepkg -si` | Arch and derivatives |
 | `.deb` / `.rpm` | `cargo-deb` / `cargo-generate-rpm`, from the programs staged in `dist/stage/` (metadata in `crates/glint-ui/Cargo.toml`) | Debian and Ubuntu / Fedora and openSUSE |
 | `install.sh` | Builds from source and installs for the current user into `~/.local` | Any distribution with Rust, a C compiler, pkg-config and fontconfig |
 | aarch64 builds | Same recipes | Later |
 
-`packaging/build.sh` builds the static programs, the window, the AppImage, the `.deb` and the `.rpm` into `dist/`. It skips a package whose tool is missing, or fails with `--require`. CI's `packages.yml` builds them all in Debian 11 and checks:
+`packaging/build.sh` builds the static programs, the window, the AppImage, the `.deb` and the `.rpm` into `dist/`. It skips a package whose tool is missing, or fails with `--require`. CI's `packages.yml` builds them all in Ubuntu 22.04 and checks:
 
 - what each package holds;
-- that the window needs no glibc newer than 2.31;
+- that the window needs no glibc newer than 2.35;
 - that the AppImage's programs run.
 
 Nothing is uploaded or published (ADR 0021, ADR 0022).

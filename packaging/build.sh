@@ -6,7 +6,7 @@
 #   packaging/build.sh --require  fail instead of skipping a package whose tool is missing (CI)
 #
 # glintd, glint-ctl and glint-lab are fully static (musl); the window is built against this
-# machine's glibc (CI builds it on Debian 11, for glibc 2.31). The AppImage needs appimagetool (or
+# machine's glibc (CI builds it on Ubuntu 22.04, for glibc 2.35). The AppImage needs appimagetool (or
 # APPIMAGETOOL=path), the .deb cargo-deb, and the .rpm cargo-generate-rpm.
 set -euo pipefail
 
@@ -47,10 +47,10 @@ build_programs() {
     local glibc
     glibc="$(objdump -T "$STAGE/glint" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1 || true)"
     say "The window needs ${glibc:-an unknown glibc version} or newer."
-    # The packages ask for glibc 2.31 (Debian 11), which only a build on Debian 11 keeps, as CI's does.
-    if [[ -n "$glibc" && "$(printf '%s\n' "$glibc" GLIBC_2.31 | sort -V | tail -n 1)" != GLIBC_2.31 ]]; then
-        say "Note: the .deb and .rpm ask for glibc 2.31, but this window needs ${glibc#GLIBC_}, so they only"
-        say "work where that is present. CI builds the portable ones, on Debian 11."
+    # The packages ask for glibc 2.35 (Ubuntu 22.04), which only a build there keeps, as CI's does.
+    if [[ -n "$glibc" && "$(printf '%s\n' "$glibc" GLIBC_2.35 | sort -V | tail -n 1)" != GLIBC_2.35 ]]; then
+        say "Note: the .deb and .rpm ask for glibc 2.35, but this window needs ${glibc#GLIBC_}, so they only"
+        say "work where that is present. CI builds the portable ones, on Ubuntu 22.04."
     fi
 }
 

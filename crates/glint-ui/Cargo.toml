@@ -40,7 +40,7 @@ chosen color appears there: once per appearance, never twice. It has a window to
 an engine that does the watching, and needs an X11 session."""
 section = "utils"
 priority = "optional"
-depends = "libc6 (>= 2.31), libgcc-s1, libfontconfig1, libx11-6, libx11-xcb1, libxcb1, libxcursor1, libxi6, libxrandr2, libxkbcommon-x11-0"
+depends = "libc6 (>= 2.35), libgcc-s1, libfontconfig1, libx11-6, libx11-xcb1, libxcb1, libxcursor1, libxi6, libxrandr2, libxkbcommon-x11-0"
 recommends = "rtkit"
 suggests = "xvfb"
 assets = [
@@ -69,7 +69,7 @@ assets = [
 ]
 
 [package.metadata.generate-rpm.requires]
-glibc = ">= 2.31"
+glibc = ">= 2.35"
 fontconfig = "*"
 libX11 = "*"
 libX11-xcb = "*"
