@@ -11,6 +11,20 @@ name = "glintd"
 path = "src/main.rs"
 
 [dependencies]
+anyhow.workspace = true
+arc-swap.workspace = true
+clap.workspace = true
+glint-core.workspace = true
+glint-x11.workspace = true
+rtrb.workspace = true
+signal-hook.workspace = true
+thiserror.workspace = true
+triple_buffer.workspace = true
+x11rb.workspace = true
+
+[dev-dependencies]
+glint-x11 = { workspace = true, features = ["sandbox"] }
+signal-hook.workspace = true
 
 [lints]
 workspace = true

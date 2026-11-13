@@ -45,7 +45,7 @@ listed in §13 (written as their content appears).
 
 - [x] X connections A–D, capability probe, pixel-format decoding. *(`wire.rs` raw client for A/B, tested byte-for-byte against x11rb's encoders; x11rb for C/D; local display parsing with a canonical name; tests against Xvfb.)*
 - [x] Monitor center through RandR; the `screen` backend. *(GetMonitors → CRTCs → root fallback; primary falls back to the first monitor (C9); GetImage over the raw path; tested end to end on Xvfb.)*
-- [ ] XTest injector (mouse and keys), timed release, defensive release, panic hook, signal handling.
+- [x] XTest injector (mouse and keys), timed release, defensive release, panic hook, signal handling. *(Injector on raw connection B, impervious; modifiers in one write; releases every button, modifier and profile key (C10); panic hook on D; SIGTERM/SIGINT/SIGHUP; all tested on Xvfb.)*
 - [ ] Hot loop, speed presets, control word, epoch restarts, event ring, telemetry thread.
 - [ ] IPC server (newline-delimited JSON) and `glint-ctl`.
 - [ ] Single-instance lock; settings store with debounced atomic writes.

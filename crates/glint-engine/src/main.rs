@@ -1,14 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `glintd`: the Glint engine (PLAN §13). Scaffold only; implemented in Phase 2.
+//! `glintd`: the Glint engine (PLAN §4.3).
 #![forbid(unsafe_code)]
-
-mod controller;
-mod hot;
-mod lifecycle;
-mod lock;
-mod rt;
-mod store;
-mod telemetry;
 
 use std::process::ExitCode;
 

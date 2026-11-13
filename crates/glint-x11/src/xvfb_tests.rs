@@ -132,3 +132,164 @@ fn the_screen_backend_sees_a_color_appear_at_the_monitor_center() {
     capture.grab(rect, &mut px).unwrap();
     assert_eq!(pattern.verdict(&lut, &px), Verdict::Absent);
 }
+
+/// A window under the pointer with the input focus, recording the input it receives.
+pub(crate) struct Receiver {
+    conn: RustConnection,
+    pub(crate) root: u32,
+    win: u32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Got {
+    ButtonPress(u8),
+    ButtonRelease(u8),
+    KeyPress(u8),
+    KeyRelease(u8),
+}
+
+impl Receiver {
+    pub(crate) fn open(display: crate::env::LocalDisplay) -> Self {
+        use x11rb::protocol::xproto::{EventMask, InputFocus};
+        let conn = conn::open(display).unwrap();
+        let root = conn.setup().roots[0].root;
+        let win = conn.generate_id().unwrap();
+        let mask = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::KEY_PRESS | EventMask::KEY_RELEASE;
+        let aux = CreateWindowAux::new()
+            .background_pixel(0x202020)
+            .event_mask(mask)
+            .override_redirect(1);
+        conn.create_window(0, win, root, 0, 0, 400, 300, 0, WindowClass::INPUT_OUTPUT, 0, &aux)
+            .unwrap();
+        conn.map_window(win).unwrap();
+        conn.warp_pointer(x11rb::NONE, win, 0, 0, 0, 0, 200, 150).unwrap();
+        conn.set_input_focus(InputFocus::PARENT, win, x11rb::CURRENT_TIME)
+            .unwrap();
+        conn.sync().unwrap();
+        Self { conn, root, win }
+    }
+
+    /// Every input event that arrives within `ms`.
+    pub(crate) fn collect(&self, ms: u64) -> Vec<Got> {
+        use x11rb::protocol::Event;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+        let mut out = Vec::new();
+        while std::time::Instant::now() < deadline {
+            match self.conn.poll_for_event().unwrap() {
+                Some(Event::ButtonPress(e)) if e.event == self.win => out.push(Got::ButtonPress(e.detail)),
+                Some(Event::ButtonRelease(e)) if e.event == self.win => out.push(Got::ButtonRelease(e.detail)),
+                Some(Event::KeyPress(e)) if e.event == self.win => out.push(Got::KeyPress(e.detail)),
+                Some(Event::KeyRelease(e)) if e.event == self.win => out.push(Got::KeyRelease(e.detail)),
+                Some(_) => {}
+                None => std::thread::sleep(std::time::Duration::from_millis(1)),
+            }
+        }
+        out
+    }
+}
+
+fn injector(x: &Xvfb, action: crate::inject::Action) -> crate::inject::Injector {
+    let c = conn::open(x.display()).unwrap();
+    let caps = caps::probe(&c).unwrap();
+    let (b, setup) = RawConn::connect(x.display()).unwrap();
+    crate::inject::Injector::new(b, setup.roots[0].root, caps.xtest_opcode, action).unwrap()
+}
+
+#[test]
+fn the_keymap_resolves_names_on_a_real_server() {
+    use crate::keymap::{Keymap, keysym, keysym_from_name};
+    let Some(x) = xvfb() else { return };
+    let c = conn::open(x.display()).unwrap();
+    let map = Keymap::fetch(&c).unwrap();
+    let f7 = map.keycode(keysym_from_name("F7").unwrap()).unwrap();
+    let e = map.keycode(keysym_from_name("e").unwrap()).unwrap();
+    let shift = map.keycode(keysym::SHIFT_L).unwrap();
+    assert!(f7 >= 8 && e >= 8 && f7 != e, "F7 {f7}, e {e}");
+    let mods = map.modifier_keycodes();
+    assert!(
+        mods.contains(&shift) && mods.contains(&map.keycode(keysym::CONTROL_L).unwrap()),
+        "{mods:?}"
+    );
+}
+
+#[test]
+fn a_click_is_one_press_then_one_release_after_the_hold() {
+    use std::time::{Duration, Instant};
+
+    use crate::inject::{Action, Input};
+    let Some(x) = xvfb() else { return };
+    let rx = Receiver::open(x.display());
+    let mut inj = injector(&x, Action::new(Input::Button(1), Duration::from_millis(30)));
+    let t0 = Instant::now();
+    inj.press(t0).unwrap();
+    inj.service(t0 + Duration::from_millis(10)).unwrap(); // hold not over yet
+    assert!(inj.is_held());
+    assert_eq!(rx.collect(50), [Got::ButtonPress(1)]);
+    inj.service(t0 + Duration::from_millis(30)).unwrap();
+    assert!(!inj.is_held());
+    assert_eq!(rx.collect(50), [Got::ButtonRelease(1)]);
+    inj.service(t0 + Duration::from_millis(60)).unwrap(); // nothing more
+    assert_eq!(rx.collect(50), []);
+}
+
+#[test]
+fn a_key_with_modifiers_and_a_press_while_held() {
+    use std::time::{Duration, Instant};
+
+    use crate::inject::{Action, Input};
+    use crate::keymap::{Keymap, keysym};
+    let Some(x) = xvfb() else { return };
+    let rx = Receiver::open(x.display());
+    let map = Keymap::fetch(&conn::open(x.display()).unwrap()).unwrap();
+    let (shift, ctrl) = (
+        map.keycode(keysym::SHIFT_L).unwrap(),
+        map.keycode(keysym::CONTROL_L).unwrap(),
+    );
+    let action = Action::new(Input::Key(26), Duration::from_millis(5)).with_modifiers(&[shift, ctrl]);
+    assert_eq!(action.modifiers(), [shift, ctrl]);
+    let mut inj = injector(&x, action);
+    let t0 = Instant::now();
+    inj.press(t0).unwrap();
+    inj.service(t0 + Duration::from_millis(5)).unwrap();
+    let k = Got::KeyPress;
+    let r = Got::KeyRelease;
+    assert_eq!(rx.collect(50), [k(shift), k(ctrl), k(26), r(26), r(ctrl), r(shift)]);
+    // Two presses with no service in between: the first is released before the second.
+    inj.set_action(Action::new(Input::Button(3), Duration::from_millis(100)));
+    inj.press(t0 + Duration::from_millis(10)).unwrap();
+    inj.press(t0 + Duration::from_millis(11)).unwrap();
+    inj.release_now().unwrap();
+    assert_eq!(
+        rx.collect(50),
+        [
+            Got::ButtonPress(3),
+            Got::ButtonRelease(3),
+            Got::ButtonPress(3),
+            Got::ButtonRelease(3)
+        ]
+    );
+}
+
+#[test]
+fn releasing_everything_from_either_connection() {
+    use std::time::{Duration, Instant};
+
+    use crate::inject::{Action, Input, release_everything_on};
+    let Some(x) = xvfb() else { return };
+    let rx = Receiver::open(x.display());
+    let mut inj = injector(&x, Action::new(Input::Button(1), Duration::from_secs(10)));
+    // Nothing held: releasing everything produces no events at all.
+    inj.release_everything(&[26, 50]).unwrap();
+    assert_eq!(rx.collect(50), []);
+    // Held on B, released from another connection (the panic path's D).
+    inj.press(Instant::now()).unwrap();
+    assert_eq!(rx.collect(50), [Got::ButtonPress(1)]);
+    let d = conn::open(x.display()).unwrap();
+    release_everything_on(&d, rx.root, &[26]).unwrap();
+    assert_eq!(rx.collect(50), [Got::ButtonRelease(1)]);
+    // Held on B, released by B's own defensive release.
+    inj.press(Instant::now()).unwrap();
+    inj.release_everything(&[]).unwrap();
+    assert_eq!(rx.collect(50), [Got::ButtonPress(1), Got::ButtonRelease(1)]);
+    assert!(!inj.is_held());
+}

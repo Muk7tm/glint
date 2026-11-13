@@ -12,6 +12,7 @@ pub mod env;
 pub mod format;
 pub mod hotkeys;
 pub mod inject;
+pub mod keymap;
 pub mod monitors;
 pub mod picker;
 #[cfg(any(test, feature = "sandbox"))]
