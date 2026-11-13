@@ -24,6 +24,8 @@ pub enum Notice {
     MaybeMissed,
     /// The hot thread has exited.
     Exited,
+    /// DAMAGE proved unreliable and the hot thread went back to polling (§5.2).
+    DamageUnreliable,
     /// For trace subscribers (`glint-lab`), built only while one is connected.
     Trace(TraceNotice),
 }
@@ -169,6 +171,7 @@ impl Collector {
                 None
             }
             HotEvent::Exited => Some(Notice::Exited),
+            HotEvent::DamageUnreliable { .. } => Some(Notice::DamageUnreliable),
         }
     }
 

@@ -12,6 +12,7 @@
 use std::io::{self, Read, Write};
 use std::os::linux::net::SocketAddrExt as _;
 use std::os::unix::net::{SocketAddr, UnixStream};
+use std::time::Instant;
 
 use rustix::net::RecvFlags;
 use x11rb_protocol::connect::Connect;
@@ -76,6 +77,15 @@ pub struct RawConn {
     events: u64,
     async_errors: u64,
     last_async_error: Option<XError>,
+    /// The first resource id this client may create, from the setup (0 for a test stream).
+    first_id: u32,
+    /// DAMAGE (§5.2): the event code of DamageNotify once followed, the watched rectangle
+    /// `(x0, y0, x1, y1)`, and whether any damage, and any touching the rectangle, came in since
+    /// they were last taken.
+    damage_event: Option<u8>,
+    damage_rect: Option<(i32, i32, i32, i32)>,
+    damage_any: bool,
+    damage_hit: bool,
 }
 
 impl RawConn {
@@ -107,7 +117,11 @@ impl RawConn {
             }
         }
         let setup = connect.into_setup().map_err(|e| WireError::Setup(e.to_string()))?;
-        Ok((Self::from_stream(stream), setup))
+        let mut conn = Self::from_stream(stream);
+        // The lowest id in the client's range, stepped by the mask's lowest bit.
+        let step = setup.resource_id_mask & setup.resource_id_mask.wrapping_neg();
+        conn.first_id = setup.resource_id_base | step;
+        Ok((conn, setup))
     }
 
     /// Wraps an already set-up stream (also used by the tests).
@@ -121,6 +135,11 @@ impl RawConn {
             events: 0,
             async_errors: 0,
             last_async_error: None,
+            first_id: 0,
+            damage_event: None,
+            damage_rect: None,
+            damage_any: false,
+            damage_hit: false,
         }
     }
 
@@ -166,7 +185,7 @@ impl RawConn {
                     return Ok(full);
                 }
                 _ => {
-                    self.events += 1;
+                    self.note_event(self.start);
                     self.start += len;
                 }
             }
@@ -197,7 +216,7 @@ impl RawConn {
                 let e = parse_error(p);
                 self.record_async_error(e);
             } else {
-                self.events += 1;
+                self.note_event(self.start);
             }
             self.start += len;
         }
@@ -237,6 +256,80 @@ impl RawConn {
     }
 
     /// The length of the packet at `start` if it's completely buffered.
+    /// The first resource id this client may create (DAMAGE's object on connection A), or
+    /// `None` for a connection without a setup.
+    pub fn first_id(&self) -> Option<u32> {
+        (self.first_id != 0).then_some(self.first_id)
+    }
+
+    /// Notes DamageNotify events (code `event`) from now on (§5.2).
+    pub fn follow_damage(&mut self, event: u8) {
+        self.damage_event = Some(event);
+    }
+
+    /// The rectangle whose damage counts as a hit, or none.
+    pub fn set_damage_rect(&mut self, rect: Option<(i16, i16, u16, u16)>) {
+        self.damage_rect = rect.map(|(x, y, w, h)| {
+            let (x, y) = (i32::from(x), i32::from(y));
+            (x, y, x + i32::from(w), y + i32::from(h))
+        });
+        self.damage_hit = false;
+    }
+
+    /// Whether any damage, and any touching the rectangle, came in since the last call.
+    pub fn take_damage(&mut self) -> (bool, bool) {
+        let seen = (self.damage_any, self.damage_hit);
+        (self.damage_any, self.damage_hit) = (false, false);
+        seen
+    }
+
+    /// Whether damage touching the rectangle came in and hasn't been taken yet.
+    pub fn damage_pending(&self) -> bool {
+        self.damage_hit
+    }
+
+    /// Waits until the server has sent something, or `deadline` passes (`false`).
+    pub fn wait_readable(&mut self, deadline: Instant) -> Result<bool, WireError> {
+        use rustix::event::{PollFd, PollFlags, Timespec};
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let timeout = Timespec {
+                tv_sec: i64::try_from(left.as_secs()).unwrap_or(i64::MAX),
+                tv_nsec: i64::from(left.subsec_nanos()),
+            };
+            let mut fds = [PollFd::new(&self.stream, PollFlags::IN)];
+            match rustix::event::poll(&mut fds, Some(&timeout)) {
+                Ok(0) => return Ok(false),
+                Ok(_) => return Ok(true),
+                Err(rustix::io::Errno::INTR) => {}
+                Err(e) => return Err(io::Error::from(e).into()),
+            }
+        }
+    }
+
+    /// Counts the event at `at` in the buffer, and notes DamageNotify: its area is the bounding
+    /// box of the damage so far, in the damaged drawable's coordinates.
+    fn note_event(&mut self, at: usize) {
+        self.events += 1;
+        let p = &self.buf[at..at + 32];
+        if Some(p[0] & 0x7f) != self.damage_event {
+            return;
+        }
+        let x = i32::from(i16::from_ne_bytes([p[16], p[17]]));
+        let y = i32::from(i16::from_ne_bytes([p[18], p[19]]));
+        let w = i32::from(u16::from_ne_bytes([p[20], p[21]]));
+        let h = i32::from(u16::from_ne_bytes([p[22], p[23]]));
+        self.damage_any = true;
+        if let Some((x0, y0, x1, y1)) = self.damage_rect
+            && x < x1
+            && x + w > x0
+            && y < y1
+            && y + h > y0
+        {
+            self.damage_hit = true;
+        }
+    }
+
     fn complete_packet(&self) -> Result<Option<usize>, WireError> {
         let have = self.end - self.start;
         if have < 32 {
@@ -337,6 +430,51 @@ pub fn shm_get_image(
     r[20] = 2; // ZPixmap
     r[24..28].copy_from_slice(&seg.to_ne_bytes());
     r[28..32].copy_from_slice(&offset.to_ne_bytes());
+    r
+}
+
+/// DAMAGE `QueryVersion` (minor 0) for 1.1, which a client must send before other DAMAGE
+/// requests.
+pub fn damage_query_version(opcode: u8) -> [u8; 12] {
+    let mut r = [0u8; 12];
+    r[0] = opcode;
+    r[2..4].copy_from_slice(&3u16.to_ne_bytes());
+    r[4..8].copy_from_slice(&1u32.to_ne_bytes());
+    r[8..12].copy_from_slice(&1u32.to_ne_bytes());
+    r
+}
+
+/// DAMAGE `Create` (minor 1): damage object `damage` on `drawable` at report `level` (2 is
+/// BoundingBox).
+pub fn damage_create(opcode: u8, damage: u32, drawable: u32, level: u8) -> [u8; 16] {
+    let mut r = [0u8; 16];
+    r[0] = opcode;
+    r[1] = 1;
+    r[2..4].copy_from_slice(&4u16.to_ne_bytes());
+    r[4..8].copy_from_slice(&damage.to_ne_bytes());
+    r[8..12].copy_from_slice(&drawable.to_ne_bytes());
+    r[12] = level;
+    r
+}
+
+/// DAMAGE `Destroy` (minor 2).
+pub fn damage_destroy(opcode: u8, damage: u32) -> [u8; 8] {
+    let mut r = [0u8; 8];
+    r[0] = opcode;
+    r[1] = 2;
+    r[2..4].copy_from_slice(&2u16.to_ne_bytes());
+    r[4..8].copy_from_slice(&damage.to_ne_bytes());
+    r
+}
+
+/// DAMAGE `Subtract` (minor 3) with no repair or parts region: clears all of `damage`, so the
+/// next change sends a new DamageNotify.
+pub fn damage_subtract(opcode: u8, damage: u32) -> [u8; 16] {
+    let mut r = [0u8; 16];
+    r[0] = opcode;
+    r[1] = 3;
+    r[2..4].copy_from_slice(&4u16.to_ne_bytes());
+    r[4..8].copy_from_slice(&damage.to_ne_bytes());
     r
 }
 

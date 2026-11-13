@@ -105,6 +105,8 @@ pub fn compile(
         period: profile.sampling.speed.period(),
         target: None,
         shm: false,
+        damage: false,
+        poll_gap: profile.trigger_cfg().max_check_gap,
     })
 }
 
@@ -445,6 +447,11 @@ pub struct Controller {
     /// The capture has an MIT-SHM segment, and `screen-shm` reads through it (§5.2).
     pub shm: bool,
     use_shm: bool,
+    /// The capture can follow DAMAGE, the `damage` backend is in use, and whether it proved
+    /// unreliable on this desktop (§5.2).
+    pub damage: bool,
+    use_damage: bool,
+    damage_failed: bool,
     /// The last self-check and its window. It takes 230 ms, so it runs again only when it
     /// couldn't compare with the screen or failed, and the window has come in front while
     /// stopped (ADR 0014).
@@ -521,6 +528,9 @@ impl Controller {
             rtkit: None,
             shm: false,
             use_shm: false,
+            damage: false,
+            use_damage: false,
+            damage_failed: false,
         }
     }
 
@@ -629,6 +639,8 @@ impl Controller {
                 "window-buffer".into()
             } else if self.use_shm {
                 "screen-shm".into()
+            } else if self.use_damage {
+                "screen + damage".into()
             } else {
                 "screen".into()
             },
@@ -733,6 +745,8 @@ impl Controller {
         compiled.trigger.max_check_gap = self.check_gap(&profile);
         compiled.target = Some(self.capture_target());
         compiled.shm = self.use_shm;
+        compiled.damage = self.use_damage;
+        compiled.poll_gap = self.polling_gap(&profile);
         self.hot.set_profile(compiled);
         self.lut = lut;
         self.revision += 1;
@@ -1117,6 +1131,8 @@ impl Controller {
                 Backend::Auto => large,
                 Backend::Screen | Backend::WindowBuffer | Backend::Damage => false,
             };
+        // DAMAGE only when asked for (§5.2: opt-in), and not after it proved unreliable here.
+        self.use_damage = self.damage && !self.damage_failed && profile.sampling.backend == Backend::Damage;
     }
 
     /// The window's own image in window mode, when wanted and the self-check passes.
@@ -1220,11 +1236,20 @@ impl Controller {
         self.window_buffer.unwrap_or((self.root, self.root_format))
     }
 
-    /// The trigger's check gap (ADR 0007): four check periods and at least 2 ms; under a
-    /// compositor, which shows every frame for a whole refresh, up to most of one frame. The
-    /// window's own image isn't held back by the compositor, so the window-buffer backend keeps
-    /// the base gap.
+    /// The trigger's check gap: under DAMAGE, a safety period and a half (no report means no
+    /// change over the spot, ADR 0018); otherwise the polling gap.
     fn check_gap(&self, profile: &Profile) -> Duration {
+        if self.use_damage {
+            return crate::hot::DAMAGE_CHECK_GAP;
+        }
+        self.polling_gap(profile)
+    }
+
+    /// The check gap when checks come on a fixed period (ADR 0007): four check periods and at
+    /// least 2 ms; under a compositor, which shows every frame for a whole refresh, up to most of
+    /// one frame. The window's own image isn't held back by the compositor, so the window-buffer
+    /// backend keeps the base gap.
+    fn polling_gap(&self, profile: &Profile) -> Duration {
         let base = glint_core::TriggerCfg::check_gap(profile.sampling.speed.period());
         if !self.compositor || self.window_buffer.is_some() {
             return base;
@@ -1249,6 +1274,8 @@ impl Controller {
         compiled.trigger.max_check_gap = self.check_gap(&profile);
         compiled.target = Some(self.capture_target());
         compiled.shm = self.use_shm;
+        compiled.damage = self.use_damage;
+        compiled.poll_gap = self.polling_gap(&profile);
         self.hot.set_profile(compiled);
         if self.started {
             match self.origin(&profile) {
@@ -1586,6 +1613,18 @@ impl Controller {
                     self.last_stop = Some(why);
                     self.broadcast(Event::State(self.state()));
                 }
+            }
+            Notice::DamageUnreliable => {
+                // The hot thread already polls; publish that, so the trigger's gap and the
+                // state follow (§5.2, ADR 0018).
+                self.damage_failed = true;
+                self.broadcast(Event::Warning {
+                    code: "damage".into(),
+                    message: "This system doesn't report screen updates reliably; using regular checks.".into(),
+                    field: None,
+                });
+                self.republish();
+                self.broadcast(Event::State(self.state()));
             }
             Notice::MaybeMissed | Notice::Exited => {}
             Notice::Trace(t) => {

@@ -12,7 +12,7 @@ sandbox = []
 
 [dependencies]
 glint-core.workspace = true
-rustix = { workspace = true, features = ["net", "system"] }
+rustix = { workspace = true, features = ["event", "net", "system"] }
 thiserror.workspace = true
 x11rb.workspace = true
 x11rb-protocol.workspace = true

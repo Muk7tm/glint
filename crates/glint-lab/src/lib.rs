@@ -220,7 +220,8 @@ pub fn parse_backend(text: &str) -> Result<Backend, String> {
         "screen" => Ok(Backend::Screen),
         "screen-shm" => Ok(Backend::ScreenShm),
         "window-buffer" => Ok(Backend::WindowBuffer),
-        n => Err(format!("{n:?}: use auto, screen, screen-shm or window-buffer")),
+        "damage" => Ok(Backend::Damage),
+        n => Err(format!("{n:?}: use auto, screen, screen-shm, window-buffer or damage")),
     }
 }
 

@@ -34,8 +34,8 @@ struct Cli {
     /// eco, balanced, max, or checks per second.
     #[arg(long, default_value = "balanced", value_parser = glint_lab::parse_speed)]
     speed: Speed,
-    /// auto, screen, screen-shm (shared memory), or window-buffer (window-mode scenarios read the
-    /// window's own image).
+    /// auto, screen, screen-shm (shared memory), window-buffer (window-mode scenarios read the
+    /// window's own image), or damage (checks when the screen reports a change).
     #[arg(long, default_value = "auto", value_parser = glint_lab::parse_backend)]
     backend: Backend,
     /// How long `soak` runs.

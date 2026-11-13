@@ -46,4 +46,22 @@ pub trait Capture: Send {
     /// Reads through the MIT-SHM segment (`screen-shm`, §5.2) or not, from now on; without a
     /// segment it keeps reading through the socket.
     fn set_shm(&mut self, _on: bool) {}
+
+    /// Follows changes to the drawable through DAMAGE (§5.2), counting those that touch `rect`;
+    /// `None` stops following. Returns whether it follows now (no DAMAGE: never).
+    fn watch_damage(&mut self, _rect: Option<Rect>) -> Result<bool, CaptureError> {
+        Ok(false)
+    }
+
+    /// Waits until a change touches the watched rectangle (`true`, including one that came in
+    /// during the last read) or `deadline` passes (`false`).
+    fn wait_damage(&mut self, _deadline: std::time::Instant) -> Result<bool, CaptureError> {
+        Ok(false)
+    }
+
+    /// Whether a change touching the watched rectangle came in during the last read: the read
+    /// already shows it.
+    fn damage_pending(&self) -> bool {
+        false
+    }
 }

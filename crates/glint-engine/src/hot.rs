@@ -115,6 +115,111 @@ pub struct CompiledProfile {
     pub target: Option<(u32, PixelFormat)>,
     /// Read through the MIT-SHM segment (`screen-shm`, §5.2).
     pub shm: bool,
+    /// Check when DAMAGE reports a change over the spot, with safety checks in between, instead
+    /// of on a fixed period (the `damage` backend, §5.2).
+    pub damage: bool,
+    /// The trigger's check gap for polling, if DAMAGE proves unreliable.
+    pub poll_gap: Duration,
+}
+
+/// DAMAGE's safety period (§5.2): with no report, a check this long after the last one.
+pub const DAMAGE_SAFETY: Duration = Duration::from_millis(10);
+/// The trigger's check gap under DAMAGE: a safety period and a half. Between reports nothing over
+/// the spot changed, so a gap that long isn't blind (ADR 0018).
+pub const DAMAGE_CHECK_GAP: Duration = Duration::from_millis(15);
+/// After a report, a second check this much later catches late writes (§5.2).
+const DAMAGE_FOLLOW_UP: Duration = Duration::from_millis(1);
+/// For this long after a report, a change counts as announced: the report's check and its
+/// follow-up.
+const DAMAGE_CREDIT: Duration = Duration::from_millis(3);
+
+/// The `damage` backend's state in the hot loop (§5.2).
+#[derive(Default)]
+struct DamageMode {
+    /// The profile asks for it.
+    wanted: bool,
+    /// It missed three changes within a minute: polling for the rest of the engine's life.
+    failed: bool,
+    /// Following now: the capture's damage object watches the current spot.
+    on: bool,
+    /// The last wait ended with a change over the spot.
+    woke: bool,
+    follow_up: Option<Instant>,
+    credit_until: Option<Instant>,
+    /// A checksum of the last check's pixels.
+    last_sum: Option<u64>,
+    /// The last three unannounced changes.
+    misses: [Option<Instant>; 3],
+    next_miss: usize,
+}
+
+impl DamageMode {
+    /// A (re)start: follow anew from the next check, if the profile asks for it.
+    fn reset(&mut self, wanted: bool) {
+        self.wanted = wanted && !self.failed;
+        self.on = false;
+        self.woke = false;
+        self.follow_up = None;
+        self.credit_until = None;
+        self.last_sum = None;
+    }
+
+    /// Not watching: stop following, so reports don't pile up unread.
+    fn stop(&mut self, capture: &mut dyn Capture) {
+        if self.on {
+            let _ = capture.watch_damage(None);
+            self.on = false;
+        }
+        self.last_sum = None;
+    }
+
+    /// Watching: follow changes over `rect`, if wanted and possible.
+    fn start(&mut self, capture: &mut dyn Capture, rect: Rect) {
+        if self.wanted && !self.on {
+            self.on = capture.watch_damage(Some(rect)).unwrap_or(false);
+        }
+    }
+
+    /// After a check of `px` (requested at `t_req`): whether the pixels changed with no report to
+    /// announce it, for the third time within a minute. `pending` is a report that came in
+    /// during this check's own read.
+    fn unreliable(&mut self, px: &[u32], t_req: Instant, pending: bool, now: Instant) -> bool {
+        let sum = px.iter().fold(0xCBF2_9CE4_8422_2325u64, |h, &p| {
+            (h ^ u64::from(p)).wrapping_mul(0x0000_0100_0000_01B3)
+        });
+        let changed = self.last_sum.is_some_and(|s| s != sum);
+        self.last_sum = Some(sum);
+        let announced = self.woke || pending || self.credit_until.is_some_and(|c| t_req <= c);
+        if !changed || announced {
+            return false;
+        }
+        self.misses[self.next_miss] = Some(now);
+        self.next_miss = (self.next_miss + 1) % self.misses.len();
+        self.misses
+            .iter()
+            .all(|m| m.is_some_and(|m| now.saturating_duration_since(m) <= Duration::from_secs(60)))
+    }
+
+    /// Polling from now on.
+    fn fail(&mut self, capture: &mut dyn Capture) {
+        let _ = capture.watch_damage(None);
+        self.failed = true;
+        self.wanted = false;
+        self.on = false;
+    }
+
+    /// Waits for a change over the spot, the follow-up check after one, or the safety period
+    /// after the check that came back at `t_cap`.
+    fn wait(&mut self, capture: &mut dyn Capture, t_cap: Instant) -> Result<(), glint_x11::capture::CaptureError> {
+        let deadline = self.follow_up.take().unwrap_or(t_cap + DAMAGE_SAFETY);
+        self.woke = capture.wait_damage(deadline)?;
+        if self.woke {
+            let now = Instant::now();
+            self.follow_up = Some(now + DAMAGE_FOLLOW_UP);
+            self.credit_until = Some(now + DAMAGE_CREDIT);
+        }
+        Ok(())
+    }
 }
 
 /// What the hot thread shares with the rest of the engine.
@@ -185,6 +290,10 @@ pub enum HotEvent {
     },
     /// The hot thread has exited (after a quit).
     Exited,
+    /// DAMAGE missed three changes within a minute; the hot thread went back to polling (§5.2).
+    DamageUnreliable {
+        at: Instant,
+    },
 }
 
 /// What the UI's live swatch shows (§12.3 *Seeing*): the color at the watched spot and the verdict.
@@ -225,6 +334,7 @@ pub fn run(mut h: Hot) {
     let mut px = [0u32; MAX_PIXELS];
     let mut next = Instant::now();
     let mut checks = 0u64;
+    let mut damage = DamageMode::default();
     loop {
         let flow = assert_no_alloc::assert_no_alloc(|| {
             let ctl = h.shared.control.load();
@@ -258,10 +368,13 @@ pub fn run(mut h: Hot) {
                 let (pw, ph) = profile.pattern.size();
                 rect = Rect::new(ctl.x.into(), ctl.y.into(), pw, ph);
                 next = now;
+                damage.reset(profile.damage);
             }
             if !ctl.armed || !ctl.gate {
+                damage.stop(&mut *h.capture);
                 return Flow::Park;
             }
+            damage.start(&mut *h.capture, rect);
 
             let t_req = Instant::now();
             let area = profile.pattern.area();
@@ -322,7 +435,21 @@ pub fn run(mut h: Hot) {
             });
             push(&mut h, HotEvent::Check { t_req, t_cap, verdict });
 
-            if let Some(period) = profile.period {
+            // DAMAGE (§5.2): three changes no report announced within a minute mean reports
+            // can't be trusted here, and polling takes over.
+            if damage.on && damage.unreliable(&px[..area], t_req, h.capture.damage_pending(), t_cap) {
+                damage.fail(&mut *h.capture);
+                let mut cfg = profile.trigger;
+                cfg.max_check_gap = profile.poll_gap;
+                trigger.set_cfg(cfg);
+                push(&mut h, HotEvent::DamageUnreliable { at: t_cap });
+                next = Instant::now();
+            }
+            if damage.on {
+                if damage.wait(&mut *h.capture, t_cap).is_err() {
+                    stop_self(&mut h, StopReason::CaptureFailed, &mut was_armed);
+                }
+            } else if let Some(period) = profile.period {
                 next += period;
                 let now = Instant::now();
                 if now > next + period * 4 {
@@ -541,6 +668,43 @@ impl Drop for HotHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn damage_fails_after_three_unannounced_changes_within_a_minute() {
+        let s = Duration::from_secs;
+        let t = Instant::now();
+        let (a, b) = ([1u32; 9], [2u32; 9]);
+        let mut d = DamageMode::default();
+        assert!(!d.unreliable(&a, t, false, t)); // nothing to compare yet
+        // Announced changes don't count: by the wait's report, by a report during the read, or
+        // within the credit after a report.
+        d.woke = true;
+        assert!(!d.unreliable(&b, t, false, t));
+        d.woke = false;
+        assert!(!d.unreliable(&a, t, true, t));
+        d.credit_until = Some(t + Duration::from_millis(3));
+        assert!(!d.unreliable(&b, t + Duration::from_millis(2), false, t));
+        d.credit_until = None;
+        // No change, no miss.
+        assert!(!d.unreliable(&b, t, false, t + s(1)));
+        // Unannounced changes: the third within a minute fails.
+        assert!(!d.unreliable(&a, t, false, t + s(1)));
+        assert!(!d.unreliable(&b, t, false, t + s(2)));
+        assert!(d.unreliable(&a, t, false, t + s(3)));
+    }
+
+    #[test]
+    fn damage_misses_spread_over_more_than_a_minute_are_tolerated() {
+        let t = Instant::now();
+        let mut d = DamageMode::default();
+        let mut px = [0u32; 9];
+        assert!(!d.unreliable(&px, t, false, t));
+        for i in 1..=5u32 {
+            px[0] = i;
+            let now = t + Duration::from_secs(u64::from(i) * 40);
+            assert!(!d.unreliable(&px, now, false, now), "miss {i}");
+        }
+    }
 
     #[test]
     fn the_control_word_round_trips() {

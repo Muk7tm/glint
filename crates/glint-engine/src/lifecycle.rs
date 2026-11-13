@@ -237,6 +237,21 @@ pub fn run(options: Options) -> Result<(), StartError> {
             (capture, false)
         }
     };
+    // DAMAGE for the `damage` backend (§5.2), negotiated on connection A, which gets its reports.
+    let mut capture = capture;
+    let damage = match x11rb::connection::RequestConnection::extension_information(
+        &*c,
+        x11rb::protocol::damage::X11_EXTENSION_NAME,
+    ) {
+        Ok(Some(info)) => match capture.negotiate_damage(info.major_opcode, info.first_event) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("glintd: no DAMAGE backend: {e}");
+                false
+            }
+        },
+        _ => false,
+    };
     let (hot, events, preview) = HotHandle::spawn(Box::new(capture), injector, compiled)?;
     let stats = Arc::new(Mutex::new(Stats::default()));
     let (commands, receiver) = mpsc::channel();
@@ -306,6 +321,7 @@ pub fn run(options: Options) -> Result<(), StartError> {
     // The hot thread's priority and CPUs (§5.6), and the screen lock over D-Bus (§8, ADR 0014).
     controller.memory = memory;
     controller.shm = shm;
+    controller.damage = damage;
     controller.schedule();
     {
         let commands = commands.clone();

@@ -213,3 +213,26 @@ fn basic_through_shared_memory() {
         every_appearance_clicked(&r);
     }
 }
+
+#[test]
+fn basic_with_damage() {
+    if let Some(r) = run_with("basic", 8, Backend::Damage) {
+        assert!(r.title.contains("backend screen + damage"), "{}", r.summary());
+        every_appearance_clicked(&r);
+    }
+}
+
+#[test]
+fn flicker_with_damage() {
+    if let Some(r) = run_with("flicker", 6, Backend::Damage) {
+        every_appearance_clicked(&r);
+    }
+}
+
+#[test]
+fn rapid_with_damage() {
+    if let Some(r) = run_with("rapid", 2, Backend::Damage) {
+        assert!(r.appearances - r.optional >= 12, "{}", r.summary());
+        assert!(r.appearances <= 20, "{}", r.summary());
+    }
+}

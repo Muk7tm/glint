@@ -594,3 +594,56 @@ fn shared_memory_reads_what_the_socket_reads() {
         assert!(big.contains(&color), "{color:06X}");
     }
 }
+
+/// The `damage` backend (§5.2): a change over the watched spot wakes the wait, one elsewhere
+/// doesn't, and with nothing changing the wait runs to its deadline.
+#[test]
+fn damage_wakes_for_changes_over_the_spot_only() {
+    use std::time::{Duration, Instant};
+
+    use glint_core::pattern::Rect;
+    use x11rb::connection::RequestConnection as _;
+    use x11rb::protocol::damage;
+
+    use crate::capture::Capture;
+    use crate::capture::getimage::GetImageCapture;
+
+    let Some(x) = xvfb() else { return };
+    let c = conn::open(x.display()).unwrap();
+    let root = c.setup().roots[0].root;
+    let info = c.extension_information(damage::X11_EXTENSION_NAME).unwrap().unwrap();
+    let (a, setup) = RawConn::connect(x.display()).unwrap();
+    let mut capture = GetImageCapture::new(a, root, PixelFormat::root(&setup, 0).unwrap());
+    capture.negotiate_damage(info.major_opcode, info.first_event).unwrap();
+    let spot = Rect::new(400, 300, 3, 3);
+    assert!(capture.watch_damage(Some(spot)).unwrap());
+    // A new damage object starts with the whole window damaged: one report first.
+    assert!(capture.wait_damage(Instant::now() + Duration::from_secs(2)).unwrap());
+    let mut px = [0u32; 9];
+    capture.grab(spot, &mut px).unwrap();
+    let quiet = Instant::now();
+    assert!(!capture.wait_damage(quiet + Duration::from_millis(60)).unwrap());
+    assert!(quiet.elapsed() >= Duration::from_millis(55));
+
+    // Elsewhere: the wait runs out.
+    let _far = colored_window(&c, root, 10, 10, 50, 50, 0x3B_D1_6F);
+    assert!(
+        !capture
+            .wait_damage(Instant::now() + Duration::from_millis(100))
+            .unwrap()
+    );
+    // Over the spot: it wakes at once.
+    let _near = colored_window(&c, root, 380, 280, 60, 60, 0x3B_D1_6F);
+    let t = Instant::now();
+    assert!(capture.wait_damage(t + Duration::from_secs(2)).unwrap());
+    assert!(t.elapsed() < Duration::from_millis(500));
+    capture.grab(spot, &mut px).unwrap();
+    assert_eq!(px[4], 0x3B_D1_6F);
+    // Cleared after each report: the next change over the spot reports again.
+    let _again = colored_window(&c, root, 395, 295, 20, 20, 0xE0_30_78);
+    assert!(capture.wait_damage(Instant::now() + Duration::from_secs(2)).unwrap());
+    // Stopped: nothing wakes it.
+    assert!(!capture.watch_damage(None).unwrap());
+    let _more = colored_window(&c, root, 390, 290, 30, 30, 0x10_10_10);
+    assert!(!capture.wait_damage(Instant::now() + Duration::from_millis(60)).unwrap());
+}

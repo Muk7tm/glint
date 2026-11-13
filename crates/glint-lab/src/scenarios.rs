@@ -399,11 +399,14 @@ impl Run {
         );
         r.sandbox = !s.host.is_real();
         let gap = self.cfg.slack / 2;
-        if gap > Duration::from_millis(2) {
+        let ms = gap.as_secs_f64() * 1e3;
+        if s.tags().contains("damage") {
             r.notes.push(format!(
-                "the engine saw a compositor: check gap {:.1} ms (ADR 0007)",
-                gap.as_secs_f64() * 1e3
+                "checks when the screen reports a change, and every 10 ms: check gap {ms:.1} ms (ADR 0018)"
             ));
+        } else if gap > Duration::from_millis(2) {
+            r.notes
+                .push(format!("the engine saw a compositor: check gap {ms:.1} ms (ADR 0007)"));
         }
         Ok(r)
     }
