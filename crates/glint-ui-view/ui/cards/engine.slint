@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// More options → ENGINE (PLAN §12.4). Phase 4 has the close policy; the rest comes in Phase 6.
+
+import { Card, Segmented, FieldRow } from "../pulse/components.slint";
+import { Form, Actions } from "../state.slint";
+
+export component EngineCard inherits Card {
+    title: "ENGINE";
+    FieldRow {
+        label: "When closing";
+        Segmented {
+            width: 240px;
+            options: ["Ask", "Keep running", "Quit"];
+            current <=> Form.closing-index;
+            enabled: Form.editable;
+            changed => {
+                Actions.form-changed();
+            }
+        }
+    }
+}

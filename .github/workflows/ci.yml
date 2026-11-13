@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+      - name: Libraries the Slint UI builds against
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libfontconfig-dev libxkbcommon-dev
       - name: Toolchain from rust-toolchain.toml
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
@@ -38,8 +40,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - name: Xvfb, and the X11 headers one test reads keysyms from
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb x11proto-dev
+      - name: Xvfb, the X11 headers one test reads keysyms from, and the Slint UI's libraries
+        run: >-
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          xvfb x11proto-dev libfontconfig-dev libxkbcommon-dev
       - name: Toolchain from rust-toolchain.toml
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2

@@ -11,6 +11,7 @@ name = "glint"
 path = "src/main.rs"
 
 [dependencies]
+glint-core.workspace = true
 glint-ui-view.workspace = true
 slint.workspace = true
 

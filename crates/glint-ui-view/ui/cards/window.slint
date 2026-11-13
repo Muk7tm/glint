@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// GAME WINDOW (PLAN §12.3): Pulse's card. Even when watching the screen center, "Only click in
+// this window" keeps clicks to the picked window while it's in front.
+
+import { Theme } from "../pulse/theme.slint";
+import { PButton, Card, Note, Toggle } from "../pulse/components.slint";
+import { Form, Actions } from "../state.slint";
+
+export component WindowCard inherits Card {
+    title: "GAME WINDOW";
+    HorizontalLayout {
+        spacing: Theme.gap-s;
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            horizontal-stretch: 1;
+            Text {
+                text: Form.window-name == "" ? "No window picked" : Form.window-name;
+                color: Form.window-name == "" ? Theme.text-secondary : Theme.text;
+                font-size: Theme.font-strong;
+                font-weight: 600;
+                overflow: elide;
+            }
+
+            if Form.window-state != "": Note {
+                message: Form.window-state;
+                tone: Form.window-tone;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            PButton {
+                text: Form.picking ? "Click a window…" : "Pick window";
+                enabled: Form.editable && !Form.picking;
+                clicked => {
+                    Actions.pick-window();
+                }
+            }
+        }
+    }
+
+    Toggle {
+        text: "Only click in this window";
+        checked <=> Form.only-in-window;
+        enabled: Form.editable;
+        toggled => {
+            Actions.form-changed();
+        }
+    }
+}

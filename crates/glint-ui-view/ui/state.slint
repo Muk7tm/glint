@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// State shared between Rust and the window, the way Pulse does it: Rust owns all the logic, and
+// the .slint side only shows these values and reports what the user did.
+
+import { Tone } from "pulse/components.slint";
+
+export global Ui {
+    in property <string> version;
+    // Connected to the engine.
+    in property <bool> connected;
+
+    // The hero card.
+    in property <string> button-text: "▶  Start";
+    in property <bool> button-enabled;
+    in property <bool> button-danger;
+    in property <string> hint;
+    in property <Tone> hint-tone: Tone.neutral;
+    // One line for short-lived messages, so the layout never jumps.
+    in property <string> toast;
+    in property <Tone> toast-tone: Tone.warning;
+
+    // The current hotkeys, for the close dialog's wording.
+    in property <string> start-key: "F7";
+    in property <string> stop-key: "F8";
+
+    in-out property <bool> more-open;
+}
+
+export global Form {
+    // Locked while disconnected.
+    in property <bool> editable: true;
+
+    // COLOR
+    in property <bool> has-color;
+    in property <color> color;
+    in property <string> color-hex;
+    in-out property <int> shades-index: 1;
+    in property <bool> seeing-known;
+    in property <color> seeing-color;
+    in property <string> seeing-text: "Not watching";
+    in-out property <int> watch-index;
+    in property <string> watch-note;
+
+    // CLICKING
+    in-out property <int> click-index;
+    in property <string> key-name;
+    in property <[string]> key-names;
+    in property <int> key-index;
+    in-out property <int> hold-ms: 10;
+    in-out property <int> mode-index;
+    in property <string> hotkey: "F7";
+    in property <[string]> hotkey-names;
+    in property <int> hotkey-index;
+    in property <string> emergency: "F8";
+    in property <string> err-key;
+    in property <string> err-hotkey;
+    in property <string> err-general;
+
+    // GAME WINDOW
+    in property <string> window-name;
+    in property <string> window-state;
+    in property <Tone> window-tone: Tone.neutral;
+    in-out property <bool> only-in-window: true;
+    in property <bool> picking;
+
+    // More options → ENGINE
+    in-out property <int> closing-index;
+}
+
+export global Actions {
+    callback main-button();
+    callback form-changed();
+    callback pick-color();
+    callback key-captured(string);
+    callback key-chosen(string);
+    callback hotkey-captured(string);
+    callback hotkey-chosen(string);
+    callback pick-window();
+    callback more-toggled();
+    callback close-window();
+}

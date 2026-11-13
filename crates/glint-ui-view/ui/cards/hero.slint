@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// The hero card (PLAN §12.3): one big button and a status line, exactly like Pulse's.
+
+import { Theme } from "../pulse/theme.slint";
+import { PButton, ButtonKind, Card, Note, Tone, ToneColor } from "../pulse/components.slint";
+import { Ui, Actions } from "../state.slint";
+
+export component HeroCard inherits Card {
+    VerticalLayout {
+        spacing: 6px;
+        PButton {
+            text: Ui.button-text;
+            big: true;
+            kind: Ui.button-danger ? ButtonKind.danger : ButtonKind.primary;
+            enabled: Ui.button-enabled;
+            clicked => {
+                Actions.main-button();
+            }
+        }
+
+        Note {
+            width: root.width - 2 * Theme.card-padding;
+            message: Ui.hint;
+            tone: Ui.hint-tone;
+            horizontal-alignment: center;
+        }
+
+        Note {
+            height: 16px;
+            message: Ui.toast;
+            tone: Ui.toast != "" ? Ui.toast-tone : Tone.neutral;
+            color: ToneColor.of(Ui.toast-tone);
+            horizontal-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+    }
+}

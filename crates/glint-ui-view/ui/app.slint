@@ -1,79 +1,83 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The Glint window (PLAN §12), in Pulse's style: the components come from the copy in pulse/ (ADR 0012).
+// The Glint window (PLAN §12.3): Pulse's shell and cards, Glint's COLOR card under the hero. The
+// shared components are the copy in pulse/ (ADR 0012); the state is in state.slint.
 
-
+import { ScrollView } from "std-widgets.slint";
 import { Theme } from "pulse/theme.slint";
-import { PButton, ButtonKind, Card, Note } from "pulse/components.slint";
+import { PButton, ButtonKind, Disclosure, Tone } from "pulse/components.slint";
+import { Ui, Form, Actions } from "state.slint";
+import { HeroCard } from "cards/hero.slint";
+import { ColorCard } from "cards/color.slint";
+import { ClickingCard } from "cards/clicking.slint";
+import { WindowCard } from "cards/window.slint";
+import { EngineCard } from "cards/engine.slint";
 
-component HeroCard inherits Card {
-    in property <bool> started;
-    in property <string> window-name;
-    in property <string> start-key;
-    in property <string> stop-key;
-    callback start-stop();
-
-    VerticalLayout {
-        spacing: 6px;
-        PButton {
-            text: root.started ? "■  Stop" : "▶  Start";
-            big: true;
-            kind: root.started ? ButtonKind.danger : ButtonKind.primary;
-            clicked => {
-                root.start-stop();
-            }
-        }
-
-        Note {
-            width: root.width - 2 * Theme.card-padding;
-            message: root.started
-                ? "Watching the center of " + root.window-name + " · " + root.stop-key + " stops everything"
-                : "Switch to " + root.window-name + " and press " + root.start-key + " to start · " + root.stop-key + " stops everything";
-            horizontal-alignment: center;
-        }
-    }
-}
+export { Ui, Form, Actions, Tone }
 
 export component AppWindow inherits Window {
     title: "Glint";
-    width: 400px;
-    height: 320px;
+    preferred-width: 400px;
+    preferred-height: 720px;
+    min-width: 380px;
+    min-height: 520px;
     background: Theme.bg;
     default-font-size: Theme.font-body;
 
-    in-out property <bool> started;
-    in property <string> window-name: "Sober";
-    in property <string> start-key: "F7";
-    in property <string> stop-key: "F8";
     callback keep-running();
     callback quit-app();
 
     VerticalLayout {
         padding-left: Theme.gap-l;
-        padding-right: Theme.gap-l;
+        // The scroll area keeps a 10 px gutter for its scrollbar; the footer adds the same.
+        padding-right: 6px;
         padding-top: Theme.gap-m;
         padding-bottom: Theme.gap-m;
-        spacing: Theme.gap-s;
+        spacing: Theme.gap-m;
 
-        HeroCard {
-            started: root.started;
-            window-name: root.window-name;
-            start-key: root.start-key;
-            stop-key: root.stop-key;
-            start-stop => {
-                root.started = !root.started;
+        scroll := ScrollView {
+            vertical-stretch: 1;
+            content-width: self.visible-width;
+            VerticalLayout {
+                width: scroll.visible-width;
+                padding-right: 10px;
+                spacing: Theme.gap-s;
+                alignment: start;
+                HeroCard { }
+
+                ColorCard { }
+
+                ClickingCard { }
+
+                WindowCard { }
+
+                Disclosure {
+                    text: "More options";
+                    open <=> Ui.more-open;
+                    toggled => {
+                        Actions.more-toggled();
+                    }
+                }
+
+                if Ui.more-open: EngineCard { }
             }
         }
 
-        Rectangle {
-            vertical-stretch: 1;
-        }
-
         HorizontalLayout {
-            alignment: end;
+            padding-right: 10px;
+            spacing: Theme.gap-s;
+            Text {
+                text: "Settings save automatically.";
+                color: Theme.text-muted;
+                font-size: Theme.font-caption;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+
             PButton {
                 text: "Quit Glint";
                 clicked => {
-                    root.ask-before-closing();
+                    Actions.close-window();
                 }
             }
         }
@@ -129,7 +133,7 @@ export component AppWindow inherits Window {
                     }
 
                     Text {
-                        text: "Keep it running in the background so " + root.start-key + " and " + root.stop-key + " keep working, or quit it completely.";
+                        text: "Keep it running in the background so " + Ui.start-key + " and " + Ui.stop-key + " keep working, or quit it completely.";
                         color: Theme.text-secondary;
                         wrap: word-wrap;
                     }

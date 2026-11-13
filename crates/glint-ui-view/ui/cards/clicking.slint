@@ -1,0 +1,105 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// CLICKING (PLAN §12.3): Pulse's rows and wording, except Mode says "Hold to start", because
+// holding the key makes Glint watch, not click.
+
+import { Theme } from "../pulse/theme.slint";
+import { Card, Note, Tone, Segmented, Select, KeyField, NumberField, FieldRow } from "../pulse/components.slint";
+import { Form, Actions } from "../state.slint";
+
+export component ClickingCard inherits Card {
+    title: "CLICKING";
+    FieldRow {
+        label: "Click";
+        error: Form.err-key;
+        Select {
+            width: Form.click-index == 5 ? 128px : 160px;
+            name: "What to click";
+            model: ["Left click", "Right click", "Middle click", "Back button", "Forward button", "Keyboard key"];
+            current-index <=> Form.click-index;
+            enabled: Form.editable;
+            selected => {
+                Actions.form-changed();
+            }
+        }
+
+        if Form.click-index == 5: KeyField {
+            width: 100px;
+            name: "Key to press";
+            key-name: Form.key-name;
+            key-names: Form.key-names;
+            key-index: Form.key-index;
+            enabled: Form.editable;
+            captured(text) => {
+                Actions.key-captured(text);
+            }
+            chosen(name) => {
+                Actions.key-chosen(name);
+            }
+        }
+    }
+
+    FieldRow {
+        label: "Hold (ms)";
+        NumberField {
+            value <=> Form.hold-ms;
+            minimum: 0;
+            maximum: 200;
+            enabled: Form.editable;
+            edited => {
+                Actions.form-changed();
+            }
+        }
+
+        Text {
+            text: Form.hold-ms == 0 ? "instant click" : "released after " + Form.hold-ms + " ms";
+            color: Theme.text-muted;
+            font-size: Theme.font-caption;
+            vertical-alignment: center;
+        }
+    }
+
+    FieldRow {
+        label: "Mode";
+        Segmented {
+            width: 220px;
+            options: ["Press to toggle", "Hold to start"];
+            current <=> Form.mode-index;
+            enabled: Form.editable;
+            changed => {
+                Actions.form-changed();
+            }
+        }
+    }
+
+    FieldRow {
+        label: "Start/stop key";
+        error: Form.err-hotkey;
+        hotkey-field := KeyField {
+            width: 100px;
+            name: "Start and stop key";
+            key-name: Form.hotkey;
+            key-names: Form.hotkey-names;
+            key-index: Form.hotkey-index;
+            enabled: Form.editable;
+            captured(text) => {
+                Actions.hotkey-captured(text);
+            }
+            chosen(name) => {
+                Actions.hotkey-chosen(name);
+            }
+        }
+
+        Text {
+            text: hotkey-field.capturing ? "press a key" : "Emergency stop: " + Form.emergency;
+            color: Theme.text-secondary;
+            font-size: Theme.font-caption;
+            vertical-alignment: center;
+        }
+    }
+
+    if Form.err-general != "": Note {
+        width: root.width - 2 * Theme.card-padding;
+        message: Form.err-general;
+        tone: Tone.error;
+    }
+}

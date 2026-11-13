@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// COLOR (PLAN §12.3): what to watch for, and the live swatch of what the engine sees.
+
+import { Theme } from "../pulse/theme.slint";
+import { PButton, Card, Note, Segmented, FieldRow } from "../pulse/components.slint";
+import { Form, Actions } from "../state.slint";
+import { Swatch, ColorValue } from "../widgets.slint";
+
+export component ColorCard inherits Card {
+    title: "COLOR";
+    FieldRow {
+        label: "Color";
+        ColorValue {
+            empty: !Form.has-color;
+            value: Form.color;
+            hex: Form.color-hex;
+        }
+
+        PButton {
+            text: "Pick";
+            enabled: Form.editable;
+            clicked => {
+                Actions.pick-color();
+            }
+        }
+    }
+
+    FieldRow {
+        label: "Shades";
+        Segmented {
+            width: 220px;
+            options: ["Tight", "Normal", "Loose"];
+            current <=> Form.shades-index;
+            enabled: Form.editable && Form.has-color;
+            changed => {
+                Actions.form-changed();
+            }
+        }
+    }
+
+    FieldRow {
+        label: "Seeing";
+        if Form.seeing-known: Swatch {
+            value: Form.seeing-color;
+        }
+        Text {
+            text: Form.seeing-text;
+            color: Form.seeing-known ? Theme.text : Theme.text-muted;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    FieldRow {
+        label: "Watch";
+        warning: Form.watch-note;
+        Segmented {
+            width: 240px;
+            options: ["Screen center", "Window center"];
+            current <=> Form.watch-index;
+            enabled: Form.editable;
+            changed => {
+                Actions.form-changed();
+            }
+        }
+    }
+}

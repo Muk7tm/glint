@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Glint's own pieces, in Pulse's style (PLAN §12.6): the swatch, and the color field built on it.
+
+import { Theme } from "pulse/theme.slint";
+
+// 16 × 16 px, radius 3, a 1 px border so dark colors stay visible.
+export component Swatch inherits Rectangle {
+    in property <color> value;
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    border-width: 1px;
+    border-color: Theme.border-strong;
+    background: root.value;
+}
+
+// A read-only field that shows a color: its swatch and its hex value.
+export component ColorValue inherits Rectangle {
+    in property <bool> empty;
+    in property <color> value;
+    in property <string> hex;
+    in property <string> placeholder: "No color yet";
+    width: 160px;
+    height: Theme.control-height;
+    border-radius: Theme.radius-s;
+    background: Theme.elevated;
+    border-width: 1px;
+    border-color: Theme.border;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.empty ? root.placeholder : root.hex;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: Theme.gap-s;
+        alignment: start;
+        if !root.empty: Swatch {
+            value: root.value;
+        }
+        Text {
+            text: root.empty ? root.placeholder : root.hex;
+            color: root.empty ? Theme.text-muted : Theme.text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
