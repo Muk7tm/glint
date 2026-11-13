@@ -201,3 +201,10 @@ fn focus_changes() {
         assert_eq!(r.appearances - r.optional, 6, "{}", r.summary());
     }
 }
+
+#[test]
+fn ui_overlap() {
+    if let Some(r) = run("ui-overlap", 2) {
+        assert_eq!(r.appearances, 2, "{}", r.summary());
+    }
+}

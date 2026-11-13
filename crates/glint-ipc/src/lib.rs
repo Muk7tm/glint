@@ -92,6 +92,14 @@ pub enum Request {
     /// Pick a color with the mouse: `pick_started`, `magnifier` frames, then `color_picked` or
     /// `pick_cancelled` (§10).
     PickColor,
+    /// Where the UI's window is, in root pixels, so the engine can warn when it covers the
+    /// watched spot (§8).
+    UiGeometry {
+        x: i32,
+        y: i32,
+        w: u16,
+        h: u16,
+    },
     /// Pick the game window with the mouse: `pick_started`, then `window_picked` or
     /// `pick_cancelled` (§8).
     PickWindow,
@@ -331,6 +339,9 @@ pub struct StateSnapshot {
     /// The picked game window, when the profile names one (§8; an addition to §10).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window: Option<WindowStatus>,
+    /// A Glint window covers the watched spot: the live swatch is off meanwhile (§8).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub covered: bool,
 }
 
 /// The picked game window and how it is right now.

@@ -128,6 +128,13 @@ pub const SCENARIOS: &[Scenario] = &[
         run: focus,
     },
     Scenario {
+        name: "ui-overlap",
+        about: "a Glint window covers the watched spot: a warning, no live swatch while covered, so no click it could cause",
+        count: 3,
+        sandbox_only: None,
+        run: ui_overlap,
+    },
+    Scenario {
         name: "stall",
         about: "the engine frozen (SIGSTOP) for 30 ms around edges: no extra click; a miss only if the engine reported it",
         count: 50,
@@ -179,7 +186,7 @@ pub const SCENARIOS: &[Scenario] = &[
 ];
 
 /// The §16 scenarios that need later phases.
-pub const LATER: &[(&str, &str)] = &[("ui-overlap", "needs the UI-overlap warning, which Phase 5 brings")];
+pub const LATER: &[(&str, &str)] = &[];
 
 /// The lab's profile: the green, Normal shades, everything else default.
 pub fn lab_profile() -> Profile {
@@ -903,6 +910,101 @@ fn focus(s: &mut Session) -> Result<Report, LabError> {
         r.notes.push(format!("{n} focus changes away and back while watching"));
         Ok(r)
     })
+}
+
+/// The next events on `client` for `wait`, each handed to `seen`.
+fn events_for(client: &mut glint_ipc::Client, wait: Duration, mut seen: impl FnMut(Event)) {
+    let until = Instant::now() + wait;
+    while let Some(left) = until.checked_duration_since(Instant::now()) {
+        match client.next_event(left.max(Duration::from_millis(1))) {
+            Ok(e) => seen(e.body),
+            Err(_) => break,
+        }
+    }
+}
+
+fn ui_overlap(s: &mut Session) -> Result<Report, LabError> {
+    let n = s.count(3);
+    let title = s.title("ui-overlap", n);
+    let mut rng = Rng::new(s.opts.seed);
+    let profile = s.profile();
+    let mut run = Run::begin(s, &profile, Duration::ZERO)?;
+    run.start(s)?;
+    // A second connection plays the UI: it reports its window and gets the live swatch.
+    let mut ui = s.host.client()?;
+    s.call(Request::Ping)?;
+    ui.call(
+        Request::Subscribe {
+            telemetry_hz: 0,
+            live_hz: 20,
+            trace: false,
+        },
+        crate::WAIT,
+    )
+    .map_err(crate::engine_err)?;
+    let (ax, ay) = s.canvas.anchor();
+    let mut problems = Vec::new();
+    for round in 0..n {
+        // The color shows and gets its click: the swatch says "match".
+        appear(&mut run, s, &mut rng, GREEN, (100, 200), (150, 250))?;
+        // The UI's window moves over the watched spot.
+        ui.send(Request::UiGeometry {
+            x: ax - 150,
+            y: ay - 100,
+            w: 300,
+            h: 200,
+        })
+        .map_err(crate::engine_err)?;
+        let mut warned = false;
+        events_for(&mut ui, Duration::from_millis(300), |e| {
+            warned |= matches!(e, Event::Warning { ref code, .. } if code == "ui_overlap");
+        });
+        if !warned {
+            problems.push(format!(
+                "round {}: no warning when the window covered the spot",
+                round + 1
+            ));
+        }
+        // Covered, the UI would paint its swatch over the spot: whatever the engine sees, the
+        // engine would then see. With the swatch off, nothing gets painted.
+        run.clear(s)?;
+        let mut live = 0;
+        let mut paint = Vec::new();
+        events_for(&mut ui, Duration::from_millis(600), |e| {
+            if let Event::Live { verdict, .. } = e {
+                live += 1;
+                paint.push(verdict == glint_core::Verdict::Enter);
+            }
+        });
+        for green in paint {
+            if green { run.show(s, GREEN)? } else { run.clear(s)? }
+        }
+        if live > 0 {
+            problems.push(format!("round {}: {live} live swatch updates while covered", round + 1));
+        }
+        // The window moves away: the swatch comes back.
+        ui.send(Request::UiGeometry {
+            x: 0,
+            y: 0,
+            w: 120,
+            h: 80,
+        })
+        .map_err(crate::engine_err)?;
+        let mut back = 0;
+        events_for(&mut ui, Duration::from_millis(400), |e| {
+            back += u32::from(matches!(e, Event::Live { .. }))
+        });
+        if back == 0 {
+            problems.push(format!(
+                "round {}: no live swatch after the window moved away",
+                round + 1
+            ));
+        }
+    }
+    let mut r = run.finish(s, title, false)?;
+    r.problems.extend(problems);
+    r.notes.push(format!("{n} times covered and uncovered while watching"));
+    Ok(r)
 }
 
 /// Sends SIGCONT when dropped, so a scenario that fails mid-freeze never leaves the engine stopped.

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 use glint_core::color::oklab::Oklch;
-use glint_core::pattern::PatternError;
+use glint_core::pattern::{PatternError, Rect};
 use glint_core::profile::{ActionKind, ClickAt, Modifier, Profile, TargetMode};
 use glint_core::settings::HotkeyMode;
 use glint_core::settings::{ClosePolicy, Settings};
@@ -417,6 +417,9 @@ pub struct Controller {
     cursor: Option<u32>,
     /// The picked game window (§8).
     tracker: Tracker,
+    /// Where each UI's window is (`ui_geometry`), and whether one covers the watched spot.
+    ui_rects: HashMap<ClientId, Rect>,
+    covered: bool,
 }
 
 impl Controller {
@@ -476,6 +479,8 @@ impl Controller {
             picking: None,
             cursor: None,
             tracker,
+            ui_rects: HashMap::new(),
+            covered: false,
         }
     }
 
@@ -539,12 +544,14 @@ impl Controller {
         self.hot.start(origin, self.gate(&profile));
         self.started = true;
         self.last_stop = None;
+        self.check_cover();
         Event::State(self.state())
     }
 
     /// Stops watching and releases input; `reason` is shown as the last stop.
     pub fn stop(&mut self, reason: Option<String>) {
         self.hot.stop();
+        self.covered = false;
         if self.started {
             self.last_stop = reason;
         }
@@ -582,6 +589,7 @@ impl Controller {
                 .map(str::to_owned)
                 .or_else(|| self.window_blocker(&profile)),
             window: self.window_status(&profile),
+            covered: self.covered,
         }
     }
 
@@ -715,6 +723,9 @@ impl Controller {
                     self.end_pick(None);
                 }
                 let removed = self.clients.remove(&client);
+                if self.ui_rects.remove(&client).is_some() {
+                    self.check_cover();
+                }
                 self.update_tracing();
                 if let Some(c) = removed {
                     // A UI that vanished without detaching: stop watching unless the policy says to
@@ -917,6 +928,29 @@ impl Controller {
         }
     }
 
+    /// Whether a UI's window covers the watched spot while watching (§8). It would show the
+    /// engine its own live swatch, so the swatch stops and the UI is warned.
+    fn check_cover(&mut self) {
+        let covered = self.started && {
+            let control = self.hot.control();
+            let (w, h) = self.active_profile().pattern().map_or((1, 1), |p| p.size());
+            let spot = Rect::new(i32::from(control.x), i32::from(control.y), w, h);
+            self.ui_rects.values().any(|r| r.intersects(&spot))
+        };
+        if covered == self.covered {
+            return;
+        }
+        self.covered = covered;
+        if covered {
+            self.broadcast(Event::Warning {
+                code: "ui_overlap".into(),
+                message: "The Glint window covers the spot it's watching.".into(),
+                field: None,
+            });
+        }
+        self.broadcast(Event::State(self.state()));
+    }
+
     /// Looks for the active profile's window, if it names one.
     fn acquire_window(&mut self) {
         let window = self.active_profile().target.window;
@@ -981,7 +1015,10 @@ impl Controller {
             }
             Change::Moved if self.started && window_mode => match self.origin(&profile) {
                 // A move can't click: the restart latches (R7).
-                Ok(origin) => self.hot.restart(origin),
+                Ok(origin) => {
+                    self.hot.restart(origin);
+                    self.check_cover();
+                }
                 Err(issue) => self.stop(Some(issue.message)),
             },
             Change::Moved => {}
@@ -1097,6 +1134,11 @@ impl Controller {
                     },
                     None => Event::error("no_profile", format!("There's no profile named {name:?}."), None),
                 }
+            }
+            Request::UiGeometry { x, y, w, h } => {
+                self.ui_rects.insert(client, Rect::new(x, y, w, h));
+                self.check_cover();
+                Event::State(self.state())
             }
             Request::PickColor => self.pick(client, PickKind::Color),
             Request::PickWindow => self.pick(client, PickKind::Window),
@@ -1271,10 +1313,13 @@ impl Controller {
         let preview = *self.preview.read();
         // Only while watching: a stopped engine's last frame is stale, and sending it would wake
         // the window for nothing.
-        let live = preview.verdict.filter(|_| self.started).map(|verdict| Event::Live {
-            rgb: Rgb::from_u32(preview.rgb),
-            verdict,
-        });
+        let live = preview
+            .verdict
+            .filter(|_| self.started && !self.covered)
+            .map(|verdict| Event::Live {
+                rgb: Rgb::from_u32(preview.rgb),
+                verdict,
+            });
         let ids: Vec<ClientId> = self.clients.keys().copied().collect();
         for id in ids {
             let Some(c) = self.clients.get_mut(&id) else { continue };

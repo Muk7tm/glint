@@ -45,6 +45,9 @@ pub struct App {
     /// While minimized the live swatch is off, and this checks once a second for the window
     /// coming back (Slint has no event for it), so a hidden window costs about nothing.
     hidden: slint::Timer,
+    /// Tells the engine where this window is, once a second when it moved (§8 `ui_geometry`).
+    geometry: slint::Timer,
+    last_geometry: Option<(i32, i32, u32, u32)>,
 }
 
 thread_local! {
@@ -82,9 +85,17 @@ impl App {
             keys: Resolver::default(),
             toast: slint::Timer::default(),
             hidden: slint::Timer::default(),
+            geometry: slint::Timer::default(),
+            last_geometry: None,
         };
         APP.with(|slot| *slot.borrow_mut() = Some(app));
-        with(Self::refresh);
+        with(|app| {
+            app.refresh();
+            app.geometry
+                .start(slint::TimerMode::Repeated, Duration::from_secs(1), || {
+                    with(App::report_geometry)
+                });
+        });
     }
 
     /// Shows the profile, settings and state.
@@ -129,6 +140,10 @@ impl App {
         ui.global::<Ui>().set_connected(self.connected);
         if !self.watching() {
             self.not_seeing(&ui);
+        } else if self.state.covered {
+            let form = ui.global::<Form>();
+            form.set_seeing_known(false);
+            form.set_seeing_text("Off while this window covers the spot".into());
         }
     }
 
@@ -161,6 +176,7 @@ impl App {
             FromEngine::Connected { .. } => {
                 self.connected = true;
                 self.starting = false;
+                self.last_geometry = None;
                 for request in [
                     Request::Subscribe {
                         telemetry_hz: 0,
@@ -249,6 +265,27 @@ impl App {
             Verdict::Absent => "no match",
         };
         form.set_seeing_text(format!("{rgb} · {what}").into());
+    }
+
+    /// Sends this window's rectangle when it changed, so the engine can tell when it covers the
+    /// watched spot.
+    fn report_geometry(&mut self) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        if !self.connected || ui.window().is_minimized() {
+            return;
+        }
+        let (pos, size) = (ui.window().position(), ui.window().size());
+        let now = (pos.x, pos.y, size.width, size.height);
+        if self.last_geometry == Some(now) {
+            return;
+        }
+        self.last_geometry = Some(now);
+        self.link.send(Request::UiGeometry {
+            x: pos.x,
+            y: pos.y,
+            w: u16::try_from(size.width).unwrap_or(u16::MAX),
+            h: u16::try_from(size.height).unwrap_or(u16::MAX),
+        });
     }
 
     /// The window is minimized: stop the live swatch until it's back.

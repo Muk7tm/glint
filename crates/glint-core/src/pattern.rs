@@ -112,6 +112,13 @@ impl Rect {
         (self.x + i32::from(self.w / 2), self.y + i32::from(self.h / 2))
     }
 
+    /// Whether the two rectangles share at least one pixel.
+    pub fn intersects(&self, other: &Rect) -> bool {
+        let (ax2, ay2) = (self.x + i32::from(self.w), self.y + i32::from(self.h));
+        let (bx2, by2) = (other.x + i32::from(other.w), other.y + i32::from(other.h));
+        self.x < bx2 && other.x < ax2 && self.y < by2 && other.y < ay2
+    }
+
     pub fn contains(&self, other: &Rect) -> bool {
         other.x >= self.x
             && other.y >= self.y
