@@ -145,6 +145,27 @@ is built and refuses to run on display `:0`.
 - Pulse's hero button is the reverse of §12.6: **Start is the white primary button and Stop is dark with a white
   outline** (`ButtonKind.danger`). Pulse's source wins (A.7); §12 is reconciled with the kit in Phase 4.
 
+## 7. `glint-core` (Phase 1)
+
+Same machine; `cargo bench -p glint-core` (criterion 0.8.2, release profile with fat LTO; 3 s per benchmark after
+1 s of warm-up). The lookup table is Appendix B's rule set: one include color, one exclusion.
+
+| Benchmark | Time (criterion's estimate) | Target |
+| --- | --- | --- |
+| 3×3 verdict, color present (9 lookups + pixel agreement) | 8.4 ns | under 100 ns (§19) |
+| 3×3 verdict, color absent | 8.4 ns | |
+| 3×3 verdict, edge of an appearance | 8.5 ns | |
+| 3×3 verdict, 9 random colors (table lookups miss the cache) | 15.4 ns | |
+| Verdict + trigger step (one whole decision after the capture) | 13.0 ns | under 2 µs (§3) |
+| Lookup-table build, 16.7 M colors on 12 threads | 145 ms | 0.1–0.3 s (§5.4) |
+
+- The 4 MiB table fits in this CPU's 12 MB L3, so even a cache-missing check costs about 15 ns. The decision is
+  four orders of magnitude below the capture round trip (16–20 µs).
+- The same build takes ~145 ms in the dev profile (glint-core is built with `opt-level = 3` there). The engine's
+  low-priority pool will use fewer threads, so expect a few hundred milliseconds when a range is edited.
+- `cargo test -p glint-core` (dev profile): 79 tests in ~6.5 s, most of it the exhaustive table test (8 rule
+  sets × 16,777,216 colors against the reference) and 2,000 property-test cases for the trigger.
+
 ## Conclusions for the defaults (Phase 0 exit)
 
 - **Speed preset: Balanced (2,000/s) confirmed.** Paced response is dominated by the server's own busy periods

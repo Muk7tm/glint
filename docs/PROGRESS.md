@@ -5,7 +5,7 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 ## Status
 
-- **Active phase:** Phase 1 (`glint-core`). Phase 0 is done except `spike-inject`, which waits for Xvfb/Xephyr.
+- **Active phase:** Phase 1 (`glint-core`) meets its exit criteria; waiting for the go-ahead for Phase 2. Phase 0 is done except `spike-inject`, which waits for Xvfb/Xephyr.
 - **Waiting on the user:** install Xephyr and Xvfb, needed for `spike-inject` and every input-injecting run
   before Phase 2's exit:
   `sudo pacman -S --needed xorg-server-xephyr xorg-server-xvfb xorg-xwininfo xorg-xev`
@@ -34,7 +34,7 @@ listed in §13 (written as their content appears).
 - [x] Sample patterns and pixel agreement. *(k_stay = ⌈k_enter / 2⌉, plus/custom fields, anchor pixel: ADR 0006.)*
 - [x] Trigger state machine + the six invariants as property tests. *(Every restart latches, manual-Start-only `fire_if_present_on_start`, gap ≥ hold + 1 ms, stalls aren't absence, Paused state: ADR 0007. 2,000 random cases per run.)*
 - [x] Profile and settings types, validation, migrations. *(Defaults, strictness, limits, hotkey syntax: ADR 0008. Appendix B's examples are tested straight from the plan.)*
-- [ ] `criterion` benchmark for classification (target: under 100 ns for 9 pixels).
+- [x] `criterion` benchmark for classification (target: under 100 ns for 9 pixels). *(8.4 ns hot, 15.4 ns with cache misses; verdict + trigger step 13 ns; table build 145 ms. MEASUREMENTS.md §7.)*
 - **Exit:** `cargo test -p glint-core` is green, including the exhaustive and property tests.
 
 ## Phase 2 — Engine MVP (M)
