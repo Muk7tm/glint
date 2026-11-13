@@ -227,7 +227,8 @@ session (the environment above, no compositor running). The lab's full-screen wi
 
 - 0.1–0.2 ms slower than Xvfb. The difference isn't broken down yet; Phase 3's report adds the per-stage split
   from `fired`. A likely part is GetImage waiting for the GPU to finish the lab's own drawing (ADR 0004 traced
-  the server tax to the same kind of wait).
+  the server tax to the same kind of wait). *§11's per-stage split shows otherwise: the difference is in the
+  click's delivery, not in the capture.*
 - Well inside p99 ≤ 2 ms and max ≤ 10 ms, but 100 trials say little about p99, and no trial met an X server
   stall. The v1.0 timing verdict is Phase 6's 10,000-trial run (ADR 0004).
 
@@ -325,6 +326,48 @@ TrueColor). Release build. The owner's profile: purple `#8604A0` with *Loose* sh
 - **Quick off-and-on.** 17 absences shorter than *Gone after* were merged into the appearance around them:
   2–37 ms long, 12 of them shorter than one 60 Hz frame. Sober draws faster than the monitor shows, and the
   window buffer has every frame.
+
+## 11. Phase 6: the v1.0 timing run on the real desktop
+
+`glint-lab basic --count 10000 --real-desktop` (release build of 96a96a1), run by the owner on 2026-11-13 in their
+normal session, with the environment above:
+
+- No compositor: picom was stopped, and the report notes any compositor the engine sees.
+- Balanced, the `screen` backend, a 3×3 pattern.
+- The lab's engine used default settings, so real-time was `auto`. On this machine that means rtkit makes the
+  hot thread SCHED_RR 10. The owner's own engine reports `rtkit (rr 10)` under the same setting; the lab report
+  doesn't print it.
+
+The run took 98 min 43 s.
+
+| Scenario | Trials | Clicks | Extra | Missed | Possible misses | Response p50 / p95 / p99 / max |
+| --- | --- | --- | --- | --- | --- | --- |
+| `basic` (on 30–500 ms, off 60–600 ms) | 10,000 | 10,000 | 0 | 0 | 0 | 0.44 / 0.67 / 0.72 / 1.05 ms |
+
+- **Verdict: PASS** against Phase 6's exit: p99 ≤ 2 ms, max ≤ 10 ms, 0 extra, 0 missed (ADR 0004).
+- **No X server stall** (a probe round trip over 5 ms) in 99 minutes, so no trial was set apart. Phase 0 saw a
+  10–18 ms stall about once a minute (§4).
+  - The test window covered the whole screen, so the other programs had nothing visible to draw.
+  - That fits §4's guess that other clients' GPU work causes the stalls, but it doesn't prove it.
+- **No measurable server tax.** The probe's round trips were 0.12 ms at p99 in the second before watching and
+  0.06 ms while watching; the report prints this as −0.06 ms. Phase 0 measured +0.45 ms (§3).
+  - Same caveat: GetImage waits for GPU work other clients have queued (ADR 0004), and with the screen covered
+    there was little.
+  - With a game drawing, expect a tax nearer Phase 0's.
+- **Median by stage:**
+
+  | Stage | Median |
+  | --- | --- |
+  | waiting for the next check (half the 0.5 ms period) | 0.248 ms |
+  | capture | 0.019 ms |
+  | decision | 0.001 ms |
+  | injection | 0.002 ms |
+  | delivery | 0.168 ms |
+
+  This answers §8's open question:
+  - The real desktop's extra 0.1–0.2 ms over Xvfb is in delivery, the time from writing the press to the test
+    window receiving it. On Xvfb that took 21–33 µs (§9).
+  - It isn't in the capture: 19 µs here, 11–21 µs on Xvfb.
 
 ## Conclusions for the defaults (Phase 0 exit)
 

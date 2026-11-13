@@ -5,8 +5,12 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 ## Status
 
-- **Active phase:** Phase 6 (performance and advanced detection), started 2026-11-13: all four items are done; the exit run on the owner's hardware is next (`glint-lab basic --count 10000 --real-desktop`, no compositor, about 1 h 40 min). Phases 4 and 5 are complete. Glint copies Pulse's Slint files and never changes Pulse (ADR 0012). Glint is MIT since 2026-11-13 (owner decision; the About
-  dialog shows AboutSlint, ADR 0016).
+- **Active phase:** none. Phase 7 (packaging and release) is next and waits for the owner's go-ahead.
+- Phase 6 is complete: the exit run passed on 2026-11-13 (`glint-lab basic --count 10000 --real-desktop`:
+  10,000 clicks for 10,000 appearances, 0 extra, 0 missed, p50 0.44 ms, p99 0.72 ms, max 1.05 ms, no X server
+  stall; MEASUREMENTS.md §11). Phases 4 and 5 are complete.
+- Glint copies Pulse's Slint files and never changes Pulse (ADR 0012).
+- Glint is MIT since 2026-11-13 (owner decision; the About dialog shows AboutSlint, ADR 0016).
   All 17 lab scenarios pass in CI (https://github.com/Muk7tm/glint/actions/runs/43426780742) and at full count
   locally (MEASUREMENTS.md §9).
 - **Repository:** public at https://github.com/Muk7tm/glint (the owner chose GitHub, public, for CI).
@@ -16,8 +20,6 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 - **Owner decisions (2026-11-13):** v1.0 timing is judged with no compositor, with X-server-stall trials
   listed separately (ADR 0004); preventing extra clicks is the top priority, so only watched absence re-arms
   and possible misses are reported (ADR 0007, revised).
-- **Phase 5 must:** set the check gap from the refresh rate when a compositor runs (ADR 0007), or re-arming slows
-  under picom.
 - Xvfb, Xephyr, xwininfo and xev are installed (2026-11-13).
 
 ## Scaffold
@@ -87,7 +89,7 @@ listed in §13 (written as their content appears).
 - [x] `screen-shm` backend; `damage` backend with its self-healing fallback. *(`screen-shm`: a memfd segment attached on connection C, filled by raw `ShmGetImage` on A; chosen when asked or for patterns over 32×32; identical pixels to the socket on Xvfb; the lab's `basic` passes through it. `damage`: the object lives on connection A, reports are noted in the raw packet loop and cleared before each check, the hot thread sleeps in `poll()` between reports and 10 ms safety checks, the trigger's gap is 15 ms, and three unannounced changes in a minute switch to polling for good with a warning. Opt-in only (ADR 0018). Tested on Xvfb: wakes for changes over the spot only; `basic`, `flicker` and `rapid` pass with it, `rapid` also under picom.)*
 - [x] *More options*: Detection, Color range (shade strips, exclusions, *Record 5 s*, *Check hex*), Engine (diagnostics, latency test, profiles). *(DETECTION: pattern, Must match, checks, Gone after, Min gap, Safety stop, Read from, offset. COLOR RANGE: model and tolerances, shade and hue strips classified by the engine, Also/Never match lists, Check hex, Record 5 s, Sample center. ENGINE: real-time, live read times, a latency test in a test X server, profiles, Copy diagnostics, Import and Export through the desktop's file dialog. New requests `record_palette` and `diagnostics` (`glint-ctl diag` prints the text). Sample center now reads the window's center in window mode, and More options reopens as left (ADR 0019). Checked on Xvfb: every row edits the profile; strips, Check hex, Never match and its removal, a recording, the clipboard, and a 200-run latency test with 0 extra.)*
 - [x] *Capture* hotkey mode. (*Hold to watch* exists since Phase 2, ADR 0013.) *(The hotkeys are grabbed on every lock-key combination, with modifier masks from the server's mapping; the engine gives the keyboard or pointer back the moment a grab fires, so Hold to watch keeps the game's input (ADR 0020). A switch in CLICKING with the trade-off. Tested on Xvfb for F7 and Mouse5, and in the engine with Hold to watch.)*
-- **Exit:** on your hardware, `glint-lab basic --count 10000` at Balanced shows p99 ≤ 2 ms and max ≤ 10 ms, with 0 extra and 0 missed.
+- **Exit:** on your hardware, with no compositor running, `glint-lab basic --count 10000` at Balanced shows p99 ≤ 2 ms and max ≤ 10 ms over the trials that didn't coincide with an X server stall (those are listed separately), with 0 extra and 0 missed (ADR 0004). *(Met 2026-11-13 on the owner's desktop (NVIDIA, no compositor): 10,000 clicks for 10,000 appearances, 0 extra, 0 missed, 0 possible misses; p50 0.44 ms, p99 0.72 ms, max 1.05 ms; no X server stall in 99 minutes, so no trial was set apart (MEASUREMENTS.md §11).)*
 
 ## Phase 7 — Packaging and release (S/M)
 
