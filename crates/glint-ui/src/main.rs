@@ -46,6 +46,7 @@ fn main() -> Result<(), slint::PlatformError> {
     actions.on_hotkey_chosen(|name| app::with(|a| a.hotkey_chosen(&name)));
     actions.on_pick_color(|| app::with(App::pick_color));
     actions.on_cancel_pick(|| app::with(App::cancel_pick));
+    actions.on_hex_entered(|text| app::with(|a| a.hex_entered(&text)));
     actions.on_pick_window(|| {
         app::with(|a| {
             a.toast(

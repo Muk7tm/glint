@@ -633,19 +633,23 @@ fn picking_a_color_with_the_mouse() {
     let root = x.setup().roots[0].root;
     x.xtest_fake_input(6, 0, 0, root, 320, 240, 0).unwrap(); // MotionNotify, absolute
     x.sync().unwrap();
-    let (size, pixels, center) = wait_event(&mut c, |e| match e {
-        Event::Magnifier { size, pixels, center } => Some((size, pixels, center)),
+    // The first frame may still show where the pointer was when the pick started.
+    let (size, pixels) = wait_event(&mut c, |e| match e {
+        Event::Magnifier { size, pixels, center } if center == Rgb::from_u32(GREEN) => Some((size, pixels)),
         _ => None,
     });
-    assert_eq!((size, pixels.len(), center), (11, 121, Rgb::from_u32(GREEN)));
+    assert_eq!((size, pixels.len()), (11, 121));
     // Near the square's edge, the frame shows both sides of it.
     x.xtest_fake_input(6, 0, 0, root, 300, 240, 0).unwrap();
     x.sync().unwrap();
-    let pixels = wait_event(&mut c, |e| match e {
-        Event::Magnifier { pixels, .. } => Some(pixels),
+    wait_event(&mut c, |e| match e {
+        Event::Magnifier { pixels, .. }
+            if pixels.contains(&Rgb::from_u32(GREEN)) && pixels.contains(&Rgb::from_u32(0x10_10_10)) =>
+        {
+            Some(())
+        }
         _ => None,
     });
-    assert!(pixels.contains(&Rgb::from_u32(GREEN)) && pixels.contains(&Rgb::from_u32(0x10_10_10)));
 
     // A left click picks the color under the pointer, and lets the pointer go.
     x.xtest_fake_input(6, 0, 0, root, 330, 250, 0).unwrap();
@@ -694,4 +698,46 @@ fn picking_a_color_with_the_mouse() {
     screen.show(false);
     c.call(Request::Start, WAIT).unwrap();
     assert!(matches!(c.call(Request::PickColor, WAIT).unwrap(), Event::Error { .. }));
+}
+
+#[test]
+fn a_mouse_side_button_as_a_hotkey() {
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let Some(engine) = Engine::start() else { return };
+    let _screen = Screen::open(&engine.x);
+    let mut c = engine.client();
+    assert!(matches!(
+        c.call(
+            Request::SetProfile {
+                profile: Box::new(green_profile())
+            },
+            WAIT
+        )
+        .unwrap(),
+        Event::ProfileApplied { .. }
+    ));
+    let mut settings = glint_core::Settings::default();
+    settings.hotkeys.start_stop = "Mouse4".into();
+    settings.hotkeys.mode = glint_core::settings::HotkeyMode::Hold;
+    assert!(matches!(
+        c.call(
+            Request::SetSettings {
+                settings: Box::new(settings)
+            },
+            WAIT
+        )
+        .unwrap(),
+        Event::SettingsApplied
+    ));
+    let x = conn::open(engine.x.display()).unwrap();
+    // Xvfb's mouse has three buttons, so a "physical" button 8 can't be faked here: glint-x11's
+    // Xvfb tests check raw buttons from a real device, and the matcher's tests check the binding.
+    // What this checks end to end: the engine takes Mouse4 as a hotkey (no warning) and binds it.
+    // Button 8 from XTest itself, the way Glint's own Back clicks arrive, never counts.
+    let root = x.setup().roots[0].root;
+    x.xtest_fake_input(4, 8, 0, root, 0, 0, 0).unwrap();
+    x.sync().unwrap();
+    assert!(!started(&mut c));
+    x.xtest_fake_input(5, 8, 0, root, 0, 0, 0).unwrap();
+    x.sync().unwrap();
 }

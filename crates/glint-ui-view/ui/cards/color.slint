@@ -4,16 +4,20 @@
 import { Theme } from "../pulse/theme.slint";
 import { PButton, ButtonKind, Card, Note, Segmented, FieldRow } from "../pulse/components.slint";
 import { Form, Actions } from "../state.slint";
-import { Swatch, ColorValue, Magnifier } from "../widgets.slint";
+import { Swatch, ColorField, Magnifier } from "../widgets.slint";
 
 export component ColorCard inherits Card {
     title: "COLOR";
     FieldRow {
         label: "Color";
-        ColorValue {
+        ColorField {
             empty: !Form.has-color;
             value: Form.color;
-            hex: Form.color-hex;
+            hex <=> Form.color-hex;
+            enabled: Form.editable;
+            entered(text) => {
+                Actions.hex-entered(text);
+            }
         }
 
         PButton {

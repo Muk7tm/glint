@@ -375,6 +375,17 @@ impl App {
         self.link.send(Request::PickColor);
     }
 
+    /// A color typed as a hex code.
+    pub fn hex_entered(&mut self, text: &str) {
+        match keys::parse_hex(text) {
+            Some(rgb) => self.set_color(rgb),
+            None => {
+                self.toast("Type a color as a hex code, like #3BD16F.", Tone::Warning);
+                self.refresh();
+            }
+        }
+    }
+
     pub fn cancel_pick(&mut self) {
         self.link.send(Request::CancelPick);
     }

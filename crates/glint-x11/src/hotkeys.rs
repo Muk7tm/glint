@@ -4,7 +4,8 @@
 //! don't consume the key: the focused app gets it too.
 //!
 //! Events whose source is one of the "Virtual core XTEST" devices are ignored, so Glint's own key
-//! presses can never trigger a hotkey. Modifiers are tracked from the same raw events.
+//! presses can never trigger a hotkey. Modifiers are tracked from the same raw events. Mouse side
+//! buttons (`Mouse4` and `Mouse5`, X buttons 8 and 9) work as hotkeys too, from raw button events.
 
 use glint_core::settings::{Hotkey, Hotkeys};
 use x11rb::connection::Connection;
@@ -27,12 +28,17 @@ pub enum HotkeyError {
     Reply(#[from] ReplyError),
 }
 
-/// Asks for raw key presses and releases on `root`. Connection C must have announced XI 2.2
-/// (the capability probe does).
+/// Asks for raw key and button presses and releases on `root`. Connection C must have announced
+/// XI 2.2 (the capability probe does).
 pub fn select_raw_keys(conn: &impl Connection, root: u32) -> Result<(), HotkeyError> {
     let mask = xinput::EventMask {
         deviceid: ALL_MASTER_DEVICES,
-        mask: vec![XIEventMask::RAW_KEY_PRESS | XIEventMask::RAW_KEY_RELEASE],
+        mask: vec![
+            XIEventMask::RAW_KEY_PRESS
+                | XIEventMask::RAW_KEY_RELEASE
+                | XIEventMask::RAW_BUTTON_PRESS
+                | XIEventMask::RAW_BUTTON_RELEASE,
+        ],
     };
     conn.xinput_xi_select_events(root, &[mask])?.check()?;
     Ok(())
@@ -49,10 +55,13 @@ pub fn xtest_devices(conn: &impl Connection) -> Result<Vec<u16>, HotkeyError> {
         .collect())
 }
 
-/// One raw key event.
+/// One raw key or button event.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct RawKey {
+    /// The keycode, or the button number when `button` is set.
     pub keycode: u8,
+    /// A mouse button, not a key.
+    pub button: bool,
     pub press: bool,
     /// The physical (slave) device it came from.
     pub source: u16,
@@ -60,8 +69,17 @@ pub struct RawKey {
     pub repeat: bool,
 }
 
-/// The raw key event in `event`, if it is one.
+/// The raw key or button event in `event`, if it is one.
 pub fn raw_key(event: &Event) -> Option<RawKey> {
+    if let Event::XinputRawButtonPress(e) | Event::XinputRawButtonRelease(e) = event {
+        return Some(RawKey {
+            keycode: u8::try_from(e.detail).ok()?,
+            button: true,
+            press: matches!(event, Event::XinputRawButtonPress(_)),
+            source: e.sourceid,
+            repeat: false,
+        });
+    }
     let (e, press) = match event {
         Event::XinputRawKeyPress(e) => (e, true),
         Event::XinputRawKeyRelease(e) => (e, false),
@@ -69,6 +87,7 @@ pub fn raw_key(event: &Event) -> Option<RawKey> {
     };
     Some(RawKey {
         keycode: u8::try_from(e.detail).ok()?,
+        button: false,
         press,
         source: e.sourceid,
         repeat: e.flags & KeyEventFlags::KEY_REPEAT != KeyEventFlags::from(0u32),
@@ -91,12 +110,23 @@ struct Mods {
     super_key: bool,
 }
 
-/// A binding resolved to keycodes on the current keymap.
+/// A binding resolved to keycodes on the current keymap, or to a mouse side button.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Binding {
     pub action: HotkeyAction,
     keycodes: Vec<u8>,
+    button: Option<u8>,
     mods: Mods,
+}
+
+/// The X button of a side-button hotkey name: `Mouse4` is button 8 (back), `Mouse5` button 9
+/// (forward), the names Pulse uses.
+pub fn side_button(name: &str) -> Option<u8> {
+    match name.to_ascii_lowercase().as_str() {
+        "mouse4" => Some(8),
+        "mouse5" => Some(9),
+        _ => None,
+    }
 }
 
 /// The hotkeys of `settings` on `keymap`. Bindings whose key the keymap doesn't have are reported
@@ -117,10 +147,11 @@ pub fn bindings(settings: &Hotkeys, keymap: &Keymap) -> (Vec<Binding>, Vec<Strin
                 continue;
             }
         };
+        let button = side_button(&hotkey.key);
         let keycodes: Vec<u8> = keysym_from_name(&hotkey.key)
             .map(|s| keymap.keycodes(s).collect())
             .unwrap_or_default();
-        if keycodes.is_empty() {
+        if keycodes.is_empty() && button.is_none() {
             problems.push(format!("{hotkey}: this keyboard has no key named {:?}", hotkey.key));
             continue;
         }
@@ -130,7 +161,12 @@ pub fn bindings(settings: &Hotkeys, keymap: &Keymap) -> (Vec<Binding>, Vec<Strin
             shift: hotkey.shift,
             super_key: hotkey.super_key,
         };
-        out.push(Binding { action, keycodes, mods });
+        out.push(Binding {
+            action,
+            keycodes,
+            button,
+            mods,
+        });
     }
     (out, problems)
 }
@@ -169,8 +205,9 @@ pub struct Matcher {
     modifier_keys: ModifierKeys,
     /// Modifier keycodes held right now (by real keyboards).
     held: Vec<u8>,
-    /// The binding whose key is down, so its release matches even if modifiers changed.
-    down: Option<(u8, HotkeyAction)>,
+    /// The binding whose key or button is down, so its release matches even if modifiers
+    /// changed.
+    down: Option<(u8, bool, HotkeyAction)>,
 }
 
 impl Matcher {
@@ -205,7 +242,7 @@ impl Matcher {
         if self.xtest.contains(&key.source) || key.repeat {
             return None;
         }
-        if self.modifier_keys.is_modifier(key.keycode) {
+        if !key.button && self.modifier_keys.is_modifier(key.keycode) {
             self.held.retain(|&k| k != key.keycode);
             if key.press {
                 self.held.push(key.keycode);
@@ -214,7 +251,7 @@ impl Matcher {
         }
         if !key.press {
             return match self.down {
-                Some((code, action)) if code == key.keycode => {
+                Some((code, button, action)) if code == key.keycode && button == key.button => {
                     self.down = None;
                     Some((action, false))
                 }
@@ -222,10 +259,15 @@ impl Matcher {
             };
         }
         let mods = self.mods();
-        let b = bindings
-            .iter()
-            .find(|b| b.mods == mods && b.keycodes.contains(&key.keycode))?;
-        self.down = Some((key.keycode, b.action));
+        let b = bindings.iter().find(|b| {
+            b.mods == mods
+                && if key.button {
+                    b.button == Some(key.keycode)
+                } else {
+                    b.keycodes.contains(&key.keycode)
+                }
+        })?;
+        self.down = Some((key.keycode, key.button, b.action));
         Some((b.action, true))
     }
 }
@@ -249,6 +291,7 @@ mod tests {
     fn key(keycode: u8, press: bool) -> RawKey {
         RawKey {
             keycode,
+            button: false,
             press,
             source: KEYBOARD,
             repeat: false,
@@ -324,6 +367,31 @@ mod tests {
         assert_eq!(m.feed(key(10, true), &b), None);
         // F8 is bound without modifiers, so it doesn't fire with ctrl+shift held.
         assert_eq!(m.feed(key(11, true), &b), None);
+    }
+
+    #[test]
+    fn mouse_side_buttons() {
+        let (mut m, b) = setup("Mouse4");
+        let button = |n: u8, press: bool| RawKey {
+            keycode: n,
+            button: true,
+            press,
+            source: KEYBOARD,
+            repeat: false,
+        };
+        assert_eq!(m.feed(button(8, true), &b), Some((HotkeyAction::StartStop, true)));
+        assert_eq!(m.feed(button(8, false), &b), Some((HotkeyAction::StartStop, false)));
+        // The forward button, a left click, and key 8 (Shift_L here) are something else.
+        assert_eq!(m.feed(button(9, true), &b), None);
+        assert_eq!(m.feed(button(1, true), &b), None);
+        assert_eq!(m.feed(key(8, true), &b), None);
+        // Glint's own Back clicks never count.
+        let own = RawKey {
+            source: XTEST,
+            ..button(8, true)
+        };
+        assert_eq!(m.feed(own, &b), None);
+        assert_eq!(side_button("mouse5"), Some(9));
     }
 
     #[test]

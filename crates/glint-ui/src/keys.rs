@@ -111,6 +111,27 @@ pub fn names() -> Vec<String> {
     out
 }
 
+/// The start/stop key choices: the mouse side buttons first, as in Pulse, then the keys.
+pub fn hotkey_names() -> Vec<String> {
+    let mut out = vec!["Mouse4".to_owned(), "Mouse5".to_owned()];
+    out.extend(names());
+    out
+}
+
+/// A color typed as a hex code: `#3BD16F`, `3bd16f`, or the short `#3D7`.
+pub fn parse_hex(text: &str) -> Option<glint_core::Rgb> {
+    let hex = text.trim().trim_start_matches('#');
+    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let long: String = match hex.len() {
+        3 => hex.chars().flat_map(|c| [c, c]).collect(),
+        6 => hex.to_owned(),
+        _ => return None,
+    };
+    u32::from_str_radix(&long, 16).ok().map(glint_core::Rgb::from_u32)
+}
+
 /// Keycodes for key names, from the X server's keymap (read once, on first use).
 #[derive(Default)]
 pub struct Resolver {
@@ -146,5 +167,17 @@ mod tests {
         // Every name offered resolves.
         assert!(names().iter().all(|n| keysym_from_name(n).is_some()));
         assert!(NAMED.iter().all(|(_, n)| keysym_from_name(n).is_some()));
+    }
+
+    #[test]
+    fn typed_colors() {
+        use glint_core::Rgb;
+        assert_eq!(parse_hex("#3BD16F"), Some(Rgb::from_u32(0x3B_D1_6F)));
+        assert_eq!(parse_hex(" 3bd16f "), Some(Rgb::from_u32(0x3B_D1_6F)));
+        assert_eq!(parse_hex("#3D7"), Some(Rgb::from_u32(0x33_DD_77)));
+        for bad in ["", "#", "#12345", "#GGGGGG", "3bd16f0", "#+1234"] {
+            assert_eq!(parse_hex(bad), None, "{bad}");
+        }
+        assert_eq!(&hotkey_names()[..3], ["Mouse4", "Mouse5", "F1"]);
     }
 }

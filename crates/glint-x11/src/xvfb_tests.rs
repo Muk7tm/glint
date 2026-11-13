@@ -400,3 +400,64 @@ pub(crate) fn physical_key(conn: &RustConnection, root: u32, device: u8, keycode
     conn.xtest_fake_input(ty, keycode, 0, root, 0, 0, device).unwrap();
     conn.sync().unwrap();
 }
+
+#[test]
+fn raw_button_events_name_their_device() {
+    use std::time::{Duration, Instant};
+
+    use x11rb::connection::RequestConnection as _;
+    use x11rb::protocol::xinput::{self, ConnectionExt as _, DeviceType};
+    use x11rb::protocol::xtest::ConnectionExt as _;
+
+    use crate::hotkeys::{self, RawKey};
+
+    let Some(x) = xvfb() else { return };
+    let c = conn::open(x.display()).unwrap();
+    caps::probe(&c).unwrap();
+    let root = c.setup().roots[0].root;
+    hotkeys::select_raw_keys(&c, root).unwrap();
+    let xtest = hotkeys::xtest_devices(&c).unwrap();
+    let devices = c.xinput_xi_query_device(0u16).unwrap().reply().unwrap();
+    let mouse = devices
+        .infos
+        .iter()
+        .find(|d| d.type_ == DeviceType::SLAVE_POINTER && !xtest.contains(&d.deviceid))
+        .unwrap()
+        .deviceid;
+
+    let input = conn::open(x.display()).unwrap();
+    // A button on the real mouse (Xvfb's has three: side buttons only on real hardware) ...
+    let base = input
+        .extension_information(xinput::X11_EXTENSION_NAME)
+        .unwrap()
+        .unwrap()
+        .first_event;
+    let device = u8::try_from(mouse).unwrap();
+    input.xtest_fake_input(base + 3, 3, 0, root, 0, 0, device).unwrap();
+    input.xtest_fake_input(base + 4, 3, 0, root, 0, 0, device).unwrap();
+    // ... and button 8 from XTest itself, the way Glint's own Back clicks arrive.
+    input.xtest_fake_input(4, 8, 0, root, 0, 0, 0).unwrap();
+    input.xtest_fake_input(5, 8, 0, root, 0, 0, 0).unwrap();
+    input.sync().unwrap();
+
+    let mut got = Vec::new();
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < deadline && got.len() < 4 {
+        match c.poll_for_event().unwrap() {
+            Some(e) => got.extend(hotkeys::raw_key(&e)),
+            None => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+    let raw = |keycode, press, source| RawKey {
+        keycode,
+        button: true,
+        press,
+        source,
+        repeat: false,
+    };
+    assert_eq!(got[..2], [raw(3, true, mouse), raw(3, false, mouse)]);
+    assert!(
+        got[2].button && got[2].keycode == 8 && xtest.contains(&got[2].source),
+        "{got:?}"
+    );
+}

@@ -87,7 +87,7 @@ listed in §13 (written as their content appears).
 - [ ] rtkit real-time priority, timer slack, prefault and mlock, optional CPU pinning.
 - [ ] `screen-shm` backend; `damage` backend with its self-healing fallback.
 - [ ] *More options*: Detection, Color range (shade strips, exclusions, *Record 5 s*, *Check hex*), Engine (diagnostics, latency test, profiles).
-- [ ] *Hold to start* mode; *Capture* hotkey mode.
+- [ ] *Capture* hotkey mode. (*Hold to watch* exists since Phase 2, ADR 0013.)
 - **Exit:** on your hardware, `glint-lab basic --count 10000` at Balanced shows p99 ≤ 2 ms and max ≤ 10 ms, with 0 extra and 0 missed.
 
 ## Phase 7 — Packaging and release (S/M)

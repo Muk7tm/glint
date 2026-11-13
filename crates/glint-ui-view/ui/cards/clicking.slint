@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// CLICKING (PLAN §12.3): Pulse's rows and wording, except Mode says "Hold to start", because
-// holding the key makes Glint watch, not click.
+// CLICKING (PLAN §12.3): Pulse's rows and wording, except Mode says "Hold to watch": Glint
+// watches while the key is held and stops the moment it's released (ADR 0013).
 
 import { Theme } from "../pulse/theme.slint";
 import { Card, Note, Tone, Segmented, Select, KeyField, NumberField, FieldRow } from "../pulse/components.slint";
@@ -63,7 +63,7 @@ export component ClickingCard inherits Card {
         label: "Mode";
         Segmented {
             width: 220px;
-            options: ["Press to toggle", "Hold to start"];
+            options: ["Press to toggle", "Hold to watch"];
             current <=> Form.mode-index;
             enabled: Form.editable;
             changed => {
@@ -81,6 +81,7 @@ export component ClickingCard inherits Card {
             key-name: Form.hotkey;
             key-names: Form.hotkey-names;
             key-index: Form.hotkey-index;
+            side-buttons: true;
             enabled: Form.editable;
             captured(text) => {
                 Actions.hotkey-captured(text);
@@ -91,7 +92,7 @@ export component ClickingCard inherits Card {
         }
 
         Text {
-            text: hotkey-field.capturing ? "press a key" : "Emergency stop: " + Form.emergency;
+            text: hotkey-field.capturing ? "or click a side button" : "Emergency stop: " + Form.emergency;
             color: Theme.text-secondary;
             font-size: Theme.font-caption;
             vertical-alignment: center;

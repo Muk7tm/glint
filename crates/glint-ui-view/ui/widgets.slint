@@ -14,33 +14,50 @@ export component Swatch inherits Rectangle {
     background: root.value;
 }
 
-// A read-only field that shows a color: its swatch and its hex value.
-export component ColorValue inherits Rectangle {
+// The color field: its swatch, and its hex value, which can be typed (Enter applies it).
+export component ColorField inherits Rectangle {
     in property <bool> empty;
     in property <color> value;
-    in property <string> hex;
-    in property <string> placeholder: "No color yet";
+    in-out property <string> hex;
+    in property <bool> enabled: true;
+    callback entered(string);
     width: 160px;
     height: Theme.control-height;
     border-radius: Theme.radius-s;
     background: Theme.elevated;
     border-width: 1px;
-    border-color: Theme.border;
-    accessible-role: AccessibleRole.text;
-    accessible-label: root.empty ? root.placeholder : root.hex;
+    border-color: input.has-focus ? Theme.focus-ring : Theme.border;
     HorizontalLayout {
         padding-left: 10px;
         padding-right: 10px;
         spacing: Theme.gap-s;
-        alignment: start;
         if !root.empty: Swatch {
             value: root.value;
         }
-        Text {
-            text: root.empty ? root.placeholder : root.hex;
-            color: root.empty ? Theme.text-muted : Theme.text;
-            vertical-alignment: center;
-            overflow: elide;
+        Rectangle {
+            input := TextInput {
+                width: 100%;
+                height: 100%;
+                text <=> root.hex;
+                enabled: root.enabled;
+                single-line: true;
+                color: Theme.text;
+                vertical-alignment: center;
+                font-size: Theme.font-body;
+                accessible-label: "Color as a hex code";
+                accepted => {
+                    root.entered(self.text);
+                    self.clear-focus();
+                }
+            }
+
+            if input.text == "": Text {
+                x: 0;
+                text: "#RRGGBB";
+                color: Theme.text-muted;
+                vertical-alignment: center;
+                height: 100%;
+            }
         }
     }
 }

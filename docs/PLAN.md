@@ -511,7 +511,9 @@ Glint injects input with **XTest** (`FakeInput`, extension version 2.2), which n
 
 **Ignoring Glint's own input.** Raw events whose source device is one of the "Virtual core XTEST" devices are ignored, so the action key can never trigger a hotkey.
 
-**Mode** mirrors Pulse's Mode row: **Press to toggle** (default) or **Hold to start** (watching only while the key is held; releasing it stops and releases input). Starting from a hotkey follows rule R7: if the color is already showing, Glint waits for it to leave first.
+**Mouse side buttons** (`Mouse4` and `Mouse5`, X buttons 8 and 9) can be hotkeys too, as in Pulse: the engine also selects raw button events, Glint's own Back and Forward clicks are ignored the same way, and an action on the same side button is rejected (ADR 0013).
+
+**Mode** mirrors Pulse's Mode row: **Press to toggle** (default) or **Hold to watch** (watching only while the key is held; releasing it stops and releases input; ADR 0013). Starting from a hotkey follows rule R7: if the color is already showing, Glint waits for it to leave first.
 
 **Emergency stop** stops watching, releases everything, and ignores Start for 500 ms so a bouncing key can't restart it.
 
@@ -696,7 +698,7 @@ The typeface looks like the desktop's default sans (Noto Sans); check Pulse's so
 │ │ CLICKING                                                     │ │
 │ │ Click           [ Mouse button   ▾ ]  [ Left      ▾ ]        │ │
 │ │ Hold (ms)       [ -   10   + ]  released after 10 ms         │ │
-│ │ Mode            ( [Press to toggle]  Hold to start )         │ │
+│ │ Mode            ( [Press to toggle]  Hold to watch )         │ │
 │ │ Start/stop key  [ F7     ▾ ]  Emergency stop: F8             │ │
 │ └──────────────────────────────────────────────────────────────┘ │
 │ ┌──────────────────────────────────────────────────────────────┐ │
@@ -713,7 +715,7 @@ The typeface looks like the desktop's default sans (Noto Sans); check Pulse's so
 
 Legend: `[ ]` field or button · `( )` segmented control with the selected option in `[brackets]` · `▾` dropdown · `(━●)` toggle switched on. Numbers are illustrative.
 
-The hero card works exactly like Pulse's: one big button and a status line. **COLOR** is new and sits directly under it, because it's what makes Glint different; its *Seeing* row is the live swatch of what the engine sees at the watched spot. **CLICKING** and **GAME WINDOW** keep Pulse's rows and wording so the two apps feel like one family. *Mode* reads "Hold to start" instead of Pulse's "Hold to click", because holding the key makes Glint *watch*, not click. Everything else lives under **More options**, closed by default. In screen-center mode the GAME WINDOW card still matters: with *Only click in this window* on, clicks only happen while that window is in front.
+The hero card works exactly like Pulse's: one big button and a status line. **COLOR** is new and sits directly under it, because it's what makes Glint different; its *Seeing* row is the live swatch of what the engine sees at the watched spot. **CLICKING** and **GAME WINDOW** keep Pulse's rows and wording so the two apps feel like one family. *Mode* reads "Hold to watch" instead of Pulse's "Hold to click", because holding the key makes Glint *watch*, not click (ADR 0013). Everything else lives under **More options**, closed by default. In screen-center mode the GAME WINDOW card still matters: with *Only click in this window* on, clicks only happen while that window is in front. The color field also takes a typed hex code (`#3BD16F`, `3bd16f` or `#3D7`; Enter applies it with the chosen shades), and *Start/stop key* takes a mouse side button.
 
 ### 12.4 More options
 
@@ -1189,7 +1191,7 @@ Effort sizes are relative: S is a few days, M about a week or two, L longer, for
 - [ ] rtkit real-time priority, timer slack, prefault and mlock, optional CPU pinning.
 - [ ] `screen-shm` backend; `damage` backend with its self-healing fallback.
 - [ ] *More options*: Detection, Color range (shade strips, exclusions, *Record 5 s*, *Check hex*), Engine (diagnostics, latency test, profiles).
-- [ ] *Hold to start* mode; *Capture* hotkey mode.
+- [ ] *Capture* hotkey mode. (*Hold to watch* exists since Phase 2, ADR 0013.)
 - **Exit:** on your hardware, with no compositor running, `glint-lab basic --count 10000` at Balanced shows p99 ≤ 2 ms and max ≤ 10 ms over the trials that didn't coincide with an X server stall (those are listed separately), with 0 extra and 0 missed (ADR 0004).
 
 ### Phase 7 — Packaging and release (S/M)

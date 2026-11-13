@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::color::rule::is_achromatic;
 use crate::color::{ColorEntry, LutStats};
 use crate::pattern::{MAX_REACH, PatternError, PatternKind, Placement, Rect, SamplePattern};
-use crate::profile::{Action, ActionKind, PROFILE_SCHEMA_VERSION, Profile, Speed};
+use crate::profile::{Action, ActionKind, MouseButton, PROFILE_SCHEMA_VERSION, Profile, Speed};
 use crate::settings::{Hotkey, Hotkeys, SETTINGS_SCHEMA_VERSION, Settings};
 
 /// Longest profile name.
@@ -273,13 +273,16 @@ fn describe(field: &str) -> &'static str {
 /// name, ignoring modifiers: the stricter reading.
 pub fn action_against_hotkeys(a: &Action, hotkeys: &Hotkeys) -> Report {
     let mut r = Report::default();
-    if a.kind != ActionKind::Key {
-        return r;
-    }
-    let Some(key) = &a.key else { return r };
+    // The side buttons are hotkeys by the names Mouse4 and Mouse5.
+    let name = match (a.kind, &a.key) {
+        (ActionKind::Key, Some(key)) => key.name.trim().to_owned(),
+        (ActionKind::Mouse, _) if a.button == MouseButton::Back => "Mouse4".to_owned(),
+        (ActionKind::Mouse, _) if a.button == MouseButton::Forward => "Mouse5".to_owned(),
+        _ => return r,
+    };
     for (field, text) in hotkeys.bindings() {
         if let Ok(Some(h)) = Hotkey::parse(text)
-            && h.key.eq_ignore_ascii_case(key.name.trim())
+            && h.key.eq_ignore_ascii_case(&name)
         {
             r.error(
                 "action.key",
@@ -547,6 +550,18 @@ mod tests {
             name: "f8".into(),
         }); // kept, but unused by a mouse action
         assert!(action_against_hotkeys(&a, &h).is_ok());
+        // A side button can't be both the click and a hotkey.
+        let side = Hotkeys {
+            start_stop: "Mouse4".into(),
+            ..Hotkeys::default()
+        };
+        a.button = MouseButton::Back;
+        assert_eq!(
+            action_against_hotkeys(&a, &side).errors,
+            vec![Issue::new("action.key", "Mouse4 is also the start/stop hotkey.")]
+        );
+        a.button = MouseButton::Forward;
+        assert!(action_against_hotkeys(&a, &side).is_ok());
     }
 
     #[test]

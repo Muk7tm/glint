@@ -163,13 +163,21 @@ pub fn hero(f: &Fields, started: bool, cannot_start: Option<&str>) -> Hero {
         None if f.color.is_none() => Some("Pick a color to start".into()),
         None => None,
     };
+    // Hold mode watches only while the key is held (ADR 0013).
+    let how = if f.mode == 1 {
+        format!("hold {} to watch", f.hotkey)
+    } else {
+        format!("press {} to start", f.hotkey)
+    };
     let hint = blocked.clone().unwrap_or_else(|| {
         if f.window_name.is_empty() {
-            format!("Press {} to start · {} stops everything", f.hotkey, f.emergency)
+            let mut how = how.clone();
+            how[..1].make_ascii_uppercase();
+            format!("{how} · {} stops everything", f.emergency)
         } else {
             format!(
-                "Switch to {} and press {} to start · {} stops everything",
-                f.window_name, f.hotkey, f.emergency
+                "Switch to {} and {how} · {} stops everything",
+                f.window_name, f.emergency
             )
         }
     });
@@ -195,8 +203,8 @@ pub fn apply(ui: &AppWindow, f: &Fields, hero: &Hero) {
     form.set_has_color(f.color.is_some());
     if let Some(c) = f.color {
         form.set_color(color(c));
-        form.set_color_hex(c.to_string().into());
     }
+    form.set_color_hex(f.color.map(|c| c.to_string()).unwrap_or_default().into());
     form.set_shades_index(f.shades);
     form.set_watch_index(f.watch);
     form.set_click_index(f.click);
@@ -206,9 +214,10 @@ pub fn apply(ui: &AppWindow, f: &Fields, hero: &Hero) {
     form.set_key_index(index_of(&keys, &f.key_name));
     form.set_hold_ms(f.hold_ms);
     form.set_mode_index(f.mode);
-    form.set_hotkey_names(names(&keys));
+    let hotkeys = crate::keys::hotkey_names();
+    form.set_hotkey_names(names(&hotkeys));
     form.set_hotkey(f.hotkey.as_str().into());
-    form.set_hotkey_index(index_of(&keys, &f.hotkey));
+    form.set_hotkey_index(index_of(&hotkeys, &f.hotkey));
     form.set_emergency(f.emergency.as_str().into());
     form.set_window_name(f.window_name.as_str().into());
     form.set_only_in_window(f.only_in_window);
@@ -321,6 +330,14 @@ mod tests {
         let none = hero(&fields(&Profile::new("x"), &Settings::default()), false, None);
         assert!(!none.enabled);
         assert_eq!(none.hint, "Pick a color to start");
+        let mut hold = f.clone();
+        hold.mode = 1;
+        assert_eq!(
+            hero(&hold, false, None).hint,
+            "Switch to Sober and hold F7 to watch · F8 stops everything"
+        );
+        hold.window_name.clear();
+        assert_eq!(hero(&hold, false, None).hint, "Hold F7 to watch · F8 stops everything");
         let refused = hero(&f, false, Some("Window mode comes in a later version."));
         assert_eq!(
             (refused.enabled, refused.hint.as_str()),

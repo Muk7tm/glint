@@ -17,6 +17,7 @@ plan also updates the affected plan section in the same commit.
 | [0010](0010-lab-trace-stream-and-judging.md) | The lab: a trace stream from the engine, judging with time bounds, and what Phase 3 covers | Accepted | §10, §16, §19 |
 | [0011](0011-a-check-reads-the-screen-between-request-and-reply.md) | A check reads the screen somewhere between its request and its reply: the trigger uses both times | Accepted | §5.5, A.1–A.2 |
 | [0012](0012-copy-pulses-ui-instead-of-a-shared-kit.md) | Copy Pulse's Slint files instead of sharing a kit | Accepted (owner decision) | §2, §12, §13, §14, §19–§21, A.7 |
+| [0013](0013-hold-to-watch-typed-colors-and-side-button-hotkeys.md) | Hold to watch, typed color codes, and mouse side buttons as hotkeys | Accepted (owner requests) | §9, §12.3, §19 |
 
 ## Template
 
