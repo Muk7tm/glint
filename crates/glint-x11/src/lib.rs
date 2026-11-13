@@ -14,4 +14,10 @@ pub mod hotkeys;
 pub mod inject;
 pub mod monitors;
 pub mod picker;
+#[cfg(any(test, feature = "sandbox"))]
+pub mod sandbox;
 pub mod windows;
+pub mod wire;
+
+#[cfg(test)]
+mod xvfb_tests;

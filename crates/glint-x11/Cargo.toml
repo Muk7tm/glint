@@ -6,7 +6,16 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+# Xvfb sandboxes for tests in other crates (glint-engine, glint-lab).
+sandbox = []
+
 [dependencies]
+glint-core.workspace = true
+rustix = { workspace = true, features = ["net", "system"] }
+thiserror.workspace = true
+x11rb.workspace = true
+x11rb-protocol.workspace = true
 
 [lints]
 workspace = true

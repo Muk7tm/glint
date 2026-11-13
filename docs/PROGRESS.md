@@ -43,7 +43,7 @@ listed in §13 (written as their content appears).
 
 ## Phase 2 — Engine MVP (M)
 
-- [ ] X connections A–D, capability probe, pixel-format decoding.
+- [x] X connections A–D, capability probe, pixel-format decoding. *(`wire.rs` raw client for A/B, tested byte-for-byte against x11rb's encoders; x11rb for C/D; local display parsing with a canonical name; tests against Xvfb.)*
 - [ ] Monitor center through RandR; the `screen` backend.
 - [ ] XTest injector (mouse and keys), timed release, defensive release, panic hook, signal handling.
 - [ ] Hot loop, speed presets, control word, epoch restarts, event ring, telemetry thread.
