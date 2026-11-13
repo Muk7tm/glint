@@ -629,7 +629,7 @@ The kit crate exposes the path of its `ui/` folder, and each app hands that path
 // slint-kit/src/lib.rs
 pub const SLINT_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/ui");
 
-// glint-ui/build.rs  (slint-kit is listed under [build-dependencies])
+// glint-ui-view/build.rs  (slint-kit is listed under [build-dependencies]; ADR 0002)
 fn main() {
     let config = slint_build::CompilerConfiguration::new().with_library_paths(
         std::collections::HashMap::from([(
@@ -642,7 +642,7 @@ fn main() {
 ```
 
 ```slint
-// glint-ui/ui/app.slint
+// glint-ui-view/ui/app.slint
 import { Theme, Card, Row, Stepper, Segmented, Toggle, PrimaryButton } from "@kit/index.slint";
 ```
 
@@ -825,7 +825,7 @@ Write the way Pulse does: short, plain, sentence case, status facts joined with 
 
 ### 12.8 Slint implementation notes
 
-- **Files:** `ui/app.slint` (the window), `ui/cards/*.slint` (one file per card), `ui/dialogs.slint`; everything shared comes from `@kit`. `build.rs` compiles them with `slint-build`.
+- **Files:** `ui/app.slint` (the window), `ui/cards/*.slint` (one file per card), `ui/dialogs.slint`; everything shared comes from `@kit`. They live in `glint-ui-view`, whose `build.rs` compiles them with `slint-build` and whose only Rust is the re-export of the generated components. Slint's generated code carries `allow(unsafe_code)`, which `#![forbid(unsafe_code)]` rejects, so all hand-written UI code lives in `glint-ui` under `forbid` (ADR 0002).
 - **Window:** native decorations, like Pulse (it uses the window manager's title bar). Fixed width of 400 px; the content sits in a `Flickable` that only scrolls once *More options* is open. Set the XDG app id to `glint` so the window manager matches the window to `glint.desktop` (check the current Slint API for the app-id setter).
 - **Renderer:** the software renderer keeps the UI completely off the GPU. Select it with `SLINT_BACKEND=winit-software` in the `.desktop` file, or with Slint's `BackendSelector` API.
 - **Threads:** an IO thread reads the socket and hands each event to the UI with `slint::Weak::upgrade_in_event_loop`; telemetry is coalesced to at most 15 updates per second. Callbacks only enqueue requests and never block.
@@ -866,9 +866,10 @@ glint/
 │   ├── glint-engine/             bin: glintd
 │   │   └── src/                  main.rs · hot.rs · controller.rs · telemetry.rs · lifecycle.rs
 │   │                             rt.rs · store.rs · lock.rs
-│   ├── glint-ui/                 bin: glint
+│   ├── glint-ui-view/            lib: the Slint-generated view; its code needs allow(unsafe_code) (ADR 0002)
 │   │   ├── build.rs              compiles ui/ with the kit's library path (§12.1)
-│   │   ├── ui/                   app.slint · dialogs.slint · cards/*.slint
+│   │   └── ui/                   app.slint · dialogs.slint · cards/*.slint
+│   ├── glint-ui/                 bin: glint; every hand-written UI line, #![forbid(unsafe_code)]
 │   │   └── src/                  main.rs · client.rs · spawn.rs · bind.rs
 │   ├── glint-ctl/                bin: glint-ctl
 │   └── glint-lab/                bin: glint-lab + Xvfb integration tests
@@ -1678,7 +1679,9 @@ pub enum Event {
 ### A.6 UI glue (`glint-ui/src/main.rs`)
 
 ```rust
-slint::include_modules!();
+#![forbid(unsafe_code)]
+// The Slint-generated components come from glint-ui-view (ADR 0002).
+use glint_ui_view::{AppWindow, ClosePolicy};
 
 fn main() -> anyhow::Result<()> {
     // Keep the UI off the GPU: glint.desktop launches with SLINT_BACKEND=winit-software.

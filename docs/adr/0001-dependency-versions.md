@@ -10,7 +10,7 @@
 `Cargo.lock` show:
 
 | Crate | §14 | Current | Pulse |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | x11rb | 0.13 | 0.14.0 | 0.14.0 (its own use; Slint's winit pulls 0.13.2) |
 | toml | 0.8 | 1.2.1 | 1.1 |
 | rtrb | 0.3 | 0.4.1 | — |

@@ -128,6 +128,23 @@ both clients at once). No client can avoid these.
 Not measured yet: it injects input, so it may run only inside Xvfb or Xephyr, and neither is installed. The spike
 is built and refuses to run on display `:0`.
 
+## 6. UI (`spike-ui`)
+
+- Pulse's `theme.slint` and `components.slint` compile in place through a Slint library path (`@pulse/…`) with
+  Pulse's `cosmic-dark` style. Nothing was copied out of Pulse.
+- Slint 1.18.1's generated code expands `ItemTreeVTable_static!`, which carries `#[allow(unsafe_code)]`. That is a
+  hard error (E0453) under `#![forbid(unsafe_code)]`. Fix: the generated view goes in its own crate under
+  `deny(unsafe_code)`, and the hand-written UI crate keeps `forbid` (ADR 0002).
+- `BackendSelector` with winit plus the software renderer works. `slint::set_xdg_app_id` must come after the
+  backend is selected and before the window is shown. It sets `WM_CLASS` to `"", "glint-spike"`, with an
+  **empty instance name**.
+- The window manager's close request (`xdotool windowquit`, the same request as the title-bar button) reaches
+  `on_close_requested`, which opens the dialog; the window stays open.
+- Idle CPU while shown and untouched: 0 ticks in 3 s.
+- Screenshots: `spikes/spike-ui/screenshots/` (idle, started, close dialog).
+- Pulse's hero button is the reverse of §12.6: **Start is the white primary button and Stop is dark with a white
+  outline** (`ButtonKind.danger`). Pulse's source wins (A.7); §12 is reconciled with the kit in Phase 4.
+
 ## Conclusions for the defaults (Phase 0 exit)
 
 - **Speed preset: Balanced (2,000/s) confirmed.** Paced response is dominated by the server's own busy periods

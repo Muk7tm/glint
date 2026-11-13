@@ -1,6 +1,7 @@
 # Glint: working rules
 
 **Read `docs/PROGRESS.md` first.** It says which phase is active, what is done, and what is blocked.
+Decisions that changed the plan are indexed in `docs/adr/README.md`.
 
 Glint is a low-latency, color-triggered clicker for Linux X11: a Rust engine (`glintd`) plus a separate
 Slint UI (`glint`). The specification is **`docs/PLAN.md`**. It is the source of truth: follow it, and when
@@ -22,12 +23,17 @@ it is wrong, change it openly (see Deviations), never silently.
   nothing that reads other processes' memory.
 - `#![forbid(unsafe_code)]` in core, ipc and ui (and every other crate unless the plan or an ADR allows
   otherwise). `unsafe` only where PLAN §13 allows it (`glint-x11/src/capture/shm.rs`), with SAFETY comments.
+  Slint's generated code needs `allow(unsafe_code)`, so it lives alone in `glint-ui-view` under `deny`
+  (ADR 0002); every hand-written UI line stays in `glint-ui` under `forbid`.
+- The hot connections A and B use the allocation-free raw protocol path, not x11rb (ADR 0003).
 - Before every commit, all green:
+
   ```sh
   cargo fmt --all --check
   cargo clippy --workspace --all-targets -- -D warnings
   cargo test --workspace
   ```
+
   When `spikes/` changed, run the same three inside `spikes/` (it is its own workspace).
 
 ## Workflow
@@ -51,6 +57,7 @@ Never invent functions, features or flags. If something can't be verified, say s
 ## Deviations
 
 When the plan proves wrong (an API differs, a measurement contradicts it, or a better approach appears):
+
 1. Write a short ADR in `docs/adr/` (template and index in `docs/adr/README.md`).
 2. Update the affected section of `docs/PLAN.md`.
 3. Say so in the next report.
@@ -67,6 +74,7 @@ When the plan proves wrong (an API differs, a measurement contradicts it, or a b
 
 The user's Rust + Slint app Pulse lives at `/home/muk7tm/Documents/VSCode/Tools/Pulse`. Its look is Glint's
 UI spec (PLAN §12).
+
 - Read it freely, for reference and for Phase 0's `spike-ui`.
 - Ask before changing anything in Pulse's repository (the kit extraction in Phase 4).
 - After extraction, Pulse must stay pixel-identical: compare screenshots to confirm.

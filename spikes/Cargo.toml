@@ -2,7 +2,7 @@
 # workspace so they never affect the product's build or CI.
 [workspace]
 resolver = "3"
-members = ["spike-capture"]
+members = ["spike-capture", "spike-ui", "spike-ui-view"]
 
 [workspace.package]
 version = "0.0.0"

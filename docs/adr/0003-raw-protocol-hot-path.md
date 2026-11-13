@@ -10,6 +10,7 @@ The hot loop must not lock or allocate (non-negotiable; §4.2, §5.6). The plan 
 allocation would be the reply buffer of plain `GetImage`, and that MIT-SHM removes even that.
 
 x11rb 0.13.2's source shows otherwise:
+
 - Every request allocates its bytes: `GetImageRequest::serialize` and `xtest::FakeInputRequest::serialize`
   both build a `vec!`.
 - The packet reader allocates `vec![0; len]` for every reply, and `GetImageReply` copies the data into
@@ -19,7 +20,7 @@ x11rb 0.13.2's source shows otherwise:
 Measured in Phase 0 (`spike-capture`, `docs/MEASUREMENTS.md` §1), with a counting global allocator:
 
 | Path | Heap allocations per check | Round trip p50 / p99 |
-|---|---|---|
+| --- | --- | --- |
 | x11rb `get_image().reply()` | 5 | 16.4 / 32.9 µs |
 | x11rb `shm_get_image().reply()` | 3 | 16.0 / 31.4 µs |
 | raw client (fixed buffers, blocking socket) | 0 | 16.6 / 33.3 µs |

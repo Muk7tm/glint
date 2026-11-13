@@ -1,0 +1,16 @@
+[package]
+name = "spike-ui-view"
+description = "Phase 0: the Slint-generated view for spike-ui, kept in its own crate (its generated code needs allow(unsafe_code))"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+slint.workspace = true
+
+[build-dependencies]
+slint-build.workspace = true
+
+[lints]
+workspace = true
