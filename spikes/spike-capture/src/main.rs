@@ -682,17 +682,36 @@ fn tax(a: &Args) -> Res<()> {
     Ok(())
 }
 
-/// Tight GetImage loop for `secs`: when do round trips above 300 µs happen, and
-/// how far apart are they? Spacing of one refresh period means a per-frame cause.
+/// A GetImage (or GetInputFocus) loop for `secs`, tight or paced with `--rate N`: when do
+/// round trips above 300 µs happen, and how far apart are they? Spacing of one refresh period
+/// means a per-frame cause. Every stall above 5 ms is also listed with its time, to see whether
+/// the big ones are periodic.
 fn stalls(a: &Args) -> Res<()> {
-    let tw = TestWindow::open()?;
-    let (drawable, x, y) = tw.spot(Target::Root);
+    // GetInputFocus needs no window, so a long focus run shows nothing on screen.
+    let tw = if matches!(a.method, Method::Focus) {
+        None
+    } else {
+        Some(TestWindow::open()?)
+    };
+    let (drawable, x, y) = tw.as_ref().map_or((0, 0, 0), |tw| tw.spot(Target::Root));
     let mut cap = open_capture(a.method, drawable, x, y)?;
     let mut events: Vec<(u64, u32)> = Vec::with_capacity(100_000);
     let started = Instant::now();
     let end = Duration::from_secs(a.secs);
+    let period = a
+        .rate
+        .filter(|&r| r > 0)
+        .map(|r| Duration::from_nanos(1_000_000_000 / u64::from(r)));
+    let mut next = started;
     let mut checks = 0u64;
     while started.elapsed() < end {
+        if let Some(p) = period {
+            next += p;
+            if next < Instant::now() {
+                next = Instant::now();
+            }
+            pace_until(next);
+        }
         let t0 = Instant::now();
         cap.grab()?;
         let rtt = elapsed_ns(t0);
@@ -702,9 +721,16 @@ fn stalls(a: &Args) -> Res<()> {
         }
     }
     println!(
-        "stalls method={:?} label={} · {checks} checks in {} s",
-        a.method, a.label, a.secs
+        "stalls method={:?} rate={:?} label={} · {checks} checks in {} s",
+        a.method, a.rate, a.label, a.secs
     );
+    for &(at, rtt) in events.iter().filter(|e| e.1 > 5_000_000) {
+        println!(
+            "  big stall at {:8.3} s: {:5.1} ms",
+            at as f64 / 1e9,
+            f64::from(rtt) / 1e6
+        );
+    }
     if events.len() < 2 {
         println!("  {} stall(s) above 300 µs", events.len());
         return Ok(());
