@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+assert_no_alloc.workspace = true
 arc-swap.workspace = true
 clap.workspace = true
 glint-core.workspace = true
@@ -24,6 +25,7 @@ x11rb.workspace = true
 
 [dev-dependencies]
 glint-x11 = { workspace = true, features = ["sandbox"] }
+rtrb.workspace = true
 signal-hook.workspace = true
 
 [lints]

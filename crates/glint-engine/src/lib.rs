@@ -3,6 +3,12 @@
 //! startup and stop path. `main.rs` only wires these together, so tests can drive each part.
 #![forbid(unsafe_code)]
 
+/// Debug builds check that the hot loop never allocates (§5.6, ADR 0003): any allocation inside
+/// `assert_no_alloc` aborts with a message.
+#[cfg(debug_assertions)]
+#[global_allocator]
+static ALLOCATOR: assert_no_alloc::AllocDisabler = assert_no_alloc::AllocDisabler;
+
 pub mod controller;
 pub mod hot;
 pub mod lifecycle;
