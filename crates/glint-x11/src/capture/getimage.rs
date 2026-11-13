@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Core `GetImage` capture (PLAN §5.2, Appendix A.3) over the raw connection A (ADR 0003): one
 //! round trip per check, no allocation. Reading the root window is the `screen` backend; reading
 //! the target window itself is `window-buffer` (Phase 5).

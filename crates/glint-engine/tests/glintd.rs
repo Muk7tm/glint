@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The real `glintd` on Xvfb, driven only through its socket (§10).
 #![allow(clippy::unwrap_used)] // test helpers: any failure should panic
 

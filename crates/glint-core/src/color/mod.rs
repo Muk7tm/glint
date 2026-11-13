@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Color models, include/exclude rules and the compiled lookup table (PLAN §5.4).
 
 use std::fmt;

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Capture backends (PLAN §5.2). The hot loop owns one and calls [`Capture::grab`] once per
 //! check; every backend reads into a caller-owned buffer and never allocates.
 

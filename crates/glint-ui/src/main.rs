@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! `glint`: the Glint window (PLAN §12). The engine does all the watching and clicking; this
 //! window only shows and changes its state over the socket, and never injects input.
 #![forbid(unsafe_code)]
@@ -9,7 +9,7 @@ mod client;
 mod keys;
 mod spawn;
 
-use glint_ui_view::{Actions, AppWindow};
+use glint_ui_view::{Actions, AppWindow, Ui};
 use slint::ComponentHandle;
 
 use crate::app::App;
@@ -25,6 +25,7 @@ fn main() -> Result<(), slint::PlatformError> {
     slint::set_xdg_app_id("glint")?;
 
     let ui = AppWindow::new()?;
+    ui.global::<Ui>().set_version(env!("CARGO_PKG_VERSION").into());
     let socket = glint_x11::env::LocalDisplay::from_env().map(|d| glint_ipc::socket_path(d.number));
     let link = match &socket {
         Ok(path) => Link::start(path.clone(), true, app::deliver),

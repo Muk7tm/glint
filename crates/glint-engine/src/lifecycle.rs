@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Startup and the stop paths that can't go through the hot loop (PLAN §4.3, §6): the panic hook
 //! and the signals.
 //!
@@ -70,7 +70,7 @@ pub fn watch_signals(on_signal: impl Fn(i32) + Send + 'static) -> std::io::Resul
 #[command(
     name = "glintd",
     version,
-    about = "The Glint engine: watches the screen and clicks (GPL-3.0-or-later)"
+    about = "The Glint engine: watches the screen and clicks (MIT)"
 )]
 pub struct Options {
     /// Start watching as soon as the engine is ready. Without it, the engine waits for Start,

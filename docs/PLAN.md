@@ -88,7 +88,7 @@ Rust is in the same speed class as C and C++, not faster than them. What makes i
 
 Pulse already proves it: it's built with Rust and Slint and has exactly the look you want, so Glint can share its theme and components instead of re-creating them (§12.1). Beyond that, Slint fits well. Its declarative `.slint` files compile to native code, it has a small footprint, its software renderer keeps the UI completely off the GPU your game is using, and its live preview makes matching Pulse's look fast. Since 1.17 it also has built-in tooltips and a system-tray icon element; the current stable line is 1.18.x. Because the UI is a separate process, its performance can't affect clicking anyway, so the choice comes down to design control and developer experience, and Slint wins there.
 
-**License: GPLv3.** Glint is open source, so it uses Slint under GPLv3, which needs no on-screen credit, so no About screen is required. Under Slint's GPLv3 option the distributed `glint` UI binary must be GPLv3; to keep things simple this plan licenses the whole project GPL-3.0-or-later. The files copied from Pulse (§12.1) come from MIT code, which a GPL project may include; they keep a note of their origin.
+**License: MIT** (the owner's choice, ADR 0016). Glint uses Slint under the *Slint Royalty-free Desktop, Mobile, and Web Applications License 2.0*. Its condition is attribution: the `AboutSlint` widget in an About dialog reachable from the top level of the app, or the Slint badge on a public download page. Glint does the first: the About button beside *Quit Glint* opens Pulse's About dialog, which shows `AboutSlint`. The files copied from Pulse (§12.1) are MIT too, and keep a note of their origin. `deny.toml` allows no GPL license, so a GPL-only dependency fails CI.
 
 | Alternative considered | Verdict | Why |
 |---|---|---|
@@ -816,7 +816,7 @@ Write the way Pulse does: short, plain, sentence case, status facts joined with 
 - **Renderer:** the software renderer keeps the UI completely off the GPU. Select it with `SLINT_BACKEND=winit-software` in the `.desktop` file, or with Slint's `BackendSelector` API.
 - **Threads:** an IO thread reads the socket and hands each event to the UI with `slint::Weak::upgrade_in_event_loop`; telemetry is coalesced to at most 15 updates per second. Callbacks only enqueue requests and never block.
 - **Closing:** `window().on_close_requested(...)` shows the overlay dialog and returns `CloseRequestResponse::KeepWindowShown` (Appendix A.6).
-- **No About screen:** version and environment details live under *More options → Engine → Copy diagnostics*. Slint is used under GPLv3, which needs no on-screen credit (§2).
+- **About:** an *About* button beside *Quit Glint*, as in Pulse, opens Pulse's About dialog: name and version, one line on what Glint is, the license, and Slint's `AboutSlint`, which the royalty-free license requires (§2, ADR 0016). Environment details for bug reports live under *More options → Engine → Copy diagnostics*.
 - **Accessibility:** every custom control sets `accessible-role` and `accessible-label`; Tab follows visual order; Space and Enter activate; arrow keys move segmented controls and steppers; focus shows as a visible 1 px ring in `text-secondary`.
 - **Idle cost:** no animations except the 120 ms toggle and disclosure transitions. While minimized or hidden, the UI unsubscribes from telemetry and the live swatch, so it wakes up zero times per second.
 - **Iterating on the look:** `slint-viewer --auto-reload ui/app.slint`, or the Slint VS Code extension's live preview, with Pulse open next to it.
@@ -838,7 +838,7 @@ glint/
 ├── Cargo.toml                    workspace root
 ├── rust-toolchain.toml           stable + rustfmt + clippy + musl target
 ├── deny.toml                     cargo-deny: licenses and advisories
-├── LICENSE                       GPL-3.0 text
+├── LICENSE                       MIT text
 ├── crates/
 │   ├── glint-core/               pure logic, no I/O, #![forbid(unsafe_code)]
 │   │   ├── src/color/            oklab.rs · hsv.rs · rule.rs · lut.rs
@@ -867,7 +867,7 @@ glint/
 └── .github/workflows/ci.yml
 ```
 
-Every source file starts with `// SPDX-License-Identifier: GPL-3.0-or-later`. The files copied from Pulse also name their origin (Pulse, MIT).
+Every source file starts with `// SPDX-License-Identifier: MIT`. The files copied from Pulse also name their origin (Pulse, MIT).
 
 ---
 
@@ -902,7 +902,7 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "GPL-3.0-or-later"      # Slint is used under GPLv3 (§2)
+license = "MIT"                   # Slint under its royalty-free license (§2, ADR 0016)
 
 [workspace.dependencies]
 x11rb = { version = "0.13.2", features = ["xtest", "shm", "damage", "composite", "randr", "xinput", "xfixes", "screensaver"] }
@@ -1051,7 +1051,7 @@ verdict     PASS  (p99 ≤ 2 ms, max ≤ 10 ms, 0 extra, 0 missed)
 
 Phase 3 implements every scenario above except `move`, `focus` and `ui-overlap`, which need window mode (Phase 5). `two-engines`, `action-matrix`, `kill-mid-press` and `action-equals-hotkey` run only in the sandbox; `soak` takes `--minutes` (ADR 0010).
 
-**CI** (GitHub Actions on Ubuntu 24.04, `.github/workflows/ci.yml`; ADR 0010): `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`; `cargo nextest run --workspace` with Xvfb installed, which covers the exhaustive table test (`glint-core` is optimized even in test builds) and the whole Xvfb integration suite, because every engine test and lab scenario starts its own Xvfb and `glintd` (`.config/nextest.toml` runs the exhaustive test alone and at most two sandboxes at a time); an optional job that runs the lab scenarios with `GLINT_LAB_COMPOSITOR=picom`, which starts `picom --backend xrender` on every sandbox; and `cargo deny check` (`deny.toml` allows `GPL-3.0-only` and `GPL-3.0-or-later`, or Slint's license fails the check). CI checks correctness only and never asserts timing, because shared runners are far too noisy; latency is measured on real hardware.
+**CI** (GitHub Actions on Ubuntu 24.04, `.github/workflows/ci.yml`; ADR 0010): `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`; `cargo nextest run --workspace` with Xvfb installed, which covers the exhaustive table test (`glint-core` is optimized even in test builds) and the whole Xvfb integration suite, because every engine test and lab scenario starts its own Xvfb and `glintd` (`.config/nextest.toml` runs the exhaustive test alone and at most two sandboxes at a time); an optional job that runs the lab scenarios with `GLINT_LAB_COMPOSITOR=picom`, which starts `picom --backend xrender` on every sandbox; and `cargo deny check` (`deny.toml` allows Slint's `LicenseRef-Slint-Royalty-free-2.0` and no GPL license, so a GPL-only dependency fails the check; ADR 0016). CI checks correctness only and never asserts timing, because shared runners are far too noisy; latency is measured on real hardware.
 
 **Hardware matrix before v1.0:**
 
@@ -1095,7 +1095,7 @@ Phase 3 implements every scenario above except `move`, `focus` and `ui-overlap`,
 
 **Install layout:** `/usr/bin/glint`, `/usr/bin/glintd`, `/usr/bin/glint-ctl`, `/usr/share/applications/glint.desktop`, `/usr/share/icons/hicolor/scalable/apps/glint.svg`, and optionally `/usr/lib/systemd/user/glintd.service`. The UI looks for the engine next to its own executable first, then on `$PATH`.
 
-**License:** every package and the AppImage include the `LICENSE` file (GPL-3.0), and `glint --version`, `glintd --version` and `glint-ctl diag` print the license and the source repository URL, so anyone who gets a binary knows where the source lives.
+**License:** every package and the AppImage include the `LICENSE` file (MIT), and `glint --version`, `glintd --version` and `glint-ctl diag` print the license and the source repository URL, so anyone who gets a binary knows where the source lives.
 
 **UI runtime libraries** (present on any X11 desktop): libX11, libXcursor, libXrandr, libXi, libxkbcommon and libxkbcommon-x11, fontconfig and freetype. The GPU renderers would add libGL/EGL; the software renderer avoids them.
 
@@ -1230,7 +1230,7 @@ Effort sizes are relative: S is a few days, M about a week or two, L longer, for
 ## 21. Decisions worth revisiting
 
 1. **Name.** "Glint" is a placeholder.
-2. **License — decided.** Glint is open source: Slint is used under GPLv3 and the project is GPL-3.0-or-later. If you'd rather keep the engine crates permissive, MIT OR Apache-2.0 everywhere except the UI also works, because only the `glint` binary links Slint.
+2. **License — decided: MIT** (owner, 2026-11-13; ADR 0016). Slint is used under its royalty-free license, and the About dialog shows `AboutSlint`.
 3. **Where the shared kit lives — decided: no kit.** Glint is a separate project and copies Pulse's Slint files once (ADR 0012).
 4. **Default hotkeys.** F6/F7/F8, with F8 shared with Pulse on purpose. If Glint's emergency stop shouldn't affect Pulse, change one of them.
 5. **The 40 ms *Gone after* default.** Right for most content; lower it for content that legitimately disappears and comes back faster.

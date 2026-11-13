@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! `glint-ctl`: the Glint engine from the command line (PLAN §10).
 #![forbid(unsafe_code)]
 

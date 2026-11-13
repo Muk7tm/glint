@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 # Phase 0 measurement matrix for spike-capture (read-only on the current DISPLAY).
 #
 #   run-matrix.sh <label> <results.tsv> [none|xrender|glx]

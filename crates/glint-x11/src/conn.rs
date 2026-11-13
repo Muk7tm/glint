@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Opening Glint's X connections (PLAN §4.1). A (capture) and B (input) use the raw path in
 //! [`crate::wire`] (ADR 0003); C (the controller: windows, focus, hotkeys, picking, monitors) and
 //! D (the idle emergency-release connection) use x11rb.

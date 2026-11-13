@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Starting the engine when none answers (§4.3): `glintd` next to this program, else the one on
 //! `$PATH`. It runs on its own, not as part of the window, so closing the window with *Keep
 //! running* leaves it watching.

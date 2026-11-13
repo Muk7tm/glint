@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! XTest input (PLAN §6, Appendix A.4).
 //!
 //! The [`Injector`] owns the raw connection B (ADR 0003). A press goes out the moment the trigger

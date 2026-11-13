@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Picking a color with the mouse (§10 `pick_color`, §12.6 magnifier). The engine grabs the
 //! pointer with a crosshair on connection C, streams the pixels around it, and returns the one
 //! clicked. Escape or any other button cancels. The UI only shows the frames; it never grabs or

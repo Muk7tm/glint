@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The controller (PLAN §4.2): IPC, settings and profiles, lookup-table builds, monitors and,
 //! later, windows and hotkeys on X connection C. It is the only thread that changes what the hot
 //! thread does, through [`HotHandle`], and it never waits on a client: each client has a bounded

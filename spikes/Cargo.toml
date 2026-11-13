@@ -7,7 +7,7 @@ members = ["spike-capture", "spike-inject", "spike-ui", "spike-ui-view"]
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
-license = "GPL-3.0-or-later"
+license = "MIT"
 publish = false
 
 [workspace.dependencies]

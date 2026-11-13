@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Settings and profiles on disk (PLAN §11): `<config>/settings.toml` and
 //! `<config>/profiles/<name>.toml`, where `<config>` is `$XDG_CONFIG_HOME/glint` or
 //! `~/.config/glint`.

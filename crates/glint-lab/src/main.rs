@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! `glint-lab`: the Glint test lab (PLAN §16). Each run starts its own Xvfb and its own `glintd`
 //! (found next to this program, or on `$PATH`), so it never clicks on the real desktop, unless
 //! `--real-desktop` asks for exactly that.
@@ -16,7 +16,7 @@ use glint_lab::{LATER, Options, Report, SCENARIOS};
 #[command(
     name = "glint-lab",
     version,
-    about = "Glint's test lab: scenarios in a sandboxed X server (GPL-3.0-or-later)"
+    about = "Glint's test lab: scenarios in a sandboxed X server (MIT)"
 )]
 struct Cli {
     /// The scenario, or `all` to run every one in the sandbox; `--list` shows them.

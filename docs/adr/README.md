@@ -20,6 +20,7 @@ plan also updates the affected plan section in the same commit.
 | [0013](0013-hold-to-watch-typed-colors-and-side-button-hotkeys.md) | Hold to watch, typed color codes, and mouse side buttons as hotkeys | Accepted (owner requests) | §9, §12.3, §19 |
 | [0014](0014-window-buffer-gap-and-lock-detection.md) | The window-buffer backend: its check gap and its self-check; D-Bus lock detection moves to Phase 6 | Accepted | §5.2, §8, §12.3, §19 |
 | [0015](0015-loose-plus-shades.md) | *Loose+*: a fourth shades option that takes much lighter and darker shades | Accepted (owner request) | §5.4, §12.3 |
+| [0016](0016-mit-license-and-about-dialog.md) | MIT license, with Pulse's About dialog showing AboutSlint | Accepted (owner decision) | §2, §12.3, §13, §14, §16, §18, §21 |
 
 ## Template
 

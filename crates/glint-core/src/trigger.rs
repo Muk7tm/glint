@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The trigger state machine (PLAN §5.5, ADR 0007).
 //!
 //! **Speed on the rising edge:** once armed, the first Enter check fires, with no waiting

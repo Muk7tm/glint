@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The hot thread (PLAN §4.2, Appendix A.2): check, classify, decide, click, pace.
 //!
 //! It owns X connections A (capture) and B (input), the trigger and the injector, and reaches the

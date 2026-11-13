@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Judging a run (§16). The lab's drawing is replayed against the trigger's rules (§5.5,
 //! ADR 0007) to find each appearance that must, or may, get a click, and every click the engine
 //! sent is matched to one.

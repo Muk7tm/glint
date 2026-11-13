@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Sample patterns and pixel agreement (PLAN §5.3, ADR 0006).
 //!
 //! A pattern is a set of pixel offsets around the anchor pixel. The engine captures the

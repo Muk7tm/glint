@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Settings (PLAN §11, Appendix B, ADR 0008): the close policy, the active profile, hotkeys,
 //! engine options and UI state. Like profiles, every field has a default and unknown fields are
 //! errors.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Where the engine under test runs: a throwaway Xvfb ([`Sandbox`]) or the real desktop
 //! ([`RealDesktop`]).
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! A panic anywhere in the engine releases held input on connection D first (§4.3). The panic hook
 //! is process-wide, so this test has a process of its own.
 

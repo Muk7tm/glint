@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Which X extensions the server offers (PLAN §4.3 step 3). XTEST is required; everything else
 //! degrades gracefully.
 

@@ -1,8 +1,10 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // The Glint window (PLAN §12.3): Pulse's shell and cards, Glint's COLOR card under the hero. The
-// shared components are the copy in pulse/ (ADR 0012); the state is in state.slint.
+// shared components are the copy in pulse/ (ADR 0012); the state is in state.slint. The About
+// button and dialog are Pulse's (crates/pulse-ui/ui/main.slint at e4ccdaa, MIT) with Glint's name;
+// its AboutSlint meets the condition of Slint's royalty-free license (ADR 0016).
 
-import { ScrollView } from "std-widgets.slint";
+import { ScrollView, AboutSlint } from "std-widgets.slint";
 import { Theme } from "pulse/theme.slint";
 import { PButton, ButtonKind, Disclosure, Note, Tone } from "pulse/components.slint";
 import { Ui, Form, Actions } from "state.slint";
@@ -80,9 +82,86 @@ export component AppWindow inherits Window {
             }
 
             PButton {
+                text: "About";
+                kind: ButtonKind.ghost;
+                clicked => {
+                    about.show();
+                }
+            }
+
+            PButton {
                 text: "Quit Glint";
                 clicked => {
                     Actions.close-window();
+                }
+            }
+        }
+    }
+
+    about := PopupWindow {
+        x: (root.width - 300px) / 2;
+        y: 64px;
+        width: 300px;
+        close-policy: PopupClosePolicy.close-on-click-outside;
+        Rectangle {
+            background: Theme.elevated;
+            border-radius: Theme.radius-m;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #00000080;
+            // Takes keyboard focus when the popup opens so Escape closes it.
+            FocusScope {
+                width: 0px;
+                height: 0px;
+                init => {
+                    self.focus();
+                }
+                key-pressed(event) => {
+                    if (event.text == Key.Escape) {
+                        about.close();
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
+
+            VerticalLayout {
+                padding: Theme.gap-l;
+                spacing: Theme.gap-s;
+                Text {
+                    text: "Glint " + Ui.version;
+                    color: Theme.text;
+                    font-size: Theme.font-title;
+                    font-weight: 700;
+                }
+
+                Text {
+                    text: "A low-latency, color-triggered clicker for Linux (X11). No telemetry, no network access.";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-caption;
+                    wrap: word-wrap;
+                }
+
+                Text {
+                    text: "License: MIT.";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-caption;
+                    wrap: word-wrap;
+                }
+
+                AboutSlint {
+                    height: 110px;
+                }
+
+                HorizontalLayout {
+                    alignment: end;
+                    PButton {
+                        text: "Close";
+                        clicked => {
+                            about.close();
+                        }
+                    }
                 }
             }
         }

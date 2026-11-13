@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Which X display Glint talks to, and what kind of session it is (PLAN §4.4, §8).
 //!
 //! Only local displays are supported: the hot connections speak the X protocol directly over

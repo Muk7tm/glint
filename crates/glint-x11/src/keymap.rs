@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Key names, keysyms and keycodes (PLAN §6, §9).
 //!
 //! A key action stores the keycode the key picker captured, which doesn't change with the

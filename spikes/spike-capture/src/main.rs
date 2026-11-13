@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Phase 0 spike (PLAN §19): what does one check cost on this machine?
 //!
 //! ```text

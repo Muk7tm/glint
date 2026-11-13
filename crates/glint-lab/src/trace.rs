@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The engine's trace stream (§16): every click with its timing, possible misses, blind gaps
 //! and self-stops, collected on a connection of its own for the whole run.
 

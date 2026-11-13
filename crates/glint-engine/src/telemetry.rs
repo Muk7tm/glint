@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The telemetry thread (PLAN §4.2, §17). It drains the hot thread's event ring, keeps the live
 //! statistics, and passes on the events the controller must act on. The hot thread never waits
 //! for it: the ring is wait-free, and a full ring drops records and counts them.

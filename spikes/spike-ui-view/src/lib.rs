@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The Slint-generated view for `spike-ui`.
 //!
 //! Slint 1.18.1's generated code expands `ItemTreeVTable_static!`, which carries

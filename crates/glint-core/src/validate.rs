@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Validation (PLAN §11, ADR 0008). The engine runs these before applying a profile or settings.
 //! An error rejects the change and names the field, so the UI can show the message next to it;
 //! a warning is shown but the change is applied.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The scenarios of §16.
 //!
 //! Most of them are a [`Run`]: the lab draws on the canvas while the probe and the trace record,

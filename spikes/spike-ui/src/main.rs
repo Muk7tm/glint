@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Phase 0 spike (PLAN §19): Pulse's components in a 400 px window with the hero
 //! card and the close-dialog overlay.
 //!

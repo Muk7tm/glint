@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Every scenario of §16 that runs without real hardware (Phase 3), against the real `glintd` on
 //! Xvfb. The counts are kept small so every `cargo test` runs them; `glint-lab` runs longer ones.
 //! The tests check correctness only, never timing (§16): shared CI runners are far too noisy.

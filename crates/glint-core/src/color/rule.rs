@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Include and exclude colors with tight and wide ranges (PLAN §5.4, ADR 0005), and their
 //! compiled form, which the lookup-table builder runs on every 24-bit color.
 //!

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! X11 backends for the engine (PLAN §5.1–§5.2, §6, §8, §9).
 //!
 //! `unsafe` is allowed only in `capture/shm.rs` (PLAN §13), with a SAFETY

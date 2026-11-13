@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The HSV color model (PLAN §5.4). The RGB-box model needs no conversion; its test lives in
 //! `rule.rs`.
 

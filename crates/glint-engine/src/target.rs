@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The picked window (PLAN §8): finding it by class, finding it again after it closes, its
 //! rectangle, whether it's mapped, and whether it's in front.
 //!

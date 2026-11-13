@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The allocation-free X protocol client for the hot connections, A (capture) and B (input)
 //! (ADR 0003).
 //!

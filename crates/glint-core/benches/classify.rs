@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Classification benchmarks (PLAN §19 Phase 1: under 100 ns for 9 pixels; §3: classify plus
 //! the trigger decision under 2 µs). Run with `cargo bench -p glint-core`.
 

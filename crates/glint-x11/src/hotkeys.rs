@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Hotkeys (PLAN §9): XInput 2 raw key events on the root window. Since XI 2.1 these arrive even
 //! while another program holds a keyboard grab, so F8 works over a fullscreen game. Raw events
 //! don't consume the key: the focused app gets it too.

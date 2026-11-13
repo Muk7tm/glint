@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Key names for the key pickers (§12.6). Slint reports named keys as private-use characters
 //! (`slint::platform::Key`) and printable keys as the text they produce; Glint stores X keysym
 //! names (`F7`, `space`, `a`), the ones `glint_x11::keymap::keysym_from_name` resolves. Printable

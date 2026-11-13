@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The compiled lookup table: 2 bits for each of the 16,777,216 24-bit colors, 4 MiB in all
 //! (PLAN §5.4).
 //!

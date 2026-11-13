@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The lab's window (§16): it covers a monitor, shows colors at the watched spot, and records
 //! the input the engine sends into it.
 

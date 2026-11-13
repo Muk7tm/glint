@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Tests against a real X server (Xvfb). They're skipped, with a note, when Xvfb isn't installed.
 
 use x11rb::connection::Connection;

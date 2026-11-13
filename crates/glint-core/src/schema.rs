@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Schema versions and migrations for Glint's TOML files (PLAN §11).
 //!
 //! Every file carries `schema_version`. An older file is migrated in memory, one version at a

@@ -9,7 +9,7 @@ exclude = ["spikes"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "GPL-3.0-or-later" # Slint is used under GPLv3 (§2); the shared kit crate stays MIT OR Apache-2.0
+license = "MIT" # Slint is used under its royalty-free license: the About dialog shows AboutSlint (ADR 0016)
 
 [workspace.dependencies]
 glint-core = { path = "crates/glint-core" }

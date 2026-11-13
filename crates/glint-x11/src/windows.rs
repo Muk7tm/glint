@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Window identity, tracking and focus (PLAN §8): the application's client window (the one
 //! carrying `WM_STATE`, not the window manager's frame), its class, title and PID, its rectangle
 //! in root coordinates, the windows the window manager lists, and which one is active.

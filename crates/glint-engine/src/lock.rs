@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! One engine per display (PLAN §4.4): two engines watching the same screen would double every
 //! click, so this is a correctness feature. The engine holds a non-blocking exclusive `flock` on
 //! `<socket dir>/glintd-<N>.lock` for its whole life. `N` is the canonical display number, so

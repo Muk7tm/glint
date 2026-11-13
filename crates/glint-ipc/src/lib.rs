@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Glint's IPC protocol (PLAN §10, Appendix A.5): message types, newline-delimited JSON framing,
 //! the socket's location, and a small blocking client.
 //!

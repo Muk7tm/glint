@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The Glint test lab (PLAN §16).
 //!
 //! A [`Canvas`] window covers the monitor and shows colors at the watched spot, and each

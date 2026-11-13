@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! `glint-ctl`: the engine from the command line (PLAN §10). Everything goes through the engine's
 //! socket, except `release-all`, which also works when no engine answers (C10).
 #![forbid(unsafe_code)]
@@ -16,7 +16,7 @@ use glint_x11::env::LocalDisplay;
 const WAIT: Duration = Duration::from_secs(5);
 
 #[derive(Parser, Debug)]
-#[command(name = "glint-ctl", version, about = "Control the Glint engine (GPL-3.0-or-later)")]
+#[command(name = "glint-ctl", version, about = "Control the Glint engine (MIT)")]
 pub struct Cli {
     /// The engine's socket (default: the one for $DISPLAY).
     #[arg(long, global = true)]
@@ -211,7 +211,7 @@ pub fn execute(cli: &Cli, out: &mut dyn Write) -> Result<(), CtlError> {
             }
         }
         Command::Diag => {
-            writeln!(out, "glint-ctl {} · GPL-3.0-or-later", env!("CARGO_PKG_VERSION"))?;
+            writeln!(out, "glint-ctl {} · MIT", env!("CARGO_PKG_VERSION"))?;
             writeln!(out, "{}", serde_json::to_string(&hello).unwrap_or_default())?;
             let state = reply(&mut client, Request::GetState)?;
             writeln!(out, "{}", serde_json::to_string(&state).unwrap_or_default())?;

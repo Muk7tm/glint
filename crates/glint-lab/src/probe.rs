@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The stall probe (ADR 0004): a second X client times a round trip every millisecond for the
 //! whole run. A round trip longer than [`STALL`] means the server stopped answering for that
 //! long; the report sets apart the trials such a stall touched. Round trips before and during

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! A throwaway X server for tests: Xvfb on a display it picks itself, stopped when dropped.
 //!
 //! Everything that injects input runs in one of these (or in Xephyr) until Phase 2's exit, never

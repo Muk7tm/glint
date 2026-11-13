@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Pixel formats (PLAN §5.2, Appendix A.3): never assume BGRX. The drawable's visual masks, the
 //! bits per pixel and scanline padding of its depth, and the server's image byte order decide how
 //! a captured pixel becomes `0xRRGGBB`.

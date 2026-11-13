@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! OKLab/OKLCh reference math (PLAN §5.4, Björn Ottosson's definition).
 //!
 //! Everything that converts colors (the lookup-table builder, the tests, the color picker)

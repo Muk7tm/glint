@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Profiles (PLAN §11, Appendix B, ADR 0008): what to watch, how to sample it, which colors
 //! count, the trigger settings, the action and the guards.
 //!

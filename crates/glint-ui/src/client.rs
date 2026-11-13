@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The window's connection to the engine (PLAN §10). Two threads keep the window from ever waiting
 //! on the engine: one blocks reading the socket and hands every message to the window's event
 //! loop, the other writes the window's requests. Neither wakes up while nothing happens.

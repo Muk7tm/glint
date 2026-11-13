@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Compiles `ui/app.slint` with Pulse's `ui/` folder as the `@pulse` library, read
 //! in place (nothing is copied out of Pulse). This is the mechanism the shared kit
 //! will use (PLAN §12.1). Override the location with `PULSE_UI_DIR`.

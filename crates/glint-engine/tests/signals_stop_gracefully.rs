@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! SIGTERM, SIGINT and SIGHUP reach the graceful-stop handler (§4.3). Signal handlers are
 //! process-wide, so this test has a process of its own.
 

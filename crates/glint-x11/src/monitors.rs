@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Monitors (PLAN §5.1). "Center of the screen" means the center of one monitor, never of the
 //! whole root window, which on two monitors sits on the seam between them.
 //!

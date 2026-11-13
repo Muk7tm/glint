@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Compiles the Glint window. The widget style is Pulse's, so the few std widgets the copied
 //! components use (scroll views, list views) look the same as in Pulse (ADR 0012).
 

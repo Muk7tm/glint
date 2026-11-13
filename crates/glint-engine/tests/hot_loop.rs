@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The hot loop end to end on Xvfb: a real capture, the real trigger and a real injector. A small
 //! window at the screen's center shows and hides the color; a full-screen window under the
 //! pointer counts the clicks.

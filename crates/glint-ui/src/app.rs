@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The window's logic (PLAN §12). It keeps the engine's profile, settings and state, shows them,
 //! and turns what the user does into requests. All of it runs on the window's event loop; the
 //! engine's messages arrive there through [`deliver`].

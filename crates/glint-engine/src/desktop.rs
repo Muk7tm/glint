@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! The desktop around the engine (PLAN §8): whether a compositor runs (it owns the selection
 //! `_NET_WM_CM_S<screen>`, followed live through XFixes), how fast the monitors refresh, and
 //! whether the screen saver or locker is on (MIT-SCREEN-SAVER).

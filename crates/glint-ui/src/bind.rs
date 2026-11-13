@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Between the engine's data and the window (PLAN §12): what the window shows for a profile, the
 //! settings and the engine's state ([`fields`], [`hero`]), and the profile and settings its edits
 //! make ([`edited`]). Plain data, tested without a window; [`apply`] copies it into the Slint
