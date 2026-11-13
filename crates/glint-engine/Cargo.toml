@@ -26,6 +26,7 @@ signal-hook.workspace = true
 thiserror.workspace = true
 triple_buffer.workspace = true
 x11rb.workspace = true
+zbus.workspace = true
 
 [dev-dependencies]
 clap.workspace = true

@@ -1712,6 +1712,7 @@ dependencies = [
  "thiserror 2.0.21",
  "triple_buffer",
  "x11rb",
+ "zbus",
 ]
 
 [[package]]

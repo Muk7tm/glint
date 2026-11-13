@@ -86,3 +86,44 @@ pub fn max_refresh(conn: &RustConnection, root: u32) -> Option<f64> {
     }
     best
 }
+
+/// The screen savers that announce a lock over D-Bus with an `ActiveChanged(bool)` signal (§8,
+/// ADR 0014, ADR 0017): the freedesktop interface (KDE, LXQt with a compatible locker, Xfce),
+/// and GNOME's, MATE's and Cinnamon's own.
+const SCREENSAVERS: [&str; 4] = [
+    "org.freedesktop.ScreenSaver",
+    "org.gnome.ScreenSaver",
+    "org.mate.ScreenSaver",
+    "org.cinnamon.ScreenSaver",
+];
+
+/// Follows the screen savers on the session bus, on a thread of its own: `on_event` gets
+/// [`DesktopEvent::Locked`] for each `ActiveChanged`. Without a session bus there is nothing to
+/// follow, and the thread ends quietly; MIT-SCREEN-SAVER still works.
+pub fn watch_screensaver(on_event: impl Fn(DesktopEvent) + Send + 'static) {
+    let spawned = std::thread::Builder::new().name("glintd-dbus".into()).spawn(move || {
+        let Ok(conn) = zbus::blocking::Connection::session() else {
+            return;
+        };
+        let Ok(rule) = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .member("ActiveChanged")
+            .map(|b| b.build())
+        else {
+            return;
+        };
+        let Ok(messages) = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, Some(16)) else {
+            return;
+        };
+        for message in messages.flatten() {
+            let header = message.header();
+            let ours = header.interface().is_some_and(|i| SCREENSAVERS.contains(&i.as_str()));
+            if ours && let Ok(active) = message.body().deserialize::<bool>() {
+                on_event(DesktopEvent::Locked(active));
+            }
+        }
+    });
+    if let Err(e) = spawned {
+        eprintln!("glintd: no screen-lock watch over D-Bus: {e}");
+    }
+}

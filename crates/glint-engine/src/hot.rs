@@ -8,7 +8,7 @@
 //! `assert_no_alloc`.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -126,6 +126,8 @@ pub struct HotShared {
     pub dropped: AtomicU64,
     /// A client wants the trace stream (`glint-lab`); the telemetry thread builds it only then.
     pub tracing: AtomicBool,
+    /// The hot thread's kernel thread id, once it runs: the controller schedules it (§5.6).
+    pub tid: AtomicI32,
 }
 
 /// Why the hot thread stopped watching on its own.
@@ -209,6 +211,10 @@ enum Flow {
 
 /// Runs until the control word says quit, then releases input and returns.
 pub fn run(mut h: Hot) {
+    crate::rt::tight_timer_slack();
+    h.shared
+        .tid
+        .store(rustix::thread::gettid().as_raw_nonzero().get(), Ordering::Release);
     let mut profile = h.shared.profile.load_full();
     let mut trigger = Trigger::new(profile.trigger);
     let mut seen_epoch: Option<u16> = None;
@@ -402,6 +408,7 @@ impl HotHandle {
             in_use: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
             tracing: AtomicBool::new(false),
+            tid: AtomicI32::new(0),
         });
         let (events, consumer) = rtrb::RingBuffer::new(EVENT_RING);
         let (preview, preview_out) = triple_buffer::TripleBuffer::new(&Preview::default()).split();
@@ -429,6 +436,18 @@ impl HotHandle {
 
     pub fn shared(&self) -> &Arc<HotShared> {
         &self.shared
+    }
+
+    /// The hot thread's kernel thread id, waiting up to a second for it to start.
+    pub fn tid(&self) -> Option<i32> {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            match self.shared.tid.load(Ordering::Acquire) {
+                0 if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(1)),
+                0 => return None,
+                tid => return Some(tid),
+            }
+        }
     }
 
     /// The control word right now.

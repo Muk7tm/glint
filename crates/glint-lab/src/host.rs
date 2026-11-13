@@ -148,6 +148,16 @@ impl Sandbox {
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let scratch = std::env::temp_dir().join(format!("glint-lab-{}-{n}", std::process::id()));
         std::fs::create_dir_all(scratch.join("run")).map_err(x)?;
+        // Sandboxed engines run at normal priority: many of them asking rtkit would hit its
+        // per-user limits, and real-time hot threads could starve the sandboxes' X servers
+        // (ADR 0017). The real desktop keeps the user's choice.
+        let config = scratch.join("config/glint");
+        std::fs::create_dir_all(&config).map_err(x)?;
+        std::fs::write(
+            config.join("settings.toml"),
+            "schema_version = 1\n[engine]\nrealtime = \"off\"\n",
+        )
+        .map_err(x)?;
         let socket = scratch
             .join("run/glint")
             .join(format!("glintd-{}.sock", xvfb.display().number));

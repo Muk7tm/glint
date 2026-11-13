@@ -416,10 +416,10 @@ The implementation is `glint-core/src/trigger.rs`, with scenario tests and prope
 - **Absolute deadlines.** `next = previous + period`, never `now + period`, so timing errors don't accumulate. In Balanced the hot thread sleeps with `clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME)` until about 50 µs before the deadline and spins the rest. Max doesn't sleep at all.
 - **Timer slack.** `prctl(PR_SET_TIMERSLACK, 1)` on the hot thread; by default Linux lets sleeps overshoot by 50 µs.
 - **Stall detection.** If a check starts more than four periods late, the engine records a stall (visible in diagnostics) and resynchronizes `next = now`. The observed-absence rule in §5.5 keeps stalls from causing extra clicks.
-- **Real-time priority** (`realtime = off | auto | required`). Under a CPU-heavy game, a normal-priority thread can wait 1–5 ms just to be scheduled, which alone could eat half of your 10 ms budget; real-time scheduling cuts that to tens of microseconds. `auto` asks **rtkit** over D-Bus (`MakeThreadRealtime`, SCHED_RR, unprivileged on most desktops; rtkit requires `RLIMIT_RTTIME` to be set first) or uses `RLIMIT_RTPRIO` if you configured `/etc/security/limits.d`. Otherwise it falls back to normal priority and says so in the UI ("Real-time: off — rtkit not available").
-- **Never combine real-time priority with Max.** A real-time thread that never blocks can starve its CPU core, and rtkit's `RLIMIT_RTTIME` kills such threads with `SIGXCPU`. Balanced blocks on every round trip and every sleep, so it's safe; selecting Max automatically drops the hot thread to normal priority.
-- **CPU affinity.** Optional pinning (`cpu = none | auto | <core>`); `auto` means don't pin unless Phase 0 measurements show a benefit.
-- **Memory.** Preallocate everything at start, touch every page of the lookup table once (prefault), and call `mlockall(MCL_CURRENT | MCL_FUTURE)` best-effort; it fails gracefully if `RLIMIT_MEMLOCK` is low.
+- **Real-time priority** (`realtime = off | auto | required`). Under a CPU-heavy game, a normal-priority thread can wait 1–5 ms just to be scheduled, which alone could eat half of your 10 ms budget; real-time scheduling cuts that to tens of microseconds. `auto` asks **rtkit** over D-Bus (`MakeThreadRealtime`, SCHED_RR priority 10, unprivileged on most desktops). rtkit requires `RLIMIT_RTTIME`: the engine sets the hard limit to rtkit's `RTTimeUSecMax` and the soft limit to half of it, catches the soft limit's SIGXCPU and drops the thread to normal priority. There is no direct `RLIMIT_RTPRIO` path: it needs `sched_setscheduler`, which no safe wrapper provides (ADR 0017). Otherwise the engine falls back to normal priority and says so (`state.realtime`, `glint-ctl status`, and the UI's ENGINE card: "Real-time: off — rtkit not available"). `required` refuses Start without it.
+- **Never combine real-time priority with Max.** A real-time thread that never blocks can starve its CPU core, and rtkit's `RLIMIT_RTTIME` kills such threads with `SIGXCPU`. Balanced blocks on every round trip and every sleep, so it's safe; selecting Max automatically drops the hot thread to normal priority (rtkit's `MakeThreadHighPriority`, which switches it back to SCHED_OTHER; ADR 0017).
+- **CPU affinity.** Optional pinning (`cpu = none | auto | <core>`); `auto` means don't pin unless measurements show a benefit (Phase 0 measured none, so it doesn't pin; ADR 0017).
+- **Memory.** Preallocate everything at start; building the lookup table writes every page of it, so it's prefaulted. `mlockall(MCL_CURRENT | MCL_FUTURE)` only when `RLIMIT_MEMLOCK` is unlimited: with a finite limit, a later allocation past it would fail and end the engine (ADR 0017).
 - **Nothing slow inside the loop.** No logging, locking or allocation in the steady state. x11rb allocates on every request and reply (measured: 5 allocations per GetImage, 3 per ShmGetImage) and locks internal mutexes, so connections A and B use a small raw protocol client with fixed buffers instead, at the same round-trip cost (ADR 0003). Debug builds wrap the loop body in `assert_no_alloc` to enforce this.
 - **The X server tax.** The X server handles requests on a single thread, so each check costs it a little time, and with glamor-accelerated drivers a GPU readback sync. The speed presets let you trade speed for system load. Target: Balanced adds under 0.2 ms at p99 to other clients.
   - *Measured in Phase 0 on NVIDIA 620.70.06:* Balanced adds about +0.45 ms and Eco about +0.25 ms at p99.
@@ -494,7 +494,7 @@ Glint injects input with **XTest** (`FakeInput`, extension version 2.2), which n
 
 **XWayland detection.** If `XDG_SESSION_TYPE=wayland`, `WAYLAND_DISPLAY` is set, or the server advertises the XWAYLAND extension, Glint shows "This is XWayland: only X11 apps can be watched and clicked."
 
-**Screen lock.** The MIT-SCREEN-SAVER extension, plus `org.freedesktop.ScreenSaver.GetActive` on D-Bus when available (Phase 6, with rtkit's `zbus`; ADR 0014), tells Glint when the screen is locked, and it stops while locked.
+**Screen lock.** The MIT-SCREEN-SAVER extension, plus the `ActiveChanged` signal of the freedesktop, GNOME, MATE or Cinnamon screen saver on the session bus (Phase 6, with `zbus`; ADR 0014, ADR 0017), tells Glint when the screen is locked, and it stops while locked.
 
 **Glint's own window.** The UI reports its window rectangle to the engine (`ui_geometry`). If that rectangle contains the watched spot, Glint warns "The Glint window covers the spot it's watching" and can auto-hide the live swatch, or the whole window, while started.
 
@@ -1189,7 +1189,7 @@ Effort sizes are relative: S is a few days, M about a week or two, L longer, for
 
 ### Phase 6 — Performance and advanced detection (M/L)
 
-- [ ] rtkit real-time priority, timer slack, prefault and mlock, optional CPU pinning; screen lock over D-Bus (ADR 0014).
+- [ ] rtkit real-time priority, timer slack, prefault and mlock, optional CPU pinning; screen lock over D-Bus (ADR 0014, ADR 0017).
 - [ ] `screen-shm` backend; `damage` backend with its self-healing fallback.
 - [ ] *More options*: Detection, Color range (shade strips, exclusions, *Record 5 s*, *Check hex*), Engine (diagnostics, latency test, profiles).
 - [ ] *Capture* hotkey mode. (*Hold to watch* exists since Phase 2, ADR 0013.)

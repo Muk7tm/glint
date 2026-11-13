@@ -280,6 +280,9 @@ fn write_state(out: &mut dyn Write, s: &StateSnapshot) -> Result<(), CtlError> {
         Some(why) => writeln!(out, "reads: {} ({why})", s.backend)?,
         None => writeln!(out, "reads: {}", s.backend)?,
     }
+    if let (Some(realtime), Some(cpu)) = (&s.realtime, &s.cpu) {
+        writeln!(out, "real-time: {realtime} · runs on {cpu}")?;
+    }
     if let Some(why) = &s.last_stop {
         writeln!(out, "last stop: {why}")?;
     }

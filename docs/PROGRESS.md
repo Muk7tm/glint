@@ -83,7 +83,7 @@ listed in §13 (written as their content appears).
 
 ## Phase 6 — Performance and advanced detection (M/L)
 
-- [ ] rtkit real-time priority, timer slack, prefault and mlock, optional CPU pinning.
+- [x] rtkit real-time priority, timer slack, prefault and mlock, optional CPU pinning; screen lock over D-Bus. *(`rt.rs`: rtkit makes the hot thread SCHED_RR 10, and puts it back to normal under Max or with `off`; `RLIMIT_RTTIME` with a SIGXCPU fallback; `required` refuses Start without real-time; 1 ns timer slack; pinning to a core; memory locked only with an unlimited `RLIMIT_MEMLOCK`; the LUT build prefaults. `state` reports the priority and CPU, and `glint-ctl status` prints them. The screen lock also follows D-Bus `ActiveChanged` signals. Tested: the kernel shows SCHED_RR 10 on core 0, normal under Max, the other threads normal; a lock on a private D-Bus stops watching. Test sandboxes run with real-time off. No direct `RLIMIT_RTPRIO` path: no safe `sched_setscheduler` (ADR 0017).)*
 - [ ] `screen-shm` backend; `damage` backend with its self-healing fallback.
 - [ ] *More options*: Detection, Color range (shade strips, exclusions, *Record 5 s*, *Check hex*), Engine (diagnostics, latency test, profiles).
 - [ ] *Capture* hotkey mode. (*Hold to watch* exists since Phase 2, ADR 0013.)

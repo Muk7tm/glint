@@ -39,6 +39,7 @@ use crate::desktop::{DesktopEvent, Watch};
 use crate::hot::{CompiledProfile, Control, HotHandle, HotShared, Preview, StopReason};
 use crate::lifecycle::Emergency;
 use crate::pick::{self, PickInput};
+use crate::rt;
 use crate::store::Store;
 use crate::target::{Change, Tracker, WinEvent};
 use crate::telemetry::{Notice, Stats, TraceNotice};
@@ -433,6 +434,13 @@ pub struct Controller {
     refresh_hz: Option<f64>,
     /// The window-buffer backend in use: the window and its pixel format (§5.2).
     window_buffer: Option<(u32, PixelFormat)>,
+    /// The hot thread's scheduling (§5.6, ADR 0017): its priority, where it may run, the CPUs the
+    /// engine started with, whether memory is locked, and rtkit once reached.
+    priority: rt::Priority,
+    pinned: String,
+    all_cpus: rustix::thread::CpuSet,
+    pub memory: String,
+    rtkit: Option<rt::Rtkit>,
     /// The last self-check and its window. It takes 230 ms, so it runs again only when it
     /// couldn't compare with the screen or failed, and the window has come in front while
     /// stopped (ADR 0014).
@@ -502,6 +510,11 @@ impl Controller {
             refresh_hz,
             window_buffer: None,
             self_check: None,
+            priority: rt::Priority::Off,
+            pinned: "any core".into(),
+            all_cpus: rt::all_cpus(),
+            memory: String::new(),
+            rtkit: None,
         }
     }
 
@@ -557,6 +570,9 @@ impl Controller {
         }
         if let Some(why) = self.window_blocker(&profile) {
             return Event::error("cannot_start", why, Some("target.window".into()));
+        }
+        if let Some(why) = self.realtime_blocker(&profile) {
+            return Event::error("cannot_start", why, Some("engine.realtime".into()));
         }
         if profile.target.mode == TargetMode::Window {
             self.republish();
@@ -616,7 +632,10 @@ impl Controller {
             cannot_start: profile
                 .start_blocker()
                 .map(str::to_owned)
-                .or_else(|| self.window_blocker(&profile)),
+                .or_else(|| self.window_blocker(&profile))
+                .or_else(|| self.realtime_blocker(&profile)),
+            realtime: Some(self.priority.describe()),
+            cpu: Some(self.pinned.clone()),
             window: self.window_status(&profile),
             covered: self.covered,
             compositor: self.compositor,
@@ -718,6 +737,8 @@ impl Controller {
         self.profiles.insert(profile.name.clone(), profile);
         self.emergency
             .set_keycodes(release_keycodes(self.profiles.values(), &self.keymap));
+        // Max never runs real-time: a change of speed can change the hot thread's priority.
+        self.schedule();
         if self.started {
             let profile = self.active_profile();
             match self.origin(&profile).or(new_origin) {
@@ -788,6 +809,7 @@ impl Controller {
             Command::Pick(input) => self.pick_input(input),
             Command::Window(event) => self.on_window(event),
             Command::Desktop(event) => self.on_desktop(event),
+            Command::Signal(signal_hook::consts::signal::SIGXCPU) => self.realtime_overrun(),
             Command::Signal(_) => {
                 self.stop(None);
                 self.quit = true;
@@ -998,6 +1020,76 @@ impl Controller {
             });
         }
         self.broadcast(Event::State(self.state()));
+    }
+
+    /// Schedules the hot thread as the settings and the active profile say (§5.6, ADR 0017):
+    /// real-time through rtkit unless real-time is off or the speed is Max, and pinned or not.
+    pub fn schedule(&mut self) {
+        let Some(tid) = self.hot.tid() else { return };
+        let profile = self.active_profile();
+        let setting = self.settings.engine.realtime;
+        let max = profile.sampling.speed == glint_core::profile::Speed::Max;
+        if rt::wants_realtime(setting, max) {
+            if !self.priority.is_realtime() && self.priority != rt::Priority::Dropped {
+                self.priority = match self.rtkit().and_then(|r| r.realtime(tid)) {
+                    Ok(p) => rt::Priority::Realtime(p),
+                    Err(why) => rt::Priority::Refused(why),
+                };
+            }
+        } else {
+            if self.priority.is_realtime()
+                && let Some(Err(why)) = self.rtkit.as_ref().map(|r| r.normal(tid))
+            {
+                eprintln!("glintd: couldn't leave real-time priority: {why}");
+            }
+            if self.priority != rt::Priority::Dropped {
+                self.priority = if setting == glint_core::settings::Realtime::Off {
+                    rt::Priority::Off
+                } else {
+                    rt::Priority::NormalForMax
+                };
+            }
+        }
+        self.pinned =
+            rt::pin(tid, self.settings.engine.cpu, &self.all_cpus).unwrap_or_else(|why| format!("any core ({why})"));
+    }
+
+    /// rtkit on the system bus, reached on first use.
+    fn rtkit(&mut self) -> Result<&rt::Rtkit, String> {
+        if self.rtkit.is_none() {
+            self.rtkit = Some(rt::Rtkit::connect()?);
+        }
+        self.rtkit.as_ref().ok_or_else(|| "rtkit isn't available".into())
+    }
+
+    /// SIGXCPU: the real-time hot thread ran half of rtkit's limit without blocking. Back to
+    /// normal priority before the kernel's hard limit ends the engine (ADR 0017).
+    fn realtime_overrun(&mut self) {
+        if let (Some(tid), Some(rtkit)) = (self.hot.tid(), self.rtkit.as_ref())
+            && let Err(why) = rtkit.normal(tid)
+        {
+            eprintln!("glintd: couldn't leave real-time priority: {why}");
+        }
+        self.priority = rt::Priority::Dropped;
+        self.broadcast(Event::Warning {
+            code: "realtime".into(),
+            message: "Real-time priority is off: the engine ran too long without a pause.".into(),
+            field: None,
+        });
+        self.broadcast(Event::State(self.state()));
+    }
+
+    /// Why Start is refused with `realtime = "required"` (§5.6): real-time was asked for and not
+    /// granted. Max never runs real-time, so it isn't refused.
+    fn realtime_blocker(&self, profile: &Profile) -> Option<String> {
+        let max = profile.sampling.speed == glint_core::profile::Speed::Max;
+        (self.settings.engine.realtime == glint_core::settings::Realtime::Required
+            && rt::wants_realtime(self.settings.engine.realtime, max)
+            && !self.priority.is_realtime())
+        .then(|| match &self.priority {
+            rt::Priority::Refused(why) => format!("Real-time priority is required, but {why}."),
+            _ => "Real-time priority is required, but it's off.".into(),
+        })
     }
 
     /// Chooses the capture backend for `profile` (§5.2): the window's own image in window mode
@@ -1317,7 +1409,8 @@ impl Controller {
                         display: self.display.canonical(),
                         xwayland: self.caps.xwayland || glint_x11::env::wayland_session(),
                         compositor: self.compositor.then(|| "running".into()),
-                        realtime: "off".into(),
+                        realtime: self.priority.describe(),
+                        memory: self.memory.clone(),
                     },
                 }
             }
@@ -1388,6 +1481,7 @@ impl Controller {
                         self.store.save_settings(&settings, Instant::now());
                         self.settings = settings;
                         self.update_bindings();
+                        self.schedule();
                         Event::SettingsApplied
                     }
                 }

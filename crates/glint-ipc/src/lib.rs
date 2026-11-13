@@ -290,6 +290,9 @@ pub struct SessionInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compositor: Option<String>,
     pub realtime: String,
+    /// Whether the engine's memory is locked (§5.6, ADR 0017).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub memory: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Serialize, Deserialize)]
@@ -353,6 +356,12 @@ pub struct StateSnapshot {
     /// judge uses it.
     #[serde(default)]
     pub check_gap_us: u32,
+    /// The hot thread's priority, "rtkit (rr 10)" or why it's normal (§5.6, ADR 0017).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realtime: Option<String>,
+    /// Where the hot thread may run: "any core" or "core 3" (§5.6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<String>,
 }
 
 /// The picked game window and how it is right now.

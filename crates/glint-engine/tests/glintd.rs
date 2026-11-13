@@ -2,6 +2,8 @@
 //! The real `glintd` on Xvfb, driven only through its socket (§10).
 #![allow(clippy::unwrap_used)] // test helpers: any failure should panic
 
+mod common;
+
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -44,10 +46,18 @@ struct Engine {
     scratch: Scratch,
     child: Child,
     socket: PathBuf,
+    /// Freed last, once the engine and its Xvfb are gone.
+    _slot: common::Slot,
 }
 
 impl Engine {
     fn start() -> Option<Self> {
+        Self::start_with(None, &[])
+    }
+
+    /// An engine with `settings` (TOML) in its config, and `env` on top of the sandbox's.
+    fn start_with(settings: Option<&str>, env: &[(&str, &str)]) -> Option<Self> {
+        let slot = common::Slot::take();
         let x = match Xvfb::start(640, 480) {
             Ok(x) => x,
             Err(SandboxError::NotInstalled) => {
@@ -57,7 +67,12 @@ impl Engine {
             Err(e) => panic!("{e}"),
         };
         let scratch = Scratch::new();
-        let child = spawn(&x, &scratch);
+        if let Some(settings) = settings {
+            let dir = scratch.0.join("config/glint");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("settings.toml"), settings).unwrap();
+        }
+        let child = spawn_with(&x, &scratch, env);
         let socket = scratch
             .0
             .join("run/glint")
@@ -72,6 +87,7 @@ impl Engine {
             scratch,
             child,
             socket,
+            _slot: slot,
         })
     }
 
@@ -103,15 +119,34 @@ impl Drop for Engine {
     }
 }
 
+/// Test engines run at normal priority: dozens of them asking rtkit for real-time priority would
+/// hit its per-user limits, and real-time hot threads could starve the test X servers (ADR 0017).
+/// The scheduling test sets its own settings.
+fn normal_priority(scratch: &Scratch) {
+    let dir = scratch.0.join("config/glint");
+    std::fs::create_dir_all(&dir).unwrap();
+    let settings = dir.join("settings.toml");
+    if !settings.exists() {
+        std::fs::write(settings, "schema_version = 1\n[engine]\nrealtime = \"off\"\n").unwrap();
+    }
+}
+
 fn spawn(x: &Xvfb, scratch: &Scratch) -> Child {
-    Command::new(env!("CARGO_BIN_EXE_glintd"))
-        .env("DISPLAY", x.display().to_string())
+    spawn_with(x, scratch, &[])
+}
+
+fn spawn_with(x: &Xvfb, scratch: &Scratch, env: &[(&str, &str)]) -> Child {
+    normal_priority(scratch);
+    let mut c = Command::new(env!("CARGO_BIN_EXE_glintd"));
+    c.env("DISPLAY", x.display().to_string())
         .env("XDG_RUNTIME_DIR", scratch.0.join("run"))
         .env("XDG_CONFIG_HOME", scratch.0.join("config"))
         .env("XDG_STATE_HOME", scratch.0.join("state"))
-        .stdin(Stdio::null())
-        .spawn()
-        .unwrap()
+        .stdin(Stdio::null());
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    c.spawn().unwrap()
 }
 
 /// A full-screen click target under the pointer, and a small window at the center that shows the
@@ -204,6 +239,8 @@ fn watching_and_clicking_through_the_socket() {
         (false, Phase::Stopped, "Default")
     );
     assert_eq!(s.cannot_start.as_deref(), Some("Pick a color to start"));
+    // Test engines run at normal priority (their settings say so, ADR 0017).
+    assert_eq!(s.realtime.as_deref(), Some("off"));
     match c.call(Request::Start, WAIT).unwrap() {
         Event::Error { code, message, .. } => assert_eq!(
             (code.as_str(), message.as_str()),
@@ -433,6 +470,10 @@ fn profiles_and_settings_survive_a_restart() {
     ));
     let settings = glint_core::Settings {
         close_policy: glint_core::settings::ClosePolicy::KeepRunning,
+        engine: glint_core::settings::EngineSettings {
+            realtime: glint_core::settings::Realtime::Off,
+            ..Default::default()
+        },
         ..glint_core::Settings::default()
     };
     assert!(matches!(
@@ -780,5 +821,160 @@ fn the_window_buffer_self_check_compares_once_the_window_is_in_front() {
         }
         assert!(Instant::now() < deadline, "never compared: {why}");
         std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The kernel's view of a thread of `pid` called `name`: its id, scheduling policy (0 normal, 2
+/// round-robin), real-time priority, and the CPUs it may run on.
+fn thread_sched(pid: u32, name: &str) -> (String, u32, u32, String) {
+    for task in std::fs::read_dir(format!("/proc/{pid}/task")).unwrap().flatten() {
+        let dir = task.path();
+        if std::fs::read_to_string(dir.join("comm")).unwrap_or_default().trim() != name {
+            continue;
+        }
+        let stat = std::fs::read_to_string(dir.join("stat")).unwrap();
+        // Fields after the command name, which may hold spaces: `state` is field 3, so field n
+        // is at index n - 3.
+        let rest: Vec<&str> = stat[stat.rfind(')').unwrap() + 2..].split(' ').collect();
+        let (rt_priority, policy) = (rest[40 - 3].parse().unwrap(), rest[41 - 3].parse().unwrap());
+        let status = std::fs::read_to_string(dir.join("status")).unwrap();
+        let cpus = status
+            .lines()
+            .find_map(|l| l.strip_prefix("Cpus_allowed_list:"))
+            .unwrap()
+            .trim()
+            .to_owned();
+        return (
+            task.file_name().to_string_lossy().into_owned(),
+            policy,
+            rt_priority,
+            cpus,
+        );
+    }
+    panic!("no thread {name}");
+}
+
+/// §5.6, ADR 0017: the hot thread runs real-time through rtkit when it's available (never under
+/// Max), and on the core the settings pin it to. Without rtkit (CI) the engine says why, and the
+/// kernel agrees the thread is normal.
+#[test]
+fn the_hot_thread_s_scheduling() {
+    let settings = "schema_version = 1\n[engine]\nrealtime = \"auto\"\ncpu = 0\n";
+    let Some(engine) = Engine::start_with(Some(settings), &[]) else {
+        return;
+    };
+    let mut c = engine.client();
+    let pid = engine.child.id();
+    let state = |c: &mut Client| match c.call(Request::GetState, WAIT).unwrap() {
+        Event::State(s) => s,
+        other => panic!("{other:?}"),
+    };
+    let s = state(&mut c);
+    let (_, policy, rt_priority, cpus) = thread_sched(pid, "glintd-hot");
+    assert_eq!((s.cpu.as_deref(), cpus.as_str()), (Some("core 0"), "0"));
+    let realtime = s.realtime.unwrap();
+    eprintln!("real-time: {realtime}");
+    if let Some(p) = realtime.strip_prefix("rtkit (rr ").and_then(|r| r.strip_suffix(')')) {
+        assert_eq!((policy, rt_priority), (2, p.parse().unwrap()));
+    } else {
+        assert!(realtime.starts_with("off: "), "{realtime}");
+        assert_eq!(policy, 0);
+        return;
+    }
+    // Max never runs real-time; back at Balanced it does again.
+    let mut p = green_profile();
+    p.sampling.speed = glint_core::profile::Speed::Max;
+    let applied = |c: &mut Client, p: &Profile| {
+        assert!(matches!(
+            c.call(
+                Request::SetProfile {
+                    profile: Box::new(p.clone())
+                },
+                WAIT
+            )
+            .unwrap(),
+            Event::ProfileApplied { .. }
+        ));
+    };
+    applied(&mut c, &p);
+    assert_eq!(thread_sched(pid, "glintd-hot").1, 0);
+    assert_eq!(
+        state(&mut c).realtime.as_deref(),
+        Some("normal (Max never runs real-time)")
+    );
+    p.sampling.speed = glint_core::profile::Speed::Balanced;
+    applied(&mut c, &p);
+    assert_eq!(thread_sched(pid, "glintd-hot").1, 2);
+    // Every other thread stays normal.
+    for name in ["glintd-x", "glintd-ipc", "glintd-telemetr"] {
+        assert_eq!(thread_sched(pid, name).1, 0, "{name}");
+    }
+}
+
+/// §8, ADR 0014/0017: a screen saver announcing a lock over D-Bus stops watching, on a private
+/// session bus.
+#[test]
+fn a_screen_lock_announced_over_d_bus_stops_watching() {
+    let Ok(mut bus) = Command::new("dbus-daemon")
+        .args(["--session", "--nofork", "--print-address=1"])
+        .stdout(Stdio::piped())
+        .stdin(Stdio::null())
+        .spawn()
+    else {
+        eprintln!("skipped: dbus-daemon is not installed");
+        return;
+    };
+    let mut address = String::new();
+    std::io::BufRead::read_line(&mut std::io::BufReader::new(bus.stdout.take().unwrap()), &mut address).unwrap();
+    let address = address.trim().to_owned();
+    let result = std::panic::catch_unwind(|| {
+        let Some(engine) = Engine::start_with(None, &[("DBUS_SESSION_BUS_ADDRESS", &address)]) else {
+            return;
+        };
+        let screen = Screen::open(&engine.x);
+        let mut c = engine.client();
+        assert!(matches!(
+            c.call(
+                Request::SetProfile {
+                    profile: Box::new(green_profile())
+                },
+                WAIT
+            )
+            .unwrap(),
+            Event::ProfileApplied { .. }
+        ));
+        assert!(matches!(c.call(Request::Start, WAIT).unwrap(), Event::State(s) if s.started));
+        drop(screen);
+        let saver = zbus::blocking::connection::Builder::address(address.as_str())
+            .unwrap()
+            .build()
+            .unwrap();
+        let deadline = Instant::now() + WAIT;
+        loop {
+            // Until the engine has subscribed, a signal goes nowhere: send it again.
+            saver
+                .emit_signal(
+                    None::<()>,
+                    "/org/freedesktop/ScreenSaver",
+                    "org.freedesktop.ScreenSaver",
+                    "ActiveChanged",
+                    &true,
+                )
+                .unwrap();
+            let Event::State(s) = c.call(Request::GetState, WAIT).unwrap() else {
+                panic!()
+            };
+            if !s.started {
+                assert_eq!(s.last_stop.as_deref(), Some("Stopped: the screen locked."));
+                break;
+            }
+            assert!(Instant::now() < deadline, "the lock never stopped watching");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
+    let _ = bus.kill();
+    let _ = bus.wait();
+    if let Err(e) = result {
+        std::panic::resume_unwind(e);
     }
 }

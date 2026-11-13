@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use glint_x11::inject::release_everything_on;
-use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
+use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM, SIGXCPU};
 use x11rb::errors::ConnectionError;
 use x11rb::rust_connection::RustConnection;
 
@@ -52,9 +52,11 @@ pub fn install_panic_hook(emergency: Arc<Emergency>) {
 }
 
 /// SIGTERM, SIGINT and SIGHUP mean a graceful stop: `on_signal` runs on a thread of its own for
-/// each one (it should release input, clean up and exit 0, §4.3).
+/// each one (it should release input, clean up and exit 0, §4.3). SIGXCPU means the real-time
+/// hot thread ran too long without a pause: the engine drops it to normal priority instead of
+/// dying (ADR 0017).
 pub fn watch_signals(on_signal: impl Fn(i32) + Send + 'static) -> std::io::Result<()> {
-    let mut signals = signal_hook::iterator::Signals::new([SIGTERM, SIGINT, SIGHUP])?;
+    let mut signals = signal_hook::iterator::Signals::new([SIGTERM, SIGINT, SIGHUP, SIGXCPU])?;
     std::thread::Builder::new()
         .name("glintd-signals".into())
         .spawn(move || {
@@ -183,6 +185,9 @@ pub fn run(options: Options) -> Result<(), StartError> {
     let active = settings.active_profile.clone();
     let mut profiles: BTreeMap<String, Profile> = loaded.profiles;
 
+    // Memory locked when the limit allows all of it (§5.6, ADR 0017), before the threads start.
+    let memory = crate::rt::lock_memory();
+
     // 4. The defensive release: anything a killed engine left pressed (C10).
     let keycodes = release_keycodes(profiles.values(), &keymap);
     let mut injector = Injector::new(
@@ -289,6 +294,15 @@ pub fn run(options: Options) -> Result<(), StartError> {
         root_format,
         bindings,
     );
+    // The hot thread's priority and CPUs (§5.6), and the screen lock over D-Bus (§8, ADR 0014).
+    controller.memory = memory;
+    controller.schedule();
+    {
+        let commands = commands.clone();
+        crate::desktop::watch_screensaver(move |e| {
+            let _ = commands.send(Command::Desktop(e));
+        });
+    }
     // 8. Ready and stopped; watching starts only when asked.
     if options.start_on_launch
         && let glint_ipc::Event::Error { message, .. } = controller.start()

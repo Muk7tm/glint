@@ -4,39 +4,14 @@
 //! The tests check correctness only, never timing (§16): shared CI runners are far too noisy.
 #![allow(clippy::unwrap_used)]
 
+mod common;
+
 use std::path::Path;
-use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
+use common::Slot;
 use glint_core::profile::Backend;
 use glint_lab::{Options, Report};
-
-/// Sandboxes running at once. Each is an Xvfb plus an engine checking 2,000 times a second; a
-/// crowded machine adds blind time to every run, which shows up as reported possible misses.
-/// (`cargo nextest` runs each test in its own process; `.config/nextest.toml` limits those.)
-static RUNNING: Mutex<usize> = Mutex::new(0);
-static FREED: Condvar = Condvar::new();
-
-struct Slot;
-
-impl Slot {
-    fn take() -> Self {
-        let most = std::thread::available_parallelism().map_or(2, |n| (n.get() / 4).clamp(2, 4));
-        let mut running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
-        while *running >= most {
-            running = FREED.wait(running).unwrap_or_else(|e| e.into_inner());
-        }
-        *running += 1;
-        Slot
-    }
-}
-
-impl Drop for Slot {
-    fn drop(&mut self) {
-        *RUNNING.lock().unwrap_or_else(|e| e.into_inner()) -= 1;
-        FREED.notify_one();
-    }
-}
 
 fn run(scenario: &str, count: u32) -> Option<Report> {
     run_with(scenario, count, Backend::Auto)
