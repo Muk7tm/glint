@@ -77,6 +77,9 @@ pub struct Options {
     /// because watching never starts on its own.
     #[arg(long)]
     pub start_on_launch: bool,
+    /// Exit when the process that started this engine exits (for `glint-lab`).
+    #[arg(long, hide = true)]
+    pub exit_with_parent: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -149,6 +152,11 @@ pub fn run(options: Options) -> Result<(), StartError> {
     use arc_swap::ArcSwap;
     use glint_x11::hotkeys::{self, Matcher, ModifierKeys};
 
+    if options.exit_with_parent {
+        // SIGTERM when the parent dies: the same graceful stop as any other SIGTERM.
+        rustix::process::set_parent_process_death_signal(Some(rustix::process::Signal::TERM))
+            .map_err(std::io::Error::from)?;
+    }
     // 1. The display; remote displays are refused.
     let display = LocalDisplay::from_env()?;
     // 2. One engine per display: the lock is held until the process ends (C6, §4.4).

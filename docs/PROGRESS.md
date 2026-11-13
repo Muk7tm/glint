@@ -5,8 +5,9 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 ## Status
 
-- **Active phase:** Phase 2 (engine MVP), started 2026-11-13 after the owner's go-ahead. Phases 0 and 1 are
-  complete.
+- **Active phase:** Phase 2 (engine MVP). All seven items are done, and `basic`, `near-miss` and
+  `arm-while-present` pass under Xvfb. The last exit check, Glint clicking on the real desktop, needs the
+  owner's permission (CLAUDE.md): `glint-lab basic --real-desktop`.
 - **Owner decisions (2026-11-13):** v1.0 timing is judged with no compositor, with X-server-stall trials
   listed separately (ADR 0004); preventing extra clicks is the top priority, so only watched absence re-arms
   and possible misses are reported (ADR 0007, revised).

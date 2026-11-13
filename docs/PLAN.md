@@ -869,19 +869,20 @@ glint/
 │   │   └── benches/classify.rs
 │   ├── glint-x11/                X11 backends; unsafe only in capture/shm.rs, with SAFETY comments
 │   │   └── src/                  conn.rs · wire.rs (raw hot-path protocol, ADR 0003) · caps.rs · format.rs
-│   │                             inject.rs · monitors.rs · windows.rs · picker.rs · hotkeys.rs · env.rs
-│   │                             capture/{getimage,shm,window,damage}.rs
+│   │                             inject.rs · keymap.rs · monitors.rs · windows.rs · picker.rs · hotkeys.rs · env.rs
+│   │                             capture/{getimage,shm,window,damage}.rs · sandbox.rs (Xvfb for tests and the lab)
 │   ├── glint-ipc/                protocol types, framing, client and server helpers
-│   ├── glint-engine/             bin: glintd
-│   │   └── src/                  main.rs · hot.rs · controller.rs · telemetry.rs · lifecycle.rs
-│   │                             rt.rs · store.rs · lock.rs
+│   ├── glint-engine/             lib + bin: glintd (the library lets tests drive each part)
+│   │   ├── src/                  main.rs · lib.rs · hot.rs · controller.rs · telemetry.rs · lifecycle.rs
+│   │   │                         rt.rs · store.rs · lock.rs
+│   │   └── tests/                hot loop, glintd and glint-ctl end to end, lab scenarios (all on Xvfb)
 │   ├── glint-ui-view/            lib: the Slint-generated view; its code needs allow(unsafe_code) (ADR 0002)
 │   │   ├── build.rs              compiles ui/ with the kit's library path (§12.1)
 │   │   └── ui/                   app.slint · dialogs.slint · cards/*.slint
 │   ├── glint-ui/                 bin: glint; every hand-written UI line, #![forbid(unsafe_code)]
 │   │   └── src/                  main.rs · client.rs · spawn.rs · bind.rs
-│   ├── glint-ctl/                bin: glint-ctl
-│   └── glint-lab/                bin: glint-lab + Xvfb integration tests
+│   ├── glint-ctl/                lib + bin: glint-ctl
+│   └── glint-lab/                lib + bin: glint-lab (scenarios in its own Xvfb; --real-desktop on request)
 ├── assets/                       glint.svg · glint.desktop · metainfo.xml
 ├── packaging/                    appimage/ · aur/PKGBUILD · deb/ · rpm/ · systemd/ · autostart/
 ├── docs/                         ARCHITECTURE.md · PROTOCOL.md · MEASUREMENTS.md · TUNING.md
@@ -1036,7 +1037,7 @@ Develop the engine against Xephyr first: a bug there can't click into your real 
 | Performance | Latency distributions, X server tax, CPU use | `glint-lab` on real hardware |
 | Soak | 60 minutes of randomized scenarios | Real hardware, before every release |
 
-**How `glint-lab` measures.** It opens its own window, makes that window Glint's target through the IPC (`set_profile`, then `start`), and warps the pointer into it so clicks land there. For each trial it fills the window's center with a color, follows the drawing request with a round trip so it knows the server has executed it, and timestamps that moment with `CLOCK_MONOTONIC`. It then timestamps the arrival of Glint's `ButtonPress` (or `KeyPress`) on its own window. The difference is the true response time including X delivery, and Glint's `fired` events split it into waiting, capture, decision, injection and delivery. The lab runs against the screen backend (with or without a compositor) and against the window-buffer backend.
+**How `glint-lab` measures.** It opens its own window, makes that window Glint's target through the IPC (`set_profile`, then `start`), and warps the pointer into it so clicks land there. For each trial it fills the window's center with a color, follows the drawing request with a round trip so it knows the server has executed it, and times the appearance from just before that drawing request (a click can't precede it; this overstates the response by the request's one-way trip, about 10 µs, Phase 2). It then timestamps the arrival of Glint's `ButtonPress` (or `KeyPress`) on its own window. The difference is the true response time including X delivery, and Glint's `fired` events split it into waiting, capture, decision, injection and delivery. The lab runs against the screen backend (with or without a compositor) and against the window-buffer backend. Each run starts its own Xvfb and `glintd` unless `--real-desktop` asks for the real display; there the lab's engine uses a throwaway config directory, the real lock (so it refuses to run next to another engine), and exits with the lab.
 
 Report format (illustrative numbers):
 

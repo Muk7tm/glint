@@ -193,6 +193,29 @@ Same machine; `cargo bench -p glint-core` (criterion 0.8.2, release profile with
 - `cargo test -p glint-core` (dev profile): 79 tests in ~6.5 s, most of it the exhaustive table test (8 rule
   sets × 16,777,216 colors against the reference) and 2,000 property-test cases for the trigger.
 
+## 8. Phase 2: lab scenarios under Xvfb
+
+`glint-lab <scenario> --count N` (release build) starts its own Xvfb (1280×720, 24-bit, black root) and its own
+`glintd`, paints the color in a 40×40 patch at the monitor's center, and records when the engine's
+`ButtonPress` reaches the canvas. Response is timed from just before the drawing request, so it includes the
+lab's own request path (about 10 µs) and the event's delivery. Xvfb is a software server with no GPU and no
+other clients, so these numbers are the engine's floor, not the NVIDIA desktop's.
+
+| Scenario | Trials | Clicks | Extra | Missed | Response p50 / p95 / p99 / max |
+| --- | --- | --- | --- | --- | --- |
+| `basic` (on 30–500 ms, off 60–600 ms) | 300 | 300 | 0 | 0 | 0.29 / 0.52 / 0.57 / 0.60 ms |
+| `near-miss` (4 colors that must not count) | 200 | 0 | 0 | — | — |
+| `arm-while-present` | 20 | 20 | 0 | 0 | 0.27 / 0.36 / 0.36 / 0.36 ms |
+
+- A p50 of ~0.29 ms matches the budget in §3: an average 0.25 ms wait for the next check at 2,000 checks/s, plus
+  the round trip and the event's delivery.
+- `cargo test` runs the same three scenarios on every commit with 20, 16 and 3 trials.
+- The engine's own telemetry during the tests: about 2,000 checks per second, capture p50 18–24 µs, decision
+  (capture returned → press written) about 3 µs.
+- The 300-trial run found two bugs, both fixed. The engine sent `fired` notices to clients that never subscribed
+  and then cut a non-reading client off. The lab scored clicks against the wrong appearance when the engine beat
+  the lab's own round trip.
+
 ## Conclusions for the defaults (Phase 0 exit)
 
 - **Speed preset: Balanced (2,000/s) confirmed.** Paced response is dominated by the server's own busy periods

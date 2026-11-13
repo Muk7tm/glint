@@ -477,6 +477,118 @@ impl Drop for Sandbox {
     }
 }
 
+/// An engine on the real desktop for `glint-lab --real-desktop`: a fresh `glintd` on `$DISPLAY`
+/// with a throwaway config directory (your profiles and settings stay untouched) but the real
+/// runtime directory, so the single-instance lock refuses it if an engine already runs there. It
+/// exits with the lab, and the lab connects as a UI, so if the lab dies the engine stops watching
+/// at once.
+pub struct RealDesktop {
+    engine: std::process::Child,
+    scratch: std::path::PathBuf,
+    socket: std::path::PathBuf,
+    display: LocalDisplay,
+}
+
+impl RealDesktop {
+    pub fn start(glintd: &std::path::Path) -> Result<Self, LabError> {
+        let display = LocalDisplay::from_env().map_err(x)?;
+        let scratch = std::env::temp_dir().join(format!("glint-lab-real-{}", std::process::id()));
+        std::fs::create_dir_all(&scratch).map_err(x)?;
+        let mut engine = std::process::Command::new(glintd)
+            .arg("--exit-with-parent")
+            .env("XDG_CONFIG_HOME", scratch.join("config"))
+            .env("XDG_STATE_HOME", scratch.join("state"))
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| LabError::Engine(format!("{}: {e}", glintd.display())))?;
+        let socket = glint_ipc::socket_path(display.number);
+        let deadline = Instant::now() + WAIT;
+        loop {
+            if let Some(status) = engine.try_wait().map_err(x)? {
+                let _ = std::fs::remove_dir_all(&scratch);
+                return Err(LabError::Engine(if status.code() == Some(3) {
+                    "an engine is already running on this display; quit it first (glint-ctl quit)".into()
+                } else {
+                    format!("glintd exited: {status}")
+                }));
+            }
+            if Client::connect(&socket).is_ok() {
+                break;
+            }
+            if Instant::now() > deadline {
+                return Err(LabError::Engine("glintd didn't start".into()));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        Ok(Self {
+            engine,
+            scratch,
+            socket,
+            display,
+        })
+    }
+
+    /// A client that identifies as a UI, so its disappearance stops watching.
+    pub fn client(&self) -> Result<Client, LabError> {
+        let mut c = Client::connect(&self.socket).map_err(|e| LabError::Engine(e.to_string()))?;
+        c.hello(glint_ipc::ClientKind::Ui, WAIT)
+            .map_err(|e| LabError::Engine(e.to_string()))?;
+        Ok(c)
+    }
+
+    /// The monitor the lab profile watches (`"primary"`, or the first when none is).
+    pub fn monitor(&self) -> Result<Rect, LabError> {
+        let conn = glint_x11::conn::open(self.display).map_err(x)?;
+        let root = conn.setup().roots[usize::from(self.display.screen)].root;
+        let size = (
+            conn.setup().roots[0].width_in_pixels,
+            conn.setup().roots[0].height_in_pixels,
+        );
+        let caps = glint_x11::caps::probe(&conn).map_err(x)?;
+        let list = glint_x11::monitors::list(&conn, root, size, caps.randr).map_err(x)?;
+        glint_x11::monitors::pick(&list, "primary")
+            .map(|m| m.rect)
+            .ok_or_else(|| LabError::X("no monitor".into()))
+    }
+}
+
+impl Drop for RealDesktop {
+    fn drop(&mut self) {
+        if let Ok(mut c) = Client::connect(&self.socket) {
+            let _ = c.call(Request::Quit, WAIT);
+        }
+        let deadline = Instant::now() + WAIT;
+        while self.engine.try_wait().ok().flatten().is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = self.engine.kill();
+        let _ = self.engine.wait();
+        let _ = std::fs::remove_dir_all(&self.scratch);
+    }
+}
+
+/// Runs one scenario on the real desktop (see [`RealDesktop`]): a full-monitor canvas on top of
+/// everything takes the engine's clicks.
+pub fn run_on_real_desktop(
+    glintd: &std::path::Path,
+    scenario: &str,
+    count: u32,
+    seed: u64,
+) -> Result<Report, LabError> {
+    let desktop = RealDesktop::start(glintd)?;
+    let canvas = Canvas::open(desktop.display, desktop.monitor()?)?;
+    let mut engine = desktop.client()?;
+    match scenario {
+        "basic" => basic(&canvas, &mut engine, count, seed),
+        "near-miss" => near_miss(&canvas, &mut engine, count, seed),
+        "arm-while-present" => arm_while_present(&canvas, &mut engine, count),
+        other => Err(LabError::Engine(format!(
+            "unknown scenario {other:?}; Phase 2 has {}",
+            SCENARIOS.join(", ")
+        ))),
+    }
+}
+
 /// The scenarios Phase 2 has.
 pub const SCENARIOS: [&str; 3] = ["basic", "near-miss", "arm-while-present"];
 
