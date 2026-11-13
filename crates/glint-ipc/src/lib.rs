@@ -22,6 +22,17 @@ pub const PROTOCOL: u32 = 1;
 /// The longest line either side accepts.
 pub const MAX_LINE: usize = 1 << 20;
 
+/// The version, the license and where the source lives, for every program's `--version` and the
+/// diagnostics (PLAN §18), so anyone who gets a binary knows where its source is:
+/// `0.1.0 · MIT · source: https://github.com/Muk7tm/glint`.
+pub const VERSION_LINE: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " · ",
+    env!("CARGO_PKG_LICENSE"),
+    " · source: ",
+    env!("CARGO_PKG_REPOSITORY"),
+);
+
 /// The most colors one `classify` request may ask about.
 pub const MAX_CLASSIFY: usize = 256;
 
@@ -549,6 +560,17 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_version_line_names_the_license_and_the_source() {
+        assert_eq!(
+            VERSION_LINE,
+            format!(
+                "{} · MIT · source: https://github.com/Muk7tm/glint",
+                env!("CARGO_PKG_VERSION")
+            )
+        );
+    }
 
     #[test]
     fn requests_in_the_plans_shape() {

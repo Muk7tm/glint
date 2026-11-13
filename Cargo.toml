@@ -10,6 +10,7 @@ exclude = ["spikes"]
 version = "0.1.0"
 edition = "2024"
 license = "MIT" # Slint is used under its royalty-free license: the About dialog shows AboutSlint (ADR 0016)
+repository = "https://github.com/Muk7tm/glint"
 
 [workspace.dependencies]
 glint-core = { path = "crates/glint-core" }

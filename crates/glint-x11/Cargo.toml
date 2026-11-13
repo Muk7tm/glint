@@ -4,6 +4,7 @@ description = "Glint's X11 backends: capture, XTest injection, monitors, windows
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [features]

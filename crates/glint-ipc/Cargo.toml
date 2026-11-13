@@ -4,6 +4,7 @@ description = "Glint's IPC protocol: message types, newline-delimited JSON frami
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [dependencies]

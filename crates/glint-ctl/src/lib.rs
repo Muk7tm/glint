@@ -16,7 +16,11 @@ use glint_x11::env::LocalDisplay;
 const WAIT: Duration = Duration::from_secs(5);
 
 #[derive(Parser, Debug)]
-#[command(name = "glint-ctl", version, about = "Control the Glint engine (MIT)")]
+#[command(
+    name = "glint-ctl",
+    version = glint_ipc::VERSION_LINE,
+    about = "Control the Glint engine (MIT)"
+)]
 pub struct Cli {
     /// The engine's socket (default: the one for $DISPLAY).
     #[arg(long, global = true)]
@@ -212,7 +216,7 @@ pub fn execute(cli: &Cli, out: &mut dyn Write) -> Result<(), CtlError> {
         }
         Command::Diag => {
             // One text block for bug reports, the same as the window's *Copy diagnostics* (§17).
-            writeln!(out, "glint-ctl {} · MIT", env!("CARGO_PKG_VERSION"))?;
+            writeln!(out, "glint-ctl {}", glint_ipc::VERSION_LINE)?;
             match reply(&mut client, Request::Diagnostics)? {
                 Event::Diagnostics { text } => write!(out, "{text}")?,
                 e => return Err(unexpected(&e)),

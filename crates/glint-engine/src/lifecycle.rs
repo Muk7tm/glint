@@ -71,7 +71,7 @@ pub fn watch_signals(on_signal: impl Fn(i32) + Send + 'static) -> std::io::Resul
 #[derive(clap::Parser, Debug, Default)]
 #[command(
     name = "glintd",
-    version,
+    version = glint_ipc::VERSION_LINE,
     about = "The Glint engine: watches the screen and clicks (MIT)"
 )]
 pub struct Options {

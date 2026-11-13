@@ -4,6 +4,7 @@ description = "Glint's pure logic: color rules, lookup table, sample patterns, t
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [[bench]]

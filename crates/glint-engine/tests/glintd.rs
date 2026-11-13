@@ -1017,7 +1017,8 @@ fn recording_the_spot_and_the_diagnostics() {
         panic!()
     };
     for part in [
-        "Glint ",
+        "Glint (glintd) ",
+        "MIT · source: https://github.com/Muk7tm/glint\n",
         "Kernel: ",
         "X server: ",
         "Extensions: XTEST 2.2",

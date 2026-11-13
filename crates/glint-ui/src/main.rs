@@ -17,7 +17,38 @@ use slint::ComponentHandle;
 use crate::app::App;
 use crate::client::{FromEngine, Link};
 
+const HELP: &str = "\
+The Glint window: shows and changes what Glint's engine (glintd) watches and clicks (MIT)
+
+Usage: glint [OPTIONS]
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+";
+
+/// What the command line asks for instead of the window: the text to print, and whether it's an
+/// error (printed to stderr, exit code 2, as the other programs' command lines do).
+fn command_line(args: &[std::ffi::OsString]) -> Option<(String, bool)> {
+    match args {
+        [] => None,
+        [a] if a == "-V" || a == "--version" => Some((format!("glint {}\n", glint_ipc::VERSION_LINE), false)),
+        [a] if a == "-h" || a == "--help" => Some((HELP.to_owned(), false)),
+        [a, ..] => Some((format!("error: unexpected argument {a:?}\n\n{HELP}"), true)),
+    }
+}
+
 fn main() -> Result<(), slint::PlatformError> {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if let Some((text, error)) = command_line(&args) {
+        if error {
+            eprint!("{text}");
+            std::process::exit(2);
+        }
+        print!("{text}");
+        return Ok(());
+    }
+
     // Keep the UI off the GPU (§12.8). The app id needs the platform to exist and must be set
     // before the window is shown.
     slint::BackendSelector::new()
@@ -76,4 +107,28 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.on_keep_running(|| app::with(App::keep_running));
     ui.on_quit_app(|| app::with(App::quit));
     ui.run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(v: &[&str]) -> Vec<std::ffi::OsString> {
+        v.iter().map(std::ffi::OsString::from).collect()
+    }
+
+    #[test]
+    fn the_command_line_opens_the_window_or_prints() {
+        assert_eq!(command_line(&args(&[])), None);
+        let version = command_line(&args(&["--version"])).unwrap();
+        assert_eq!(version, (format!("glint {}\n", glint_ipc::VERSION_LINE), false));
+        assert_eq!(command_line(&args(&["-V"])), Some(version));
+        let (text, error) = command_line(&args(&["-h"])).unwrap();
+        assert!(text.starts_with("The Glint window") && !error, "{text}");
+        let (text, error) = command_line(&args(&["--bogus", "x"])).unwrap();
+        assert!(
+            text.starts_with("error: unexpected argument \"--bogus\"") && error,
+            "{text}"
+        );
+    }
 }

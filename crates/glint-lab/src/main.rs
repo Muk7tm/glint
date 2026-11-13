@@ -15,7 +15,7 @@ use glint_lab::{LATER, Options, Report, SCENARIOS};
 #[derive(Parser, Debug)]
 #[command(
     name = "glint-lab",
-    version,
+    version = glint_ipc::VERSION_LINE,
     about = "Glint's test lab: scenarios in a sandboxed X server (MIT)"
 )]
 struct Cli {

@@ -1534,7 +1534,7 @@ impl Controller {
         let setup = self.conn.setup();
         let stats = self.stats.lock().map(|s| s.clone()).unwrap_or_default();
         let mut t = String::new();
-        let _ = writeln!(t, "Glint {} (glintd) · MIT", env!("CARGO_PKG_VERSION"));
+        let _ = writeln!(t, "Glint (glintd) {}", glint_ipc::VERSION_LINE);
         let _ = writeln!(t, "Kernel: {}", rustix::system::uname().release().to_string_lossy());
         let _ = writeln!(
             t,
