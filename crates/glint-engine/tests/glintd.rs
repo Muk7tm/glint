@@ -741,3 +741,44 @@ fn a_mouse_side_button_as_a_hotkey() {
     x.xtest_fake_input(5, 8, 0, root, 0, 0, 0).unwrap();
     x.sync().unwrap();
 }
+
+/// The window-buffer self-check (§5.2, ADR 0014): behind another window it can only test for a
+/// blank image; once the window is in front it compares with the screen.
+#[test]
+fn the_window_buffer_self_check_compares_once_the_window_is_in_front() {
+    use glint_core::pattern::Rect;
+    use glint_core::profile::{Backend, TargetMode};
+
+    let Some(engine) = Engine::start() else { return };
+    let display = engine.x.display();
+    let game = glint_lab::Canvas::game(display, Rect::new(40, 40, 300, 200), "glint-test-game").unwrap();
+    let other = glint_lab::Canvas::game(display, Rect::new(360, 40, 200, 200), "glint-test-other").unwrap();
+    other.focus().unwrap();
+    let mut c = engine.client();
+    let mut p = green_profile();
+    p.target.mode = TargetMode::Window;
+    p.target.window.class = "glint-test-game".into();
+    p.sampling.backend = Backend::WindowBuffer;
+    assert!(matches!(
+        c.call(Request::SetProfile { profile: Box::new(p) }, WAIT).unwrap(),
+        Event::ProfileApplied { .. }
+    ));
+    let state = |c: &mut Client| match c.call(Request::GetState, WAIT).unwrap() {
+        Event::State(s) => (s.backend, s.backend_reason.unwrap_or_default()),
+        other => panic!("{other:?}"),
+    };
+    let (backend, why) = state(&mut c);
+    assert_eq!(backend, "window-buffer");
+    assert!(why.contains("next in front"), "{why}");
+    game.focus().unwrap();
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let (backend, why) = state(&mut c);
+        if why.contains("matched the screen in 20 of 20 reads") {
+            assert_eq!(backend, "window-buffer");
+            break;
+        }
+        assert!(Instant::now() < deadline, "never compared: {why}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}

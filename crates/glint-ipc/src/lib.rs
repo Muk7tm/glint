@@ -325,6 +325,10 @@ pub struct StateSnapshot {
     pub phase: Phase,
     pub target: TargetInfo,
     pub backend: String,
+    /// Why that backend, in window mode (§17; ADR 0014): the self-check's result, or why the
+    /// screen is read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_reason: Option<String>,
     /// The target check rate; `None` for Max.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checks_per_sec: Option<u32>,

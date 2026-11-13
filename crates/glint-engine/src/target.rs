@@ -246,10 +246,37 @@ impl Tracker {
     }
 }
 
-/// The window-buffer self-check (§5.2): reads the window's center from its own image and from
-/// the screen, 20 times over 200 ms. A blank window image (the app draws into a child window),
-/// or one that disagrees with the screen on more than 10% of the reads while the window is in
-/// front, means reading the screen instead. Returns the window's pixel format when it passes.
+/// How the window's own image compared with the screen in a passed self-check.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Compared {
+    /// The window wasn't in front, so the screen may show another window there: only the
+    /// blank test ran. The comparison runs once the window is in front.
+    NotInFront,
+    /// This many of the window's reads showed up on the screen within the next 30 ms.
+    Matched(usize),
+    /// Both kept changing (a moving scene), faster than the screen shows every frame.
+    Moving,
+}
+
+/// A passed self-check: the window's pixel format, and how its image compared.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Checked {
+    pub format: glint_x11::format::PixelFormat,
+    pub compared: Compared,
+}
+
+/// Reads of the window's own image per self-check, 10 ms apart.
+pub const READS: usize = 20;
+
+/// Under a compositor the screen shows a frame up to one refresh after the window drew it, so a
+/// window read matches when the screen shows it in the same read or one of the next three
+/// (30 ms later; ADR 0014).
+const LAG: usize = 3;
+
+/// The window-buffer self-check (§5.2, ADR 0014): reads the window's center from its own image
+/// and from the screen, 20 times over 200 ms (and the screen three times more, for the lag).
+/// A blank window image (the app draws into a child window), or one the screen doesn't show
+/// while the window is in front, means reading the screen instead.
 pub fn window_buffer_check(
     conn: &RustConnection,
     root: Window,
@@ -257,7 +284,7 @@ pub fn window_buffer_check(
     win: Window,
     rect: Rect,
     in_front: bool,
-) -> Result<glint_x11::format::PixelFormat, String> {
+) -> Result<Checked, String> {
     use glint_x11::format::PixelFormat;
     use x11rb::protocol::xproto::ImageFormat;
     let attrs = conn
@@ -284,30 +311,48 @@ pub fn window_buffer_check(
         f.decode(&r.data, 1, 1, &mut px).ok()?;
         Some(px[0])
     };
-    let (mut own, mut screen) = ([0u32; CHECKS], [0u32; CHECKS]);
-    for i in 0..CHECKS {
-        own[i] = read(win, cx, cy, &format).ok_or("its own image can't be read")?;
-        screen[i] = read(root, sx, sy, root_format).ok_or("the screen can't be read")?;
+    let (mut own, mut screen) = ([0u32; READS], [0u32; READS + LAG]);
+    for (i, seen) in screen.iter_mut().enumerate() {
+        if let Some(px) = own.get_mut(i) {
+            *px = read(win, cx, cy, &format).ok_or("its own image can't be read")?;
+        }
+        *seen = read(root, sx, sy, root_format).ok_or("the screen can't be read")?;
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    agree(&own, &screen, in_front)?;
-    Ok(format)
+    let compared = agree(&own, &screen, in_front)?;
+    Ok(Checked { format, compared })
 }
 
-/// Reads per self-check.
-const CHECKS: usize = 20;
-
-/// The self-check's verdict on the window's own reads and the screen's at the same spot.
-fn agree(own: &[u32], screen: &[u32], in_front: bool) -> Result<(), String> {
+/// The self-check's verdict on the window's own reads and the screen's at the same spot, read
+/// in turn; `screen` has [`LAG`] more reads than `own`.
+fn agree(own: &[u32], screen: &[u32], in_front: bool) -> Result<Compared, String> {
     if own.iter().all(|&p| p == 0) && screen.iter().any(|&p| p != 0) {
         return Err("its own image is blank (it draws into a child window), so Glint reads the screen instead".into());
     }
-    let differ = own.iter().zip(screen).filter(|(a, b)| a != b).count();
-    // More than 10% of the reads.
-    if in_front && differ * 10 > own.len() {
-        return Err("its own image doesn't match the screen, so Glint reads the screen instead".into());
+    if !in_front {
+        return Ok(Compared::NotInFront);
     }
-    Ok(())
+    let matched = own
+        .iter()
+        .enumerate()
+        .filter(|&(i, px)| {
+            screen
+                .get(i..(i + LAG + 1).min(screen.len()))
+                .is_some_and(|s| s.contains(px))
+        })
+        .count();
+    // At most 10% of the reads may go unseen.
+    if matched * 10 >= own.len() * 9 {
+        return Ok(Compared::Matched(matched));
+    }
+    // A moving scene: the screen skips frames the window drew, so reads can't be matched one by
+    // one. A window image that keeps changing while the screen does is the live one; a frozen
+    // one (or one that changes while the screen doesn't) is the wrong surface.
+    let changes = |v: &[u32]| v.windows(2).any(|w| w[0] != w[1]);
+    if changes(own) && changes(screen) {
+        return Ok(Compared::Moving);
+    }
+    Err("its own image doesn't match the screen, so Glint reads the screen instead".into())
 }
 
 #[cfg(test)]
@@ -318,22 +363,53 @@ mod tests {
     use x11rb::protocol::xproto::{CreateWindowAux, WindowClass};
     use x11rb::wrapper::ConnectionExt as _;
 
+    /// `n` reads of `px`, with the screen's extra reads.
+    fn reads(px: u32, n: usize) -> Vec<u32> {
+        vec![px; n]
+    }
+
     #[test]
     fn the_self_check_s_verdict() {
-        let green = [0x3B_D1_6F; 20];
-        assert!(agree(&green, &green, true).is_ok());
+        const GREEN: u32 = 0x3B_D1_6F;
+        let (own, screen) = (reads(GREEN, READS), reads(GREEN, READS + LAG));
+        assert_eq!(agree(&own, &screen, true), Ok(Compared::Matched(READS)));
         // Blank while the screen shows something: the app draws into a child window.
-        assert!(agree(&[0; 20], &green, true).unwrap_err().contains("blank"));
+        assert!(agree(&reads(0, READS), &screen, true).unwrap_err().contains("blank"));
+        assert!(agree(&reads(0, READS), &screen, false).unwrap_err().contains("blank"));
         // Black on both is just a black spot.
-        assert!(agree(&[0; 20], &[0; 20], true).is_ok());
-        // Two reads in twenty can catch a frame in between; three can't.
-        let mut own = green;
-        own[..2].fill(0x10_10_10);
-        assert!(agree(&own, &green, true).is_ok());
-        own[2] = 0x10_10_10;
-        assert!(agree(&own, &green, true).unwrap_err().contains("doesn't match"));
-        // Behind another window, the screen shows that window: no comparison.
-        assert!(agree(&own, &green, false).is_ok());
+        assert!(agree(&reads(0, READS), &reads(0, READS + LAG), true).is_ok());
+        // Behind another window, the screen may show that window: not compared yet.
+        assert_eq!(
+            agree(&own, &reads(0x10_10_10, READS + LAG), false),
+            Ok(Compared::NotInFront)
+        );
+        // A static image the screen doesn't show is the wrong surface.
+        assert!(
+            agree(&own, &reads(0x10_10_10, READS + LAG), true)
+                .unwrap_err()
+                .contains("doesn't match")
+        );
+    }
+
+    #[test]
+    fn the_screen_may_show_the_window_s_frames_late() {
+        // The window draws a new color every read; the screen shows each one two reads later.
+        let own: Vec<u32> = (0..READS as u32).collect();
+        let screen: Vec<u32> = (0..(READS + LAG) as u32).map(|i| i.saturating_sub(2)).collect();
+        assert_eq!(agree(&own, &screen, true), Ok(Compared::Matched(READS)));
+        // Two reads in twenty unseen pass; three don't, unless both keep changing.
+        let mut screen = reads(5, READS + LAG);
+        let mut own = reads(5, READS);
+        own[..2].fill(6);
+        assert_eq!(agree(&own, &screen, true), Ok(Compared::Matched(READS - 2)));
+        own[2] = 6;
+        assert!(agree(&own, &screen, true).is_err());
+        // A moving scene drawn faster than the screen shows it: no read matches, both change.
+        let own: Vec<u32> = (0..READS as u32).map(|i| 1000 + i).collect();
+        screen = (0..(READS + LAG) as u32).collect();
+        assert_eq!(agree(&own, &screen, true), Ok(Compared::Moving));
+        // A frozen window image while the screen moves is the wrong surface.
+        assert!(agree(&reads(7, READS), &screen, true).is_err());
     }
 
     #[test]
@@ -364,7 +440,8 @@ mod tests {
         .unwrap();
         c.map_window(win).unwrap();
         c.sync().unwrap();
-        let format = window_buffer_check(&c, root, &root_format, win, Rect::new(100, 50, 200, 100), true).unwrap();
-        assert_eq!(format, root_format);
+        let checked = window_buffer_check(&c, root, &root_format, win, Rect::new(100, 50, 200, 100), true).unwrap();
+        assert_eq!(checked.format, root_format);
+        assert_eq!(checked.compared, Compared::Matched(READS));
     }
 }

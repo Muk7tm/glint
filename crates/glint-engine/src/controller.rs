@@ -433,8 +433,10 @@ pub struct Controller {
     refresh_hz: Option<f64>,
     /// The window-buffer backend in use: the window and its pixel format (§5.2).
     window_buffer: Option<(u32, PixelFormat)>,
-    /// The last self-check, per window: once per window, it takes 200 ms.
-    self_check: Option<(u32, Result<PixelFormat, String>)>,
+    /// The last self-check and its window. It takes 230 ms, so it runs again only when it
+    /// couldn't compare with the screen or failed, and the window has come in front while
+    /// stopped (ADR 0014).
+    self_check: Option<(u32, Result<crate::target::Checked, String>)>,
 }
 
 impl Controller {
@@ -606,6 +608,7 @@ impl Controller {
             } else {
                 "screen".into()
             },
+            backend_reason: self.backend_reason(&profile),
             checks_per_sec: profile.sampling.speed.checks_per_second(),
             profile: profile.name.clone(),
             revision: self.revision,
@@ -1001,13 +1004,7 @@ impl Controller {
     /// under a compositor (or when the profile asks for it), if the self-check passes; the
     /// screen otherwise.
     fn choose_backend(&mut self, profile: &Profile) {
-        use glint_core::profile::Backend;
-        let wanted = profile.target.mode == TargetMode::Window
-            && match profile.sampling.backend {
-                Backend::WindowBuffer => true,
-                Backend::Auto => self.compositor,
-                Backend::Screen | Backend::ScreenShm | Backend::Damage => false,
-            };
+        let wanted = self.wants_window_buffer(profile);
         let (Some(info), Some(rect)) = (self.tracker.window().cloned(), self.tracker.rect()) else {
             self.window_buffer = None;
             return;
@@ -1016,7 +1013,7 @@ impl Controller {
             self.window_buffer = None;
             return;
         }
-        if self.self_check.as_ref().map(|(w, _)| *w) != Some(info.id) {
+        if self.self_check_due(info.id) {
             let result = crate::target::window_buffer_check(
                 &self.conn,
                 self.root,
@@ -1025,7 +1022,10 @@ impl Controller {
                 rect,
                 self.tracker.in_front(),
             );
-            if let Err(why) = &result {
+            let before = self.self_check.take().filter(|(w, _)| *w == info.id).map(|(_, r)| r);
+            if let Err(why) = &result
+                && before.as_ref().is_none_or(|b| b.as_ref().err() != Some(why))
+            {
                 self.broadcast(Event::Warning {
                     code: "window_buffer".into(),
                     message: format!("{}: {why}.", info.title),
@@ -1035,9 +1035,60 @@ impl Controller {
             self.self_check = Some((info.id, result));
         }
         self.window_buffer = match &self.self_check {
-            Some((id, Ok(format))) => Some((*id, *format)),
+            Some((id, Ok(checked))) if *id == info.id => Some((*id, checked.format)),
             _ => None,
         };
+    }
+
+    /// Whether `profile` reads the window's own image when the self-check passes (§5.2).
+    fn wants_window_buffer(&self, profile: &Profile) -> bool {
+        use glint_core::profile::Backend;
+        profile.target.mode == TargetMode::Window
+            && match profile.sampling.backend {
+                Backend::WindowBuffer => true,
+                Backend::Auto => self.compositor,
+                Backend::Screen | Backend::ScreenShm | Backend::Damage => false,
+            }
+    }
+
+    /// Whether the self-check should run (again) for `window`: it never ran for it, or it
+    /// couldn't compare with the screen or failed, and now it can (in front, not watching).
+    fn self_check_due(&self, window: u32) -> bool {
+        use crate::target::Compared;
+        match &self.self_check {
+            Some((id, result)) if *id == window => {
+                let settled = matches!(result, Ok(c) if c.compared != Compared::NotInFront);
+                !settled && !self.started && self.tracker.in_front()
+            }
+            _ => true,
+        }
+    }
+
+    /// Why the backend in use was chosen, in window mode (§17: "the backend in use and why").
+    fn backend_reason(&self, profile: &Profile) -> Option<String> {
+        use crate::target::{Compared, READS};
+        use glint_core::profile::Backend;
+        if profile.target.mode != TargetMode::Window {
+            return None;
+        }
+        Some(match profile.sampling.backend {
+            Backend::Screen | Backend::ScreenShm | Backend::Damage => "the profile asks for the screen".into(),
+            Backend::Auto if !self.compositor => "no compositor, so the screen shows each frame as it's drawn".into(),
+            Backend::Auto | Backend::WindowBuffer => match (self.tracker.window(), &self.self_check) {
+                (Some(w), Some((id, result))) if w.id == *id => match result {
+                    Ok(c) => match c.compared {
+                        Compared::Matched(n) => format!("its own image matched the screen in {n} of {READS} reads"),
+                        Compared::Moving => "its own image and the screen kept changing together".into(),
+                        Compared::NotInFront => {
+                            "its own image isn't blank; it's compared with the screen when the window is next in front"
+                                .into()
+                        }
+                    },
+                    Err(why) => why.clone(),
+                },
+                _ => "the window isn't showing".into(),
+            },
+        })
     }
 
     /// What the hot thread reads: the target window, or the root.
@@ -1190,7 +1241,17 @@ impl Controller {
         if self.started {
             self.hot.set_gate(self.gate(&profile));
         }
-        if self.window_status(&profile) != before || change == Change::Closed {
+        // In front while stopped: a self-check that couldn't compare with the screen (or failed)
+        // runs again. Never while watching: republishing restarts.
+        let backend_before = self.window_buffer;
+        if !self.started
+            && self.wants_window_buffer(&profile)
+            && self.tracker.in_front()
+            && self.tracker.window().is_some_and(|w| self.self_check_due(w.id))
+        {
+            self.republish();
+        }
+        if self.window_status(&profile) != before || change == Change::Closed || self.window_buffer != backend_before {
             self.broadcast(Event::State(self.state()));
         }
     }

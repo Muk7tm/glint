@@ -18,7 +18,7 @@ plan also updates the affected plan section in the same commit.
 | [0011](0011-a-check-reads-the-screen-between-request-and-reply.md) | A check reads the screen somewhere between its request and its reply: the trigger uses both times | Accepted | §5.5, A.1–A.2 |
 | [0012](0012-copy-pulses-ui-instead-of-a-shared-kit.md) | Copy Pulse's Slint files instead of sharing a kit | Accepted (owner decision) | §2, §12, §13, §14, §19–§21, A.7 |
 | [0013](0013-hold-to-watch-typed-colors-and-side-button-hotkeys.md) | Hold to watch, typed color codes, and mouse side buttons as hotkeys | Accepted (owner requests) | §9, §12.3, §19 |
-| [0014](0014-window-buffer-gap-and-lock-detection.md) | The window-buffer backend keeps the base check gap; D-Bus lock detection moves to Phase 6 | Accepted | §5.2, §8, §12.3, §19 |
+| [0014](0014-window-buffer-gap-and-lock-detection.md) | The window-buffer backend: its check gap and its self-check; D-Bus lock detection moves to Phase 6 | Accepted | §5.2, §8, §12.3, §19 |
 
 ## Template
 

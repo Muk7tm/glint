@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use glint_core::{Profile, Rgb};
-use glint_ipc::{Client, ClientKind, Event, Request, StateSnapshot};
+use glint_ipc::{Client, ClientKind, Event, Request, StateSnapshot, TargetKind};
 use glint_x11::env::LocalDisplay;
 
 const WAIT: Duration = Duration::from_secs(5);
@@ -264,12 +264,22 @@ fn expect_state(e: Event) -> Result<StateSnapshot, CtlError> {
 
 fn write_state(out: &mut dyn Write, s: &StateSnapshot) -> Result<(), CtlError> {
     let what = if s.started { "watching" } else { "stopped" };
-    let rate = s.checks_per_sec.map_or_else(|| "max".to_owned(), |n| format!("{n}/s"));
+    let rate = s
+        .checks_per_sec
+        .map_or_else(|| "max speed".to_owned(), |n| format!("{n} checks/s"));
+    let target = match s.target.kind {
+        TargetKind::Screen => "monitor",
+        TargetKind::Window => "window",
+    };
     writeln!(
         out,
-        "{what} · profile {} (revision {}) · {} {} · {rate}",
-        s.profile, s.revision, s.backend, s.target.name
+        "{what} · profile {} (revision {}) · {target} {} · {rate}",
+        s.profile, s.revision, s.target.name
     )?;
+    match &s.backend_reason {
+        Some(why) => writeln!(out, "reads: {} ({why})", s.backend)?,
+        None => writeln!(out, "reads: {}", s.backend)?,
+    }
     if let Some(why) = &s.last_stop {
         writeln!(out, "last stop: {why}")?;
     }
