@@ -413,7 +413,7 @@ The implementation is `glint-core/src/trigger.rs`, with scenario tests and prope
 
 ### 5.6 Pacing and scheduling
 
-- **Absolute deadlines.** `next = previous + period`, never `now + period`, so timing errors don't accumulate. In Balanced the hot thread sleeps with `clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME)` until about 50 µs before the deadline and spins the rest. Max doesn't sleep at all.
+- **Absolute deadlines.** `next = previous + period`, never `now + period`, so timing errors don't accumulate. In Balanced the hot thread sleeps until the deadline, with 1 ns timer slack, and doesn't spin. Spinning the last 60 µs bought 3.5 µs of punctuality at the median for 11% of a core, which a real-time thread also takes from the game. Without it, watching at Balanced costs about 2% of one core (ADR 0024). Max doesn't sleep at all.
 - **Timer slack.** `prctl(PR_SET_TIMERSLACK, 1)` on the hot thread; by default Linux lets sleeps overshoot by 50 µs.
 - **Stall detection.** If a check starts more than four periods late, the engine records a stall (visible in diagnostics) and resynchronizes `next = now`. The observed-absence rule in §5.5 keeps stalls from causing extra clicks.
 - **Real-time priority** (`realtime = off | auto | required`). Under a CPU-heavy game, a normal-priority thread can wait 1–5 ms just to be scheduled, which alone could eat half of your 10 ms budget; real-time scheduling cuts that to tens of microseconds. `auto` asks **rtkit** over D-Bus (`MakeThreadRealtime`, SCHED_RR priority 10, unprivileged on most desktops). rtkit requires `RLIMIT_RTTIME`: the engine sets the hard limit to rtkit's `RTTimeUSecMax` and the soft limit to half of it, catches the soft limit's SIGXCPU and drops the thread to normal priority. There is no direct `RLIMIT_RTPRIO` path: it needs `sched_setscheduler`, which no safe wrapper provides (ADR 0017). Otherwise the engine falls back to normal priority and says so (`state.realtime`, `glint-ctl status`, and the UI's ENGINE card: "Real-time: off — rtkit not available"). `required` refuses Start without it.
@@ -1426,7 +1426,7 @@ pub fn run_hot(mut h: Hot) -> ! {
             h.events.push_stall(now - next);
             next = now;
         }
-        h.pacer.wait_until(next); // clock_nanosleep(TIMER_ABSTIME) + short spin; no-op in Max
+        h.pacer.wait_until(next); // sleep to the deadline, no spin (ADR 0024); no-op in Max
     }
 }
 ```

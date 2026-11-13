@@ -371,6 +371,10 @@ struct Episode {
     expect: Expect,
     /// The absence right before it: shortest and longest.
     gap: (Duration, Duration),
+    /// Since when the color was present without a break, the edge shades before the tight color
+    /// included. A latched engine reports a possible miss at its first check that finds anything
+    /// present (ADR 0007), which can come before the appearance itself begins.
+    present_from: Instant,
 }
 
 /// The marks with the engine's self-stops added as stops.
@@ -399,6 +403,8 @@ fn episodes(marks: &[Mark], end: Instant, cfg: &JudgeCfg) -> Vec<Episode> {
     let mut run: Option<(Duration, Duration)> = None;
     // The absence since the color was last present, whatever the state, for the report.
     let mut gap = (Duration::ZERO, Duration::ZERO);
+    // Since when anything has been present without a break, for matching possible-miss reports.
+    let mut present_since: Option<Instant> = None;
     let mut out = Vec::new();
     for (i, m) in marks.iter().enumerate() {
         let (next_sent, next_drawn) = marks.get(i + 1).map_or((end, end), |n| (n.at.sent, n.at.drawn));
@@ -409,6 +415,14 @@ fn episodes(marks: &[Mark], end: Instant, cfg: &JudgeCfg) -> Vec<Episode> {
             Change::Start if cfg.fire_on_start => (armed, latched, run) = (true, false, None),
             Change::Start | Change::Restart => (armed, latched, run) = (false, true, None),
             Change::Stop => (armed, latched, run) = (false, false, None),
+        }
+        // Reports come only while watching, so presence counts from the latest (re)start.
+        if m.shown == Shown::Absent || m.change == Change::Stop {
+            present_since = None;
+        } else if m.change != Change::Draw {
+            present_since = Some(m.at.sent);
+        } else {
+            present_since.get_or_insert(m.at.sent);
         }
         if m.shown == Shown::Absent {
             gap = (gap.0 + shortest, gap.1 + longest);
@@ -439,6 +453,7 @@ fn episodes(marks: &[Mark], end: Instant, cfg: &JudgeCfg) -> Vec<Episode> {
                         visible: (m.at.drawn, next_sent),
                         expect: if latched { Expect::May } else { Expect::Must },
                         gap,
+                        present_from: present_since.unwrap_or(m.at.sent),
                     });
                 }
                 if armed || latched {
@@ -564,7 +579,7 @@ pub fn judge(title: String, cfg: &JudgeCfg, ev: &Evidence) -> Report {
                 // A self-stop first: it also cuts the visible window short.
                 if r.self_stops.iter().any(|&(t, _)| t >= ep.start && t < window_end) {
                     r.after_stop += 1;
-                } else if maybe.iter().any(|&t| t >= ep.start && t < window_end) {
+                } else if maybe.iter().any(|&t| t >= ep.present_from && t < window_end) {
                     r.reported += 1;
                 } else if ve.saturating_duration_since(vs) < MIN_VISIBLE
                     || blind.iter().any(|&(f, t)| f <= vs && ve <= t)
@@ -844,6 +859,44 @@ mod tests {
         }]);
         assert_eq!((r.missed, r.appearances), (0, 1)); // nothing can click after a stop
         assert!(!r.passed());
+    }
+
+    #[test]
+    fn a_possible_miss_reported_on_the_edge_shade_explains_the_appearance() {
+        // Under heavy load the engine can be blind while the screen is clear. A latched engine
+        // then reports a possible miss at its first check that finds the color present: here the
+        // edge shade before the tight color, so before the appearance itself begins.
+        let t0 = Instant::now();
+        let spec = [
+            (0, Absent, Restart),
+            (100, Tight, Draw),
+            (200, Absent, Draw),
+            (400, Wide, Draw),
+            (440, Tight, Draw),
+            (500, Absent, Draw),
+        ];
+        let ns = |ms: u64| glint_ipc::monotonic_ns(t0 + Duration::from_millis(ms));
+        let m = marks(t0, &spec);
+        let inputs = [press(t0, 100)];
+        let judge_with = |trace: &[Trace]| {
+            judge(
+                "test".into(),
+                &JudgeCfg::new(G, None),
+                &Evidence {
+                    marks: &m,
+                    end: t0 + Duration::from_millis(700),
+                    inputs: &inputs,
+                    trace,
+                    probe: None,
+                },
+            )
+        };
+        let r = judge_with(&[Trace::MaybeMissed { at_ns: ns(405) }]);
+        assert_eq!((r.missed, r.reported), (0, 1), "{}", r.summary());
+        assert!(r.passed(), "{}", r.summary());
+        // A report from while the screen was still clear explains nothing.
+        let r = judge_with(&[Trace::MaybeMissed { at_ns: ns(300) }]);
+        assert_eq!((r.missed, r.reported), (1, 0), "{}", r.summary());
     }
 
     #[test]

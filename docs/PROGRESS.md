@@ -10,12 +10,15 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 - Phase 6 is complete: the exit run passed on 2026-11-13 (`glint-lab basic --count 10000 --real-desktop`:
   10,000 clicks for 10,000 appearances, 0 extra, 0 missed, p50 0.44 ms, p99 0.72 ms, max 1.05 ms, no X server
   stall; MEASUREMENTS.md §11). Phases 4 and 5 are complete.
-- **Open:** `boundary-noise` failed once, in a full `cargo test` run on 2026-11-13 while the owner's game used
-  about 2.4 CPU cores. Its report wasn't kept. It hasn't come back since, under the same load:
-  - 237 scenario runs from the lab tests;
-  - 1,000 `boundary-noise` appearances at the lowest CPU priority.
-
-  All had 0 extra and 0 missed. Test runs now keep their whole log.
+- **Explained (2026-11-14):** `boundary-noise` failed once, in a full `cargo test` run on 2026-11-13 while the
+  owner's game used about 2.4 CPU cores. Its report wasn't kept, but a 30-second soak, starved on purpose,
+  showed the cause, a bug in the lab's judge and not in the engine:
+  - A starved engine is blind while the screen is clear. It then reports a possible miss at its first check
+    that finds anything present (ADR 0007), which in boundary jitter is the edge shade before the tight color.
+  - The judge only took reports from the tight color on, so it counted those appearances as unexplained
+    misses.
+  - It now takes reports from the moment the color was present again, with a unit test. No extra click
+    appeared in any of these runs.
 - Glint copies Pulse's Slint files and never changes Pulse (ADR 0012).
 - Glint is MIT since 2026-11-13 (owner decision; the About dialog shows AboutSlint, ADR 0016).
   All 17 lab scenarios pass in CI (https://github.com/Muk7tm/glint/actions/runs/43426780742) and at full count

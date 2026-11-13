@@ -607,6 +607,41 @@ fn blue_profile(base: &Profile, shades: ShadePreset) -> Profile {
     p
 }
 
+/// The engine's CPU time at a moment: all of it, and its checking thread's. The v1.0 definition
+/// of done asks for the engine's CPU at Balanced, measured (§19).
+#[derive(Clone, Copy)]
+struct CpuMark {
+    at: Instant,
+    all: Option<Duration>,
+    hot: Option<Duration>,
+}
+
+impl CpuMark {
+    fn now(s: &Session) -> Self {
+        Self {
+            at: Instant::now(),
+            all: s.host.engine_cpu_time(),
+            hot: s.host.engine_thread_cpu_time("glintd-hot"),
+        }
+    }
+
+    /// The report's note: the share of one core used since `self`.
+    fn note(self, s: &Session) -> Option<String> {
+        let now = Self::now(s);
+        let wall = now.at.duration_since(self.at).as_secs_f64().max(f64::EPSILON);
+        let share = |a: Option<Duration>, b: Option<Duration>| {
+            a.zip(b).map(|(a, b)| 100.0 * a.saturating_sub(b).as_secs_f64() / wall)
+        };
+        let all = share(now.all, self.all)?;
+        Some(match share(now.hot, self.hot) {
+            Some(hot) => {
+                format!("engine CPU {all:.1}% of one core, the checking thread {hot:.1}% (the v1.0 budget is 10%)")
+            }
+            None => format!("engine CPU {all:.1}% of one core (the v1.0 budget is 10%)"),
+        })
+    }
+}
+
 fn basic(s: &mut Session) -> Result<Report, LabError> {
     let n = s.count(100);
     let title = s.title("basic", n);
@@ -614,10 +649,14 @@ fn basic(s: &mut Session) -> Result<Report, LabError> {
     let profile = s.profile();
     let mut run = Run::begin(s, &profile, Duration::from_secs(1))?;
     run.start(s)?;
+    let cpu = CpuMark::now(s);
     for _ in 0..n {
         appear(&mut run, s, &mut rng, GREEN, (60, 600), (30, 500))?;
     }
-    run.finish(s, title, true)
+    let cpu = cpu.note(s);
+    let mut r = run.finish(s, title, true)?;
+    r.notes.extend(cpu);
+    Ok(r)
 }
 
 fn shades(s: &mut Session) -> Result<Report, LabError> {
@@ -1523,6 +1562,7 @@ fn soak(s: &mut Session) -> Result<Report, LabError> {
     let mut run = Run::begin(s, &green, Duration::from_secs(1))?;
     run.start(s)?;
     let memory_before = s.host.engine_rss_kib();
+    let cpu = CpuMark::now(s);
     let begun = Instant::now();
     let mut steps = 0u32;
     while begun.elapsed() < total {
@@ -1561,8 +1601,12 @@ fn soak(s: &mut Session) -> Result<Report, LabError> {
         }
     }
     let memory_after = s.host.engine_rss_kib();
+    let cpu = cpu.note(s);
     let mut r = run.finish(s, title, false)?;
     r.notes.push(format!("{steps} randomized steps"));
+    // The whole engine includes the color tables its profile edits rebuild on every core.
+    r.notes
+        .extend(cpu.map(|n| format!("{n}; the rest rebuilds color tables after the profile edits")));
     if let (Some(before), Some(after)) = (memory_before, memory_after) {
         r.notes.push(format!(
             "engine memory {:.1} MiB → {:.1} MiB",

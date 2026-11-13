@@ -43,6 +43,22 @@ pub trait Host {
             .and_then(|v| v.trim().trim_end_matches("kB").trim().parse().ok())
     }
 
+    /// The CPU time the engine has used so far, user and system, all threads.
+    fn engine_cpu_time(&self) -> Option<Duration> {
+        let pid = self.engine_pid()?.as_raw_nonzero().get();
+        cpu_time(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+    }
+
+    /// The CPU time of the engine's thread called `name` (`glintd-hot` checks the screen).
+    fn engine_thread_cpu_time(&self, name: &str) -> Option<Duration> {
+        let pid = self.engine_pid()?.as_raw_nonzero().get();
+        std::fs::read_dir(format!("/proc/{pid}/task"))
+            .ok()?
+            .flatten()
+            .find(|t| std::fs::read_to_string(t.path().join("comm")).is_ok_and(|c| c.trim_end() == name))
+            .and_then(|t| cpu_time(&std::fs::read_to_string(t.path().join("stat")).ok()?))
+    }
+
     /// SIGKILL, without any chance to release input.
     fn kill_engine(&mut self) -> Result<(), LabError>;
     /// Starts the engine again with the same configuration.
@@ -379,5 +395,34 @@ impl Drop for RealDesktop {
         let _ = self.engine.kill();
         let _ = self.engine.wait();
         let _ = std::fs::remove_dir_all(&self.scratch);
+    }
+}
+
+/// The CPU time in a `/proc/<pid>/stat` line: `utime` plus `stime`, fields 14 and 15, in clock
+/// ticks. The command name before them is in parentheses and may hold spaces or parentheses, so
+/// fields are counted from the last `)`.
+fn cpu_time(stat: &str) -> Option<Duration> {
+    let fields: Vec<&str> = stat.rsplit_once(')')?.1.split_whitespace().collect();
+    // After the name, field 3 (the state) comes first: utime is field 14, at index 11.
+    let ticks = fields.get(11)?.parse::<u64>().ok()? + fields.get(12)?.parse::<u64>().ok()?;
+    let per_second = rustix::param::clock_ticks_per_second();
+    (per_second > 0).then(|| Duration::from_secs_f64(ticks as f64 / per_second as f64))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cpu_time_adds_user_and_system_time() {
+        let hz = rustix::param::clock_ticks_per_second() as f64;
+        // A name with a space and a parenthesis; utime 150 and stime 50 ticks.
+        let stat = "4242 (glint d)) S 1 4242 4242 0 -1 4194304 136 0 1 0 150 50 0 0 20 0 3 0 9368063";
+        assert_eq!(cpu_time(stat), Some(Duration::from_secs_f64(200.0 / hz)));
+        assert_eq!(cpu_time("4242 (glintd"), None);
+        assert_eq!(cpu_time("4242 (glintd) S 1"), None);
+        // This test's own process has used some CPU time by now.
+        let own = std::fs::read_to_string("/proc/self/stat").unwrap();
+        assert!(cpu_time(&own).is_some());
     }
 }

@@ -499,18 +499,13 @@ fn stop_self(h: &mut Hot, reason: StopReason, was_armed: &mut bool) {
     );
 }
 
-/// Sleeps until about 60 µs before `deadline`, then spins (§5.6).
+/// Sleeps until `deadline` (§5.6). There is no spin before it (ADR 0024). With 1 ns timer slack and
+/// real-time priority, the thread wakes 3.5 µs late at the median and 31 µs at worst on the
+/// owner's machine. Spinning the last 60 µs made that 0.1 µs, for 11% of a core.
 fn pace_until(deadline: Instant) {
     let now = Instant::now();
-    if deadline <= now {
-        return;
-    }
-    let left = deadline - now;
-    if left > Duration::from_micros(80) {
-        std::thread::sleep(left - Duration::from_micros(60));
-    }
-    while Instant::now() < deadline {
-        std::hint::spin_loop();
+    if deadline > now {
+        std::thread::sleep(deadline - now);
     }
 }
 
