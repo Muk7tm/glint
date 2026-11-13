@@ -289,7 +289,42 @@ check gap.
 
 The self-check passed for the lab's window in every run. Its two failure cases (a blank image, or one that
 disagrees with the screen) can only happen under a compositor, with apps that draw into a child window; they
-are unit-tested (`target::tests`) and wait for the check on the owner's desktop with Sober.
+are unit-tested (`target::tests`).
+
+### Sober on the owner's desktop (Phase 5 exit), 2026-11-13
+
+Environment: Xorg 21.1.26, NVIDIA proprietary driver, Openbox, picom with the owner's config, one 1920×1080
+@ 60 Hz monitor. Sober's window: 1920×1080, depth 24, a DirectColor visual (decoded by its masks like
+TrueColor). Release build. The owner's profile: purple `#8604A0` with *Loose* shades (OkLCh ±0.16 L, ±0.08 C,
+±12° h, exit margin 1.5), 3×3 pattern, Balanced, Gone after 40 ms, the action key `e`, Hold to watch on Mouse5.
+
+- **Backend and self-check.** `glint-ctl status`: `reads: window-buffer (its own image matched the screen in 20
+  of 20 reads)`, check gap 2 ms. The first try had compared nothing (Sober wasn't in front), which led to
+  ADR 0014's comparison rules.
+- **Recording.** A throwaway, read-only recorder read the same 3×3 spot of Sober's window with the engine's
+  own color rules, alongside the engine's trace. Seven holds of Mouse5, 39 s in all:
+
+| | Count |
+|---|---|
+| Appearances (absences under *Gone after* merged, as the trigger does) | 113 |
+| Pressed once | 108 |
+| Pressed twice | **0** |
+| Not pressed: never inside the enter range (only near-purple) | 3 (by design) |
+| Not pressed: began within 40 ms of a start, or before it | 2 (by design, R7) |
+| Possible misses reported | 1 (a near-purple flash after a blind gap) |
+
+- **Response.** The engine pressed at the same moment the recorder first saw the color in the enter range
+  (median −0.01 ms between the two independent readers). From the check's request to the press written:
+  median 25 µs, max 569 µs (first recording, 32 presses).
+- **What the owner noticed** ("at the start it doesn't click fast enough"): in 8 of 108 presses the
+  appearance began with frames outside the enter range, and the press came 4–28 ms after the first one.
+  - Five began **light pink** (`#C243DE`–`#D051DE`): the same hue (Δh +1° to +5°) and chroma, but ΔL +0.17 to
+    +0.20, just past the ±0.16 lightness tolerance and inside the exit margin.
+  - Three had **white** at the center pixel while the rest of the 3×3 turned purple, so fewer than `k_enter`
+    pixels agreed at first.
+- **Quick off-and-on.** 17 absences shorter than *Gone after* were merged into the appearance around them:
+  2–37 ms long, 12 of them shorter than one 60 Hz frame. Sober draws faster than the monitor shows, and the
+  window buffer has every frame.
 
 ## Conclusions for the defaults (Phase 0 exit)
 

@@ -5,7 +5,7 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 ## Status
 
-- **Active phase:** Phase 5 (window mode and guards), started 2026-11-13. Phase 4 is complete. Glint copies Pulse's Slint files and never changes Pulse (ADR 0012). Open question for the owner:
+- **Active phase:** Phase 5 (window mode and guards) is complete (2026-11-13); Phase 6 waits for the owner's go-ahead. Phase 4 is complete. Glint copies Pulse's Slint files and never changes Pulse (ADR 0012). Open question for the owner:
   keep GPL-3.0-or-later, or switch to MIT under Slint's royalty-free license (AboutSlint + a badge).
   All 17 lab scenarios pass in CI (https://github.com/Muk7tm/glint/actions/runs/43426780742) and at full count
   locally (MEASUREMENTS.md §9).
@@ -79,7 +79,7 @@ listed in §13 (written as their content appears).
 - [x] Tracking through `StructureNotify`; epoch bump on move and resize. *(The tracker follows the client and its frame; a move or resize re-places the capture and restarts latched. The lab's `move` scenario moves the window while the color shows and resizes it so an off-center patch lands under the new center: no click from either.)*
 - [x] *Only click in this window* (EWMH + fallback) with "In front" / "Not in front". *(`_NET_ACTIVE_WINDOW` when the window manager publishes it, focus events otherwise; out of front pauses, back in front restarts latched. Checked on Xvfb with Openbox (EWMH) and by the lab's `focus` scenario without a window manager: no click into the other window, none on refocus.)*
 - [x] `window-buffer` backend + self-check; compositor detection; XWayland banner; stop on screen lock; UI-overlap warning. *(The capture reads the picked window itself when the profile asks for it, or automatically in window mode under a compositor, after the self-check (20 reads over 200 ms, once per window). A failure falls back to the screen with a warning that says why. The window-buffer backend keeps the base check gap (ADR 0014). The compositor is followed live through XFixes: under one, screen mode's check gap becomes most of a refresh, and the Watch row says screen mode sees changes one frame late. The XWayland banner and the hint were checked on Xvfb. MIT-SCREEN-SAVER stops watching on lock; D-Bus lock detection moves to Phase 6 (ADR 0014). The UI-overlap warning turns the live swatch off while the window covers the spot. `glint-lab --backend window-buffer`: `move` and `focus` pass on Xvfb (in `cargo test`) and under picom (MEASUREMENTS.md §10). On the owner's desktop, Sober passed the blank test, but the comparison hadn't run (Sober wasn't in front), and comparing at the same instant can't work in a moving scene under a compositor. The comparison now allows for the compositor's delay and runs when the window comes in front; `glint-ctl status` says why (ADR 0014).)*
-- **Exit:** `move`, `focus` and `ui-overlap` pass, and the window-buffer backend is verified on your desktop with Sober.
+- **Exit:** `move`, `focus` and `ui-overlap` pass, and the window-buffer backend is verified on your desktop with Sober. *(Met 2026-11-13: the three scenarios pass in CI (run 43458041321), also with the window-buffer backend and under picom. With Sober, the self-check matched 20 of 20 reads, and a recording of 113 appearances found 108 presses, no double press, and 5 unpressed appearances all explained by design (MEASUREMENTS.md §10).)*
 
 ## Phase 6 — Performance and advanced detection (M/L)
 
