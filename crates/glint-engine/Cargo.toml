@@ -30,6 +30,7 @@ x11rb.workspace = true
 [dev-dependencies]
 clap.workspace = true
 glint-ctl.workspace = true
+glint-lab.workspace = true
 glint-x11 = { workspace = true, features = ["sandbox"] }
 rtrb.workspace = true
 rustix = { workspace = true, features = ["process"] }

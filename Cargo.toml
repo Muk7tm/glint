@@ -16,6 +16,7 @@ glint-core = { path = "crates/glint-core" }
 glint-x11 = { path = "crates/glint-x11" }
 glint-ipc = { path = "crates/glint-ipc" }
 glint-ctl = { path = "crates/glint-ctl" }
+glint-lab = { path = "crates/glint-lab" }
 
 # Pure-Rust connection only: never enable `allow-unsafe-code` or `dl-libxcb` (§14).
 x11rb = { version = "0.13.2", features = ["xtest", "shm", "damage", "composite", "randr", "xinput", "xfixes", "screensaver"] }

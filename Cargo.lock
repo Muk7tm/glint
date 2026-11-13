@@ -496,6 +496,7 @@ dependencies = [
  "glint-core",
  "glint-ctl",
  "glint-ipc",
+ "glint-lab",
  "glint-x11",
  "rayon",
  "rtrb",
@@ -521,6 +522,14 @@ dependencies = [
 [[package]]
 name = "glint-lab"
 version = "0.1.0"
+dependencies = [
+ "clap",
+ "glint-core",
+ "glint-ipc",
+ "glint-x11",
+ "thiserror",
+ "x11rb",
+]
 
 [[package]]
 name = "glint-ui"

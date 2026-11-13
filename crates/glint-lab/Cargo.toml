@@ -11,6 +11,12 @@ name = "glint-lab"
 path = "src/main.rs"
 
 [dependencies]
+clap.workspace = true
+glint-core.workspace = true
+glint-ipc.workspace = true
+glint-x11 = { workspace = true, features = ["sandbox"] }
+thiserror.workspace = true
+x11rb.workspace = true
 
 [lints]
 workspace = true

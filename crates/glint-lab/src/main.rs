@@ -1,10 +1,57 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `glint-lab`: the Glint test lab (PLAN §13). Scaffold only; implemented in Phase 3.
+//! `glint-lab`: the Glint test lab (PLAN §16). Each run starts its own Xvfb and its own `glintd`
+//! (found next to this program, or on `$PATH`), so it never clicks on the real desktop.
 #![forbid(unsafe_code)]
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "glint-lab",
+    version,
+    about = "Glint's test lab: scenarios in a sandboxed X server (GPL-3.0-or-later)"
+)]
+struct Cli {
+    /// basic, near-miss or arm-while-present
+    scenario: String,
+    /// How many appearances (or near misses) to show.
+    #[arg(long, default_value_t = 100)]
+    count: u32,
+    /// Seed for the random timings.
+    #[arg(long, default_value_t = 1)]
+    seed: u64,
+    /// The engine to test (default: `glintd` next to this program, then `$PATH`).
+    #[arg(long)]
+    glintd: Option<PathBuf>,
+}
+
 fn main() -> ExitCode {
-    eprintln!("glint-lab {}: not implemented yet (Phase 3)", env!("CARGO_PKG_VERSION"));
-    ExitCode::FAILURE
+    let cli = Cli::parse();
+    let glintd = cli.glintd.clone().unwrap_or_else(|| {
+        let next_to_us = std::env::current_exe().ok().map(|p| p.with_file_name("glintd"));
+        next_to_us
+            .filter(|p| p.exists())
+            .unwrap_or_else(|| PathBuf::from("glintd"))
+    });
+    match glint_lab::run_in_sandbox(&glintd, &cli.scenario, cli.count, cli.seed) {
+        Ok(Some(report)) => {
+            print!("{}", report.summary());
+            if report.passed() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Ok(None) => {
+            eprintln!("glint-lab: Xvfb is not installed");
+            ExitCode::from(2)
+        }
+        Err(e) => {
+            eprintln!("glint-lab: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }
