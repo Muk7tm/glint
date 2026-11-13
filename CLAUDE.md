@@ -16,7 +16,8 @@ it is wrong, change it openly (see Deviations), never silently.
 - Engine and UI are separate processes. The UI never injects input; the engine never waits on the UI.
 - The hot loop has no locks, no logging, no allocation, and no I/O beyond X traffic and sleeping.
 - Watching never starts on its own.
-- If the color is already present on any (re)start, latch instead of firing.
+- If the color is already present on any (re)start, latch instead of firing. The only exception is opt-in:
+  `fire_if_present_on_start` on a manual Start (ADR 0007, ADR 0023). A restart always latches.
 - Release held input on every stop path, and do a defensive release at startup.
 - Only one engine runs per display.
 - Stay inside the plan's scope: no anti-detection or "humanized" input, no Wayland-native code in v1,

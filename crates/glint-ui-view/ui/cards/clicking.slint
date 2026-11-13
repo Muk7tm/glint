@@ -99,6 +99,25 @@ export component ClickingCard inherits Card {
         }
     }
 
+    // fire_if_present_on_start (ADR 0023): only a start the user makes; restarts never click.
+    Toggle {
+        text: "Click if it's already there when I start";
+        checked <=> Form.fire-on-start;
+        enabled: Form.editable;
+        toggled => {
+            Actions.form-changed();
+        }
+    }
+
+    // A mouse click lands at the pointer, which is on this window when Start is pressed here.
+    if Form.fire-on-start: Note {
+        width: root.width - 2 * Theme.card-padding;
+        message: Form.click-index == 5
+            ? "Only when you start it. For the next click, the color has to leave and come back."
+            : "Only when you start it. Start with your key: from the Start button, that click would land on this window.";
+        tone: Tone.neutral;
+    }
+
     // Capture mode (§9): the game doesn't get the hotkeys.
     Toggle {
         text: "Keep the hotkeys from the game";

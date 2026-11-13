@@ -514,7 +514,7 @@ Glint injects input with **XTest** (`FakeInput`, extension version 2.2), which n
 
 **Mouse side buttons** (`Mouse4` and `Mouse5`, X buttons 8 and 9) can be hotkeys too, as in Pulse: the engine also selects raw button events, Glint's own Back and Forward clicks are ignored the same way, and an action on the same side button is rejected (ADR 0013).
 
-**Mode** mirrors Pulse's Mode row: **Press to toggle** (default) or **Hold to watch** (watching only while the key is held; releasing it stops and releases input; ADR 0013). Starting from a hotkey follows rule R7: if the color is already showing, Glint waits for it to leave first.
+**Mode** mirrors Pulse's Mode row: **Press to toggle** (default) or **Hold to watch** (watching only while the key is held; releasing it stops and releases input; ADR 0013). Starting from a hotkey follows rule R7: if the color is already showing, Glint waits for it to leave first. *Click if it's already there when I start* (`fire_if_present_on_start`, off by default) clicks such a color once on a start you make, including each press of *Hold to watch*. A restart never does (ADR 0007, ADR 0023).
 
 **Emergency stop** stops watching, releases everything, and ignores Start for 500 ms so a bouncing key can't restart it.
 
@@ -702,6 +702,8 @@ The typeface looks like the desktop's default sans (Noto Sans); check Pulse's so
 │ │ Hold (ms)       [ -   10   + ]  released after 10 ms         │ │
 │ │ Mode            ( [Press to toggle]  Hold to watch )         │ │
 │ │ Start/stop key  [ F7     ▾ ]  Emergency stop: F8             │ │
+│ │ (○ ) Click if it's already there when I start                │ │
+│ │ (○ ) Keep the hotkeys from the game                          │ │
 │ └──────────────────────────────────────────────────────────────┘ │
 │ ┌──────────────────────────────────────────────────────────────┐ │
 │ │ GAME WINDOW                                                  │ │
@@ -1052,6 +1054,7 @@ verdict     PASS  (p99 ≤ 2 ms, max ≤ 10 ms, 0 extra, 0 missed)
 | `fade` | 300 ms fades in and out through intermediate colors | 1 click per appearance |
 | `rapid` | Gaps just above, then just below *Gone after* | N clicks, then merged appearances as documented |
 | `arm-while-present` | Start while the color is showing | 0 clicks until it leaves and returns |
+| `fire-on-start` | The same with `fire_if_present_on_start` on, plus a profile edit while it shows | 1 click at the start; 1 when it returns; 0 on the restart (ADR 0023) |
 | `move` | Move or resize the window so the color lands under the new center | 0 clicks caused by the move |
 | `focus` | Focus another window mid-appearance, then refocus with the color showing | 0 clicks into other windows; 0 on refocus |
 | `live-edit` | Change the range while running | 0 clicks caused by the edit |

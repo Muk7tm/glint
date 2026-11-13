@@ -120,6 +120,15 @@ fn arm_while_present() {
 }
 
 #[test]
+fn fire_on_start() {
+    // Per round: the click at the start, and the one after the color came back; none on the
+    // restart while it shows (ADR 0023).
+    if let Some(r) = run("fire-on-start", 3) {
+        assert_eq!((r.appearances, r.clicks), (6, 6), "{}", r.summary());
+    }
+}
+
+#[test]
 fn live_edit() {
     // Per round: the blue after an edit, the blue again, then the green.
     if let Some(r) = run("live-edit", 2) {

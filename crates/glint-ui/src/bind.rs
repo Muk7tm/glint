@@ -249,6 +249,8 @@ pub struct Fields {
     pub only_in_window: bool,
     /// Capture mode: the game doesn't get the hotkeys (§9).
     pub capture: bool,
+    /// A start clicks a color already showing (`fire_if_present_on_start`, ADR 0023).
+    pub fire_on_start: bool,
     /// Ask, keep running, quit.
     pub closing: i32,
     pub detection: Detection,
@@ -309,6 +311,7 @@ pub fn fields(profile: &Profile, settings: &Settings) -> Fields {
         },
         only_in_window: profile.guards.only_in_window,
         capture: settings.hotkeys.delivery == Delivery::Capture,
+        fire_on_start: profile.trigger.fire_if_present_on_start,
         closing: index_of(&CLOSING, &settings.close_policy).max(0),
         detection: detection(profile),
         range: range(profile),
@@ -351,6 +354,7 @@ pub fn edited(profile: &Profile, settings: &Settings, f: &Fields) -> (Profile, S
         HotkeyMode::Toggle
     };
     s.hotkeys.delivery = if f.capture { Delivery::Capture } else { Delivery::Listen };
+    p.trigger.fire_if_present_on_start = f.fire_on_start;
     s.close_policy = usize::try_from(f.closing)
         .ok()
         .and_then(|i| CLOSING.get(i))
@@ -438,6 +442,7 @@ pub fn apply(ui: &AppWindow, f: &Fields, hero: &Hero) {
     form.set_window_name(f.window_name.as_str().into());
     form.set_only_in_window(f.only_in_window);
     form.set_capture_hotkeys(f.capture);
+    form.set_fire_on_start(f.fire_on_start);
     form.set_closing_index(f.closing);
     let d = &f.detection;
     form.set_pattern_index(d.pattern);
@@ -501,6 +506,7 @@ pub fn read(ui: &AppWindow, shown: &Fields) -> Fields {
         mode: form.get_mode_index(),
         only_in_window: form.get_only_in_window(),
         capture: form.get_capture_hotkeys(),
+        fire_on_start: form.get_fire_on_start(),
         closing: form.get_closing_index(),
         detection: Detection {
             pattern: form.get_pattern_index(),
@@ -573,6 +579,7 @@ mod tests {
         f.mode = 1;
         f.only_in_window = false;
         f.closing = 2;
+        f.fire_on_start = true;
         let (p2, s2) = edited(&p, &s, &f);
         // Loose shades show Loose's tolerances in COLOR RANGE.
         let want = Fields {
@@ -590,6 +597,7 @@ mod tests {
             ShadePreset::Loose.entry(ColorModel::Oklch, Rgb::from_u32(0x3B_D1_6F))
         );
         assert_eq!(p2.action.button, MouseButton::Right);
+        assert!(p2.trigger.fire_if_present_on_start);
         assert_eq!(
             (s2.hotkeys.mode, s2.close_policy),
             (HotkeyMode::Hold, ClosePolicy::Quit)

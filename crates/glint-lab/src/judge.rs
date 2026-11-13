@@ -59,8 +59,11 @@ impl From<Class> for Shown {
 pub enum Change {
     /// Nothing: the lab drew.
     Draw,
-    /// Watching (re)started: a Start, or a profile change while started. The trigger latches,
-    /// with a fresh absence count (ADR 0007).
+    /// A manual Start. The trigger latches like a restart, unless the profile clicks a color
+    /// already showing (`fire_if_present_on_start`, ADR 0007, ADR 0023): then it's armed at once.
+    Start,
+    /// Watching restarted while started: a profile change. The trigger latches, with a fresh
+    /// absence count, whatever `fire_if_present_on_start` says (ADR 0007).
     Restart,
     /// Watching stopped: a Stop, or a self-stop from the trace.
     Stop,
@@ -85,6 +88,8 @@ pub struct JudgeCfg {
     pub timing: bool,
     /// The self-stop the scenario provokes on purpose.
     pub expect_stop: Option<StopCause>,
+    /// The profile's `fire_if_present_on_start`: a manual Start clicks a color already showing.
+    pub fire_on_start: bool,
 }
 
 impl JudgeCfg {
@@ -94,6 +99,7 @@ impl JudgeCfg {
             slack: TriggerCfg::check_gap(period) * 2,
             timing: false,
             expect_stop: None,
+            fire_on_start: false,
         }
     }
 }
@@ -400,7 +406,8 @@ fn episodes(marks: &[Mark], end: Instant, cfg: &JudgeCfg) -> Vec<Episode> {
         let longest = next_drawn.saturating_duration_since(m.at.sent);
         match m.change {
             Change::Draw => {}
-            Change::Restart => (armed, latched, run) = (false, true, None),
+            Change::Start if cfg.fire_on_start => (armed, latched, run) = (true, false, None),
+            Change::Start | Change::Restart => (armed, latched, run) = (false, true, None),
             Change::Stop => (armed, latched, run) = (false, false, None),
         }
         if m.shown == Shown::Absent {
@@ -651,13 +658,22 @@ mod tests {
     }
 
     fn run(spec: &[(u64, Shown, Change)], presses: &[u64], trace: &[Trace]) -> Report {
+        run_cfg(
+            &JudgeCfg::new(G, Some(Duration::from_micros(500))),
+            spec,
+            presses,
+            trace,
+        )
+    }
+
+    fn run_cfg(cfg: &JudgeCfg, spec: &[(u64, Shown, Change)], presses: &[u64], trace: &[Trace]) -> Report {
         let t0 = Instant::now();
         let m = marks(t0, spec);
         let inputs: Vec<Input> = presses.iter().map(|&p| press(t0, p)).collect();
         let end = t0 + Duration::from_millis(spec.last().map_or(0, |s| s.0) + 200);
         judge(
             "test".into(),
-            &JudgeCfg::new(G, Some(Duration::from_micros(500))),
+            cfg,
             &Evidence {
                 marks: &m,
                 end,
@@ -668,8 +684,36 @@ mod tests {
         )
     }
 
-    use Change::{Draw, Restart, Stop};
+    use Change::{Draw, Restart, Start, Stop};
     use Shown::{Absent, Tight, Wide};
+
+    #[test]
+    fn a_start_may_click_a_color_already_showing_but_a_restart_never_does() {
+        let mut cfg = JudgeCfg::new(G, Some(Duration::from_micros(500)));
+        cfg.fire_on_start = true;
+        // Started while the color shows: one click at once. It leaves and comes back: one more.
+        // A profile change while it shows restarts watching: no click.
+        let spec = [
+            (0, Tight, Start),
+            (200, Absent, Draw),
+            (300, Tight, Draw),
+            (400, Tight, Restart),
+            (500, Tight, Stop),
+        ];
+        let r = run_cfg(&cfg, &spec, &[0, 300], &[]);
+        assert_eq!(
+            (r.appearances, r.clicks, r.extra, r.missed),
+            (2, 2, 0, 0),
+            "{}",
+            r.summary()
+        );
+        assert!(r.passed(), "{}", r.summary());
+        // A click on the restart is extra, and no click at the start is a miss.
+        assert_eq!(run_cfg(&cfg, &spec, &[0, 300, 400], &[]).extra, 1);
+        assert_eq!(run_cfg(&cfg, &spec, &[300], &[]).missed, 1);
+        // Without the option, the click at the start is extra (arm-while-present).
+        assert_eq!(run(&spec, &[0, 300], &[]).extra, 1);
+    }
 
     #[test]
     fn one_click_per_appearance() {

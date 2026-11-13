@@ -10,6 +10,12 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 - Phase 6 is complete: the exit run passed on 2026-11-13 (`glint-lab basic --count 10000 --real-desktop`:
   10,000 clicks for 10,000 appearances, 0 extra, 0 missed, p50 0.44 ms, p99 0.72 ms, max 1.05 ms, no X server
   stall; MEASUREMENTS.md §11). Phases 4 and 5 are complete.
+- **Open:** `boundary-noise` failed once, in a full `cargo test` run on 2026-11-13 while the owner's game used
+  about 2.4 CPU cores. Its report wasn't kept. It hasn't come back since, under the same load:
+  - 237 scenario runs from the lab tests;
+  - 1,000 `boundary-noise` appearances at the lowest CPU priority.
+
+  All had 0 extra and 0 missed. Test runs now keep their whole log.
 - Glint copies Pulse's Slint files and never changes Pulse (ADR 0012).
 - Glint is MIT since 2026-11-13 (owner decision; the About dialog shows AboutSlint, ADR 0016).
   All 17 lab scenarios pass in CI (https://github.com/Muk7tm/glint/actions/runs/43426780742) and at full count
@@ -94,7 +100,7 @@ listed in §13 (written as their content appears).
 
 ## Phase 7 — Packaging and release (S/M)
 
-- [ ] Static musl engine, baseline-glibc UI, AppImage, a PKGBUILD, `.deb` and `.rpm`, built locally (ADR 0021).
+- [ ] Static musl engine, baseline-glibc UI, AppImage, a PKGBUILD, `.deb` and `.rpm`, never uploaded (ADR 0021, ADR 0022).
 - [x] `.desktop` file, icon, optional autostart; `install.sh` (owner request, ADR 0021). *(`assets/glint.svg`: a
   white sparkle on a dark tile, readable at 16 px, also the window's icon (`_NET_WM_ICON` 64×64).
   `assets/glint.desktop` passes `desktop-file-validate`. More options → ENGINE has *Start the engine when I
@@ -108,6 +114,13 @@ listed in §13 (written as their content appears).
 - [ ] README, TUNING (compositor settings, rtkit, CPU governor), TROUBLESHOOTING.
 - [ ] `LICENSE` in every package and the AppImage; license line and source URL in `--version` and diagnostics.
 - [ ] 60-minute soak on the owner's machine (ADR 0021).
+- [x] Owner request: *Click if it's already there when I start* (ADR 0023). *(A switch in CLICKING for the
+  profile's `fire_if_present_on_start`, which the trigger and engine already had (ADR 0007): a start you make
+  clicks a color already showing once; restarts still never fire. The note under it says so, and for a mouse
+  click it says to start with the key. The lab's judge now tells a manual start from a restart. The new
+  `fire-on-start` scenario passes: 6 appearances, 6 clicks, 0 on the restart while the color shows.
+  `arm-while-present` and `live-edit` still pass. Checked in a window on Xvfb: the switch writes the profile,
+  and both notes show.)*
 - **Exit:** the v1.0 definition of done below.
 
 **Definition of done for v1.0:** every lab scenario passes 10,000 trials on the owner's machine (ADR 0021);

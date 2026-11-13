@@ -107,6 +107,13 @@ pub const SCENARIOS: &[Scenario] = &[
         run: arm_while_present,
     },
     Scenario {
+        name: "fire-on-start",
+        about: "Start while the color shows, with fire_if_present_on_start: one click at once; a restart never clicks",
+        count: 20,
+        sandbox_only: None,
+        run: fire_on_start,
+    },
+    Scenario {
         name: "live-edit",
         about: "profile and range changes while watching: no click caused by an edit",
         count: 10,
@@ -289,6 +296,7 @@ impl Run {
             Duration::from_millis(u64::from(profile.trigger.rearm_absent_ms)),
             profile.sampling.speed.period(),
         );
+        cfg.fire_on_start = profile.trigger.fire_if_present_on_start;
         // The engine's own check gap, longer under a compositor (ADR 0007).
         let gap = s.state()?.check_gap_us;
         if gap > 0 {
@@ -339,7 +347,7 @@ impl Run {
         let at = settle(s.start()?);
         self.probe.watching();
         self.started = true;
-        self.mark(at, self.showing, Change::Restart);
+        self.mark(at, self.showing, Change::Start);
         Ok(())
     }
 
@@ -755,6 +763,33 @@ fn arm_while_present(s: &mut Session) -> Result<Report, LabError> {
         run.clear(s)?;
         sleep(Duration::from_millis(100));
         run.show(s, GREEN)?;
+        sleep(Duration::from_millis(150));
+        run.stop(s)?;
+        run.clear(s)?;
+        sleep(Duration::from_millis(50));
+    }
+    run.finish(s, title, false)
+}
+
+/// `arm-while-present` with `fire_if_present_on_start` on (ADR 0023). Per round: a start while
+/// the color shows clicks once and no more while it stays; it leaves and comes back, one click;
+/// a profile change while it shows restarts watching, which never clicks.
+fn fire_on_start(s: &mut Session) -> Result<Report, LabError> {
+    let n = s.count(20);
+    let title = s.title("fire-on-start", n);
+    let mut profile = s.profile();
+    profile.trigger.fire_if_present_on_start = true;
+    let mut run = Run::begin(s, &profile, Duration::ZERO)?;
+    for _ in 0..n {
+        run.show(s, GREEN)?;
+        run.start(s)?;
+        sleep(Duration::from_millis(250));
+        run.clear(s)?;
+        sleep(Duration::from_millis(100));
+        run.show(s, GREEN)?;
+        sleep(Duration::from_millis(150));
+        // Every profile change bumps the epoch, so the same profile again is a real restart.
+        run.edit(s, &profile)?;
         sleep(Duration::from_millis(150));
         run.stop(s)?;
         run.clear(s)?;
