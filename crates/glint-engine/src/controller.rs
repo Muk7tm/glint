@@ -1,18 +1,45 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The controller (PLAN §4.2): IPC, settings and profiles, lookup-table builds, X connection C
-//! (monitors, windows, focus, hotkeys, picking). It is the only thread that changes what the hot
-//! thread does, through [`crate::hot::HotHandle`].
+//! The controller (PLAN §4.2): IPC, settings and profiles, lookup-table builds, monitors and,
+//! later, windows and hotkeys on X connection C. It is the only thread that changes what the hot
+//! thread does, through [`HotHandle`], and it never waits on a client: each client has a bounded
+//! outbound queue, and a client that stops reading loses telemetry first, then its connection.
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::collections::{BTreeMap, HashMap};
+use std::io::{BufReader, Write};
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use glint_core::Lut;
+use glint_core::color::oklab::Oklch;
 use glint_core::pattern::PatternError;
-use glint_core::profile::{ActionKind, ClickAt, Modifier, Profile};
+use glint_core::profile::{ActionKind, ClickAt, Modifier, Profile, TargetMode};
+use glint_core::settings::{ClosePolicy, Settings};
+use glint_core::validate::{self, Issue};
+use glint_core::{Lut, Rgb};
+use glint_ipc::{
+    CapsInfo, ClientKind, Envelope, Event, MAX_CLASSIFY, PROTOCOL, Phase, Request, SessionInfo, StateSnapshot,
+    TargetInfo, TargetKind, TelemetrySnapshot,
+};
+use glint_x11::caps::Caps;
+use glint_x11::env::LocalDisplay;
 use glint_x11::inject::{Action, Input, MAX_MODIFIERS};
 use glint_x11::keymap::{Keymap, keysym};
+use glint_x11::monitors::{self, Monitor};
 
-use crate::hot::CompiledProfile;
+use crate::hot::{CompiledProfile, HotHandle, Preview, StopReason};
+use crate::lifecycle::Emergency;
+use crate::telemetry::{Notice, Stats};
+
+/// How often the controller sends telemetry and live updates and tidies up.
+const TICK: Duration = Duration::from_millis(20);
+/// Each client's outbound queue (§10).
+const OUTBOX: usize = 256;
+/// After an emergency stop, Start is ignored this long, so a bouncing key can't restart (§9).
+const EMERGENCY_HOLDOFF: Duration = Duration::from_millis(500);
+/// `fired` events are coalesced to at most 20 a second (§10).
+const FIRED_EVERY: Duration = Duration::from_millis(50);
 
 #[derive(Debug, thiserror::Error)]
 pub enum CompileError {
@@ -67,13 +94,662 @@ pub fn compile(
     })
 }
 
-/// Every keycode a profile's action could hold, for the emergency and defensive releases (C10).
-pub fn action_keycodes(profile: &Profile, keymap: &Keymap) -> Vec<u8> {
+/// Every keycode the given profiles' actions could hold, plus every modifier key, for the
+/// emergency and defensive releases (C10).
+pub fn release_keycodes<'a>(profiles: impl IntoIterator<Item = &'a Profile>, keymap: &Keymap) -> Vec<u8> {
     let mut out = keymap.modifier_keycodes();
-    if let Some(k) = &profile.action.key {
-        out.push(k.keycode);
-    }
+    out.extend(
+        profiles
+            .into_iter()
+            .filter_map(|p| p.action.key.as_ref())
+            .map(|k| k.keycode),
+    );
     out.sort_unstable();
     out.dedup();
     out
+}
+
+pub type ClientId = u64;
+
+/// Why a profile was refused: the message and the field it belongs to.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Rejected {
+    pub message: String,
+    pub field: Option<String>,
+}
+
+impl From<Rejected> for Event {
+    fn from(r: Rejected) -> Self {
+        Event::error("invalid", r.message, r.field)
+    }
+}
+
+/// What the controller thread acts on.
+pub enum Command {
+    Connected {
+        client: ClientId,
+        outbox: SyncSender<String>,
+    },
+    Request {
+        client: ClientId,
+        id: Option<u64>,
+        request: Request,
+    },
+    Malformed {
+        client: ClientId,
+        message: String,
+    },
+    Disconnected {
+        client: ClientId,
+    },
+    Notice(Notice),
+    Signal(i32),
+}
+
+/// Accepts connections from the same user only (§10) and turns each client's lines into
+/// [`Command`]s. Each client gets a reader thread and a writer thread.
+pub fn spawn_listener(listener: UnixListener, commands: Sender<Command>) -> std::io::Result<()> {
+    let next = AtomicU64::new(1);
+    std::thread::Builder::new().name("glintd-ipc".into()).spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let same_user =
+                rustix::net::sockopt::socket_peercred(&stream).is_ok_and(|c| c.uid == rustix::process::getuid());
+            if same_user {
+                accept(stream, next.fetch_add(1, Ordering::Relaxed), &commands);
+            }
+        }
+    })?;
+    Ok(())
+}
+
+fn accept(stream: UnixStream, client: ClientId, commands: &Sender<Command>) {
+    let (Ok(mut writer), Ok(closer)) = (stream.try_clone(), stream.try_clone()) else {
+        return;
+    };
+    let (outbox, lines) = mpsc::sync_channel::<String>(OUTBOX);
+    if commands.send(Command::Connected { client, outbox }).is_err() {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("glintd-client-w".into())
+        .spawn(move || {
+            for line in lines {
+                if writer.write_all(line.as_bytes()).is_err() {
+                    break;
+                }
+            }
+            let _ = writer.shutdown(std::net::Shutdown::Both);
+        });
+    let commands = commands.clone();
+    let _ = std::thread::Builder::new()
+        .name("glintd-client-r".into())
+        .spawn(move || {
+            let mut reader = BufReader::new(stream);
+            loop {
+                match glint_ipc::read_line(&mut reader) {
+                    Ok(Some(line)) if line.trim().is_empty() => {}
+                    Ok(Some(line)) => {
+                        let cmd = match serde_json::from_str::<Envelope<Request>>(&line) {
+                            Ok(env) => Command::Request {
+                                client,
+                                id: env.id,
+                                request: env.body,
+                            },
+                            Err(e) => Command::Malformed {
+                                client,
+                                message: e.to_string(),
+                            },
+                        };
+                        if commands.send(cmd).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(None) | Err(_) => break,
+                }
+            }
+            let _ = closer.shutdown(std::net::Shutdown::Both);
+            let _ = commands.send(Command::Disconnected { client });
+        });
+}
+
+struct Client {
+    outbox: SyncSender<String>,
+    kind: Option<ClientKind>,
+    detached: bool,
+    telemetry_every: Option<Duration>,
+    live_every: Option<Duration>,
+    last_telemetry: Instant,
+    last_live: Instant,
+}
+
+/// Everything the controller owns.
+pub struct Controller {
+    pub display: LocalDisplay,
+    pub caps: Caps,
+    pub compositor: bool,
+    pub keymap: Keymap,
+    pub monitors: Vec<Monitor>,
+    pub hot: HotHandle,
+    pub preview: triple_buffer::Output<Preview>,
+    pub stats: Arc<Mutex<Stats>>,
+    pub emergency: Arc<Emergency>,
+    pub settings: Settings,
+    pub profiles: BTreeMap<String, Profile>,
+    pub active: String,
+    pub lut: Arc<Lut>,
+    pub commands: Receiver<Command>,
+    pub pool: rayon::ThreadPool,
+    revision: u64,
+    started: bool,
+    last_stop: Option<String>,
+    start_blocked_until: Option<Instant>,
+    clients: HashMap<ClientId, Client>,
+    fired: Option<(u64, u32)>,
+    last_fired: Instant,
+    quit: bool,
+}
+
+impl Controller {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        display: LocalDisplay,
+        caps: Caps,
+        compositor: bool,
+        keymap: Keymap,
+        monitors: Vec<Monitor>,
+        hot: HotHandle,
+        preview: triple_buffer::Output<Preview>,
+        stats: Arc<Mutex<Stats>>,
+        emergency: Arc<Emergency>,
+        settings: Settings,
+        profiles: BTreeMap<String, Profile>,
+        active: String,
+        lut: Arc<Lut>,
+        commands: Receiver<Command>,
+        pool: rayon::ThreadPool,
+    ) -> Self {
+        Self {
+            display,
+            caps,
+            compositor,
+            keymap,
+            monitors,
+            hot,
+            preview,
+            stats,
+            emergency,
+            settings,
+            profiles,
+            active,
+            lut,
+            commands,
+            pool,
+            revision: 1,
+            started: false,
+            last_stop: None,
+            start_blocked_until: None,
+            clients: HashMap::new(),
+            fired: None,
+            last_fired: Instant::now(),
+            quit: false,
+        }
+    }
+
+    /// Runs until `quit` or a stop signal.
+    pub fn run(&mut self) {
+        let mut last_tick = Instant::now();
+        while !self.quit {
+            match self.commands.recv_timeout(TICK) {
+                Ok(cmd) => self.handle(cmd),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+            if last_tick.elapsed() >= TICK {
+                last_tick = Instant::now();
+                self.tick();
+            }
+        }
+        self.broadcast(Event::Bye);
+        self.clients.clear();
+    }
+
+    /// Starts watching with the active profile, if it can (§4.3 "never on its own": callers are
+    /// a Start request, a hotkey or `--start-on-launch`).
+    pub fn start(&mut self) -> Event {
+        if self.started {
+            return Event::State(self.state());
+        }
+        if self.start_blocked_until.is_some_and(|t| Instant::now() < t) {
+            return Event::error(
+                "cannot_start",
+                "Emergency stop: Start is ignored for half a second.",
+                None,
+            );
+        }
+        let profile = self.active_profile();
+        if let Some(why) = profile.start_blocker() {
+            return Event::error("cannot_start", why, None);
+        }
+        if profile.target.mode == TargetMode::Window {
+            return Event::error(
+                "cannot_start",
+                "Watching a window isn't available yet; use the screen center.",
+                Some("target.mode".into()),
+            );
+        }
+        let origin = match self.origin(&profile) {
+            Ok(o) => o,
+            Err(issue) => return Event::error("cannot_start", issue.message, Some(issue.field)),
+        };
+        self.hot.start(origin, true);
+        self.started = true;
+        self.last_stop = None;
+        Event::State(self.state())
+    }
+
+    /// Stops watching and releases input; `reason` is shown as the last stop.
+    pub fn stop(&mut self, reason: Option<String>) {
+        self.hot.stop();
+        if self.started {
+            self.last_stop = reason;
+        }
+        self.started = false;
+    }
+
+    pub fn state(&self) -> StateSnapshot {
+        let profile = self.active_profile();
+        let control = self.hot.control();
+        let monitor = monitors::pick(&self.monitors, &profile.target.monitor).map(|m| m.name.clone());
+        StateSnapshot {
+            started: self.started,
+            phase: match (self.started, control.gate) {
+                (false, _) => Phase::Stopped,
+                (true, true) => Phase::Watching,
+                (true, false) => Phase::Paused,
+            },
+            target: TargetInfo {
+                kind: match profile.target.mode {
+                    TargetMode::Screen => TargetKind::Screen,
+                    TargetMode::Window => TargetKind::Window,
+                },
+                name: match profile.target.mode {
+                    TargetMode::Screen => monitor.unwrap_or_default(),
+                    TargetMode::Window => profile.target.window.class.clone(),
+                },
+            },
+            backend: "screen".into(),
+            checks_per_sec: profile.sampling.speed.checks_per_second(),
+            profile: profile.name.clone(),
+            revision: self.revision,
+            last_stop: self.last_stop.clone(),
+            cannot_start: profile.start_blocker().map(str::to_owned),
+        }
+    }
+
+    fn active_profile(&self) -> Profile {
+        self.profiles
+            .get(&self.active)
+            .cloned()
+            .unwrap_or_else(|| Profile::new(self.active.clone()))
+    }
+
+    /// Where the capture rectangle goes for `profile` on its monitor (§5.1).
+    fn origin(&self, profile: &Profile) -> Result<(i16, i16), Issue> {
+        let monitor = monitors::pick(&self.monitors, &profile.target.monitor).ok_or_else(|| {
+            Issue::new(
+                "target.monitor",
+                format!("There's no monitor named {:?}.", profile.target.monitor),
+            )
+        })?;
+        let pattern = profile
+            .pattern()
+            .map_err(|e| Issue::new("sampling.pattern", e.to_string()))?;
+        let rect = validate::placement(
+            &pattern,
+            monitor.rect,
+            (profile.target.offset.x, profile.target.offset.y),
+        )?;
+        Ok((rect.x as i16, rect.y as i16))
+    }
+
+    /// The watched spot in root coordinates, for *Click at: Watched spot*.
+    fn watched_spot(&self, profile: &Profile) -> (i16, i16) {
+        match monitors::pick(&self.monitors, &profile.target.monitor) {
+            Some(m) => {
+                let (x, y) = m.rect.anchor();
+                (
+                    (x + profile.target.offset.x) as i16,
+                    (y + profile.target.offset.y) as i16,
+                )
+            }
+            None => (0, 0),
+        }
+    }
+
+    /// Validates, compiles and publishes a profile; the hot thread restarts watching with it,
+    /// so a live edit can't click (§7 #8).
+    pub fn apply_profile(&mut self, profile: Profile) -> Result<u64, Rejected> {
+        let report = validate::profile(&profile);
+        let keys = validate::action_against_hotkeys(&profile.action, &self.settings.hotkeys);
+        if let Some(issue) = report.errors.into_iter().chain(keys.errors).next() {
+            return Err(Rejected {
+                message: issue.message,
+                field: Some(issue.field),
+            });
+        }
+        let rules = profile.rules();
+        let lut = Arc::new(self.pool.install(|| Lut::build(&rules)));
+        let compiled =
+            compile(&profile, &self.keymap, Arc::clone(&lut), self.watched_spot(&profile)).map_err(|e| Rejected {
+                message: e.to_string(),
+                field: None,
+            })?;
+        let new_origin = self.origin(&profile);
+        self.hot.set_profile(compiled);
+        self.lut = lut;
+        self.revision += 1;
+        self.active = profile.name.clone();
+        self.profiles.insert(profile.name.clone(), profile);
+        self.emergency
+            .set_keycodes(release_keycodes(self.profiles.values(), &self.keymap));
+        if self.started {
+            match new_origin {
+                Ok(origin) => self.hot.restart(origin),
+                Err(issue) => self.stop(Some(issue.message)),
+            }
+        }
+        Ok(self.revision)
+    }
+
+    fn handle(&mut self, cmd: Command) {
+        match cmd {
+            Command::Connected { client, outbox } => {
+                let now = Instant::now();
+                self.clients.insert(
+                    client,
+                    Client {
+                        outbox,
+                        kind: None,
+                        detached: false,
+                        telemetry_every: None,
+                        live_every: None,
+                        last_telemetry: now,
+                        last_live: now,
+                    },
+                );
+            }
+            Command::Request { client, id, request } => {
+                let before = self.state();
+                let reply = self.request(client, request);
+                self.send(client, id, reply);
+                let after = self.state();
+                if after != before {
+                    self.broadcast(Event::State(after));
+                }
+            }
+            Command::Malformed { client, message } => {
+                self.send(client, None, Event::error("malformed", message, None));
+            }
+            Command::Disconnected { client } => {
+                if let Some(c) = self.clients.remove(&client) {
+                    // A UI that vanished without detaching: stop watching unless the policy says to
+                    // keep running (§4.3). Other clients never stop the engine by leaving (L2).
+                    if c.kind == Some(ClientKind::Ui)
+                        && !c.detached
+                        && self.settings.close_policy != ClosePolicy::KeepRunning
+                        && self.started
+                    {
+                        self.stop(Some("The Glint window closed.".into()));
+                        self.broadcast(Event::State(self.state()));
+                    }
+                }
+            }
+            Command::Notice(n) => self.notice(n),
+            Command::Signal(_) => {
+                self.stop(None);
+                self.quit = true;
+            }
+        }
+    }
+
+    fn request(&mut self, client: ClientId, request: Request) -> Event {
+        match request {
+            Request::Hello {
+                protocol, client: kind, ..
+            } => {
+                if protocol != PROTOCOL {
+                    return Event::error(
+                        "protocol",
+                        format!("This engine speaks protocol {PROTOCOL}, not {protocol}. Restart the engine."),
+                        None,
+                    );
+                }
+                if let Some(c) = self.clients.get_mut(&client) {
+                    c.kind = Some(kind);
+                }
+                Event::HelloAck {
+                    protocol: PROTOCOL,
+                    engine_version: env!("CARGO_PKG_VERSION").into(),
+                    caps: CapsInfo {
+                        xtest: self.caps.xtest.to_string(),
+                        shm: self.caps.shm.is_some(),
+                        damage: self.caps.damage.is_some(),
+                        composite: self.caps.composite.is_some(),
+                        randr: self.caps.randr.map(|v| v.to_string()),
+                        xi2: self.caps.xinput.map(|v| v.to_string()),
+                    },
+                    session: SessionInfo {
+                        display: self.display.canonical(),
+                        xwayland: self.caps.xwayland || glint_x11::env::wayland_session(),
+                        compositor: self.compositor.then(|| "running".into()),
+                        realtime: "off".into(),
+                    },
+                }
+            }
+            Request::GetState => Event::State(self.state()),
+            Request::Subscribe { telemetry_hz, live_hz } => {
+                let every = |hz: u8, max: u8| (hz > 0).then(|| Duration::from_secs(1) / u32::from(hz.min(max)));
+                if let Some(c) = self.clients.get_mut(&client) {
+                    c.telemetry_every = every(telemetry_hz, 10);
+                    c.live_every = every(live_hz, 20);
+                }
+                Event::State(self.state())
+            }
+            Request::SetProfile { profile } => match self.apply_profile(*profile) {
+                Ok(rev) => Event::ProfileApplied { rev },
+                Err(e) => e.into(),
+            },
+            Request::GetProfile { name } => {
+                let name = name.unwrap_or_else(|| self.active.clone());
+                match self.profiles.get(&name) {
+                    Some(p) => Event::Profile {
+                        profile: Box::new(p.clone()),
+                    },
+                    None => Event::error("no_profile", format!("There's no profile named {name:?}."), None),
+                }
+            }
+            Request::UseProfile { name } => match self.profiles.get(&name).cloned() {
+                Some(p) => match self.apply_profile(p) {
+                    Ok(_) => Event::State(self.state()),
+                    Err(e) => e.into(),
+                },
+                None => Event::error("no_profile", format!("There's no profile named {name:?}."), None),
+            },
+            Request::ListProfiles => Event::Profiles {
+                names: self.profiles.keys().cloned().collect(),
+                active: self.active.clone(),
+            },
+            Request::SetSettings { settings } => {
+                let report = validate::settings(&settings);
+                let keys = validate::action_against_hotkeys(&self.active_profile().action, &settings.hotkeys);
+                match report.errors.into_iter().chain(keys.errors).next() {
+                    Some(issue) => Event::error("invalid", issue.message, Some(issue.field)),
+                    None => {
+                        self.settings = *settings;
+                        Event::SettingsApplied
+                    }
+                }
+            }
+            Request::Start => self.start(),
+            Request::Stop => {
+                self.stop(None);
+                Event::State(self.state())
+            }
+            Request::Toggle => {
+                if self.started {
+                    self.stop(None);
+                    Event::State(self.state())
+                } else {
+                    self.start()
+                }
+            }
+            Request::EmergencyStop => {
+                self.stop(Some("Emergency stop.".into()));
+                let _ = self.emergency.release_everything();
+                self.start_blocked_until = Some(Instant::now() + EMERGENCY_HOLDOFF);
+                Event::State(self.state())
+            }
+            Request::ReleaseAll => match self.emergency.release_everything() {
+                Ok(()) => Event::State(self.state()),
+                Err(e) => Event::error("x11", e.to_string(), None),
+            },
+            Request::SampleCenter => {
+                let preview = *self.preview.read();
+                if preview.verdict.is_none() {
+                    return Event::error(
+                        "not_watching",
+                        "Start watching to sample the color at the watched spot.",
+                        None,
+                    );
+                }
+                let rgb = Rgb::from_u32(preview.rgb);
+                let lch = Oklch::from_rgb(rgb);
+                Event::ColorSampled {
+                    rgb,
+                    oklch: [lch.l as f32, lch.c as f32, lch.h as f32],
+                }
+            }
+            Request::Classify { colors } => {
+                if colors.len() > MAX_CLASSIFY {
+                    return Event::error("too_many", format!("At most {MAX_CLASSIFY} colors at once."), None);
+                }
+                Event::Classified {
+                    verdicts: colors.iter().map(|c| self.lut.class(c.to_u32())).collect(),
+                }
+            }
+            Request::Detach => {
+                if let Some(c) = self.clients.get_mut(&client) {
+                    c.detached = true;
+                }
+                Event::Bye
+            }
+            Request::Quit => {
+                self.stop(None);
+                self.quit = true;
+                Event::Bye
+            }
+            Request::Ping => Event::Pong,
+        }
+    }
+
+    fn notice(&mut self, n: Notice) {
+        match n {
+            Notice::Fired { count, latency } => {
+                self.fired = Some((count, u32::try_from(latency.as_micros()).unwrap_or(u32::MAX)));
+            }
+            Notice::Stopped(reason) => {
+                let why = match reason {
+                    StopReason::SafetyStop => format!(
+                        "Stopped: {} clicks in 1 s — looks like a loop.",
+                        self.active_profile().trigger.max_clicks_per_sec + 1
+                    ),
+                    StopReason::TargetGone => "The watched window was hidden or closed.".into(),
+                    StopReason::CaptureFailed => "Reading the screen failed.".into(),
+                    StopReason::InputFailed => "Sending input failed.".into(),
+                };
+                if self.started {
+                    self.started = false;
+                    self.last_stop = Some(why);
+                    self.broadcast(Event::State(self.state()));
+                }
+            }
+            Notice::MaybeMissed | Notice::Exited => {}
+        }
+    }
+
+    fn tick(&mut self) {
+        self.hot.free_retired();
+        let now = Instant::now();
+        if let Some((count, latency_us)) = self.fired
+            && now.duration_since(self.last_fired) >= FIRED_EVERY
+        {
+            self.fired = None;
+            self.last_fired = now;
+            self.broadcast(Event::Fired { count, latency_us });
+        }
+        let wants_telemetry = self
+            .clients
+            .values()
+            .any(|c| c.telemetry_every.is_some_and(|e| now - c.last_telemetry >= e));
+        let telemetry = wants_telemetry.then(|| {
+            let s = self.stats.lock().map(|s| s.clone()).unwrap_or_default();
+            Event::Telemetry(TelemetrySnapshot {
+                checks_per_sec: s.checks_per_sec,
+                capture_p50_us: s.capture_p50_us,
+                capture_p99_us: s.capture_p99_us,
+                decide_p50_us: s.decide_p50_us,
+                clicks: s.clicks,
+                suppressed: s.suppressed,
+                maybe_missed: s.maybe_missed,
+                stalls: s.stalls,
+                worst_stall_ms: s.worst_stall_ms,
+                dropped: s.dropped,
+            })
+        });
+        let preview = *self.preview.read();
+        let live = preview.verdict.map(|verdict| Event::Live {
+            rgb: Rgb::from_u32(preview.rgb),
+            verdict,
+        });
+        let ids: Vec<ClientId> = self.clients.keys().copied().collect();
+        for id in ids {
+            let Some(c) = self.clients.get_mut(&id) else { continue };
+            let mut out = Vec::new();
+            if let (Some(every), Some(t)) = (c.telemetry_every, &telemetry)
+                && now - c.last_telemetry >= every
+            {
+                c.last_telemetry = now;
+                out.push(t.clone());
+            }
+            if let (Some(every), Some(l)) = (c.live_every, &live)
+                && now - c.last_live >= every
+            {
+                c.last_live = now;
+                out.push(l.clone());
+            }
+            for e in out {
+                self.send(id, None, e);
+            }
+        }
+    }
+
+    fn send(&mut self, client: ClientId, id: Option<u64>, event: Event) {
+        let Some(c) = self.clients.get(&client) else { return };
+        let droppable = matches!(event, Event::Telemetry(_) | Event::Live { .. } | Event::Fired { .. });
+        match c.outbox.try_send(glint_ipc::encode(&Envelope::new(id, event))) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) if droppable => {}
+            Err(_) => {
+                // Not reading, or gone: dropping the queue ends its writer and closes the socket.
+                self.clients.remove(&client);
+            }
+        }
+    }
+
+    fn broadcast(&mut self, event: Event) {
+        let ids: Vec<ClientId> = self.clients.keys().copied().collect();
+        for id in ids {
+            self.send(id, None, event.clone());
+        }
+    }
 }

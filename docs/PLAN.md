@@ -201,7 +201,7 @@ There is no "a pixel changed" event in X11, which is why the default design poll
 
 The hot thread talks to the rest of the engine through three lock-free channels:
 
-- **Control word** (`AtomicU64`): `[armed:1][reserved:15][epoch:16][x:16][y:16]`. X11 coordinates are 16-bit, so the whole sample origin fits. The controller bumps `epoch` whenever watching must restart cleanly: start, target moved or resized, focus regained, profile swapped. The hot thread compares `epoch` once per iteration and re-initializes (§5.5).
+- **Control word** (`AtomicU64`): `[armed:1][gate:1][quit:1][reserved:13][epoch:16][x:16][y:16]` (ADR 0009). `armed` is set only by a manual Start and cleared by every stop, including the hot thread's own; `gate` says whether clicking is allowed right now (the target window is in front, or *Only click in this window* is off); keeping them apart means a focus change can't undo a safety stop. X11 coordinates are 16-bit, so the whole sample origin fits. The controller bumps `epoch` whenever watching must restart cleanly: start, target moved or resized, focus regained, profile swapped. The hot thread compares `epoch` once per iteration and re-initializes (§5.5).
 - **Compiled profile** (`ArcSwap<CompiledProfile>`): the color lookup table, sample pattern, trigger settings, action and pacing period. Reloaded only when `epoch` changes.
 - **Event ring** (`rtrb` single-producer/single-consumer): fixed-size records `{kind, t_ns, a, b}` for fires, suppressions, stalls and errors. When full, the hot thread drops the record and increments a counter; it never waits. A wait-free **triple buffer** carries the latest pixels and verdict for the UI's live swatch.
 
@@ -212,7 +212,7 @@ The hot thread talks to the rest of the engine through three lock-free channels:
 1. Parse arguments; refuse to start without `DISPLAY`.
 2. Take the single-instance lock `$XDG_RUNTIME_DIR/glint/glintd-<display>.lock` with a non-blocking `flock`. If it's taken, exit with code 3 ("already running"); the UI then connects to the running engine.
 3. Open X connections A–D and probe extensions and versions into a capability set. Missing XTest is fatal with a clear message; everything else degrades gracefully.
-4. **Defensive release:** send XTest releases for mouse buttons 1, 2, 3, 8, 9 and the active profile's key. A release for something not held is a harmless no-op, and this un-sticks anything a killed previous engine left pressed.
+4. **Defensive release:** send XTest releases for mouse buttons 1, 2, 3, 8, 9, every modifier key, and the key of every profile (ADR 0009). A release for something not held is a harmless no-op, and this un-sticks anything a killed previous engine left pressed.
 5. Load settings and the active profile (migrating older schemas), and compile the color lookup table.
 6. Create the socket directory (mode 0700) and socket; start the controller, telemetry and hot threads; request real-time priority for the hot thread (§5.6).
 7. Register hotkeys and start window tracking.
@@ -234,7 +234,7 @@ The engine is detached on purpose: when you choose "Keep running", it must not d
 | **Keep running** | UI sends `detach` and exits; engine keeps running with hotkeys active; reopening Glint from the apps menu reconnects |
 | **Quit Glint** (dialog or footer button) | UI sends `quit`; engine stops, releases input, removes its socket; UI exits |
 | Policy **Always keep running** / **Always quit** | No dialog; same as the matching button |
-| UI crashes or is killed (socket closes without `detach`) | Engine keeps running only if the policy is *Always keep running*; otherwise it stops (safe default) |
+| UI crashes or is killed (socket closes without `detach`) | Engine keeps watching only if the policy is *Always keep running*; otherwise it stops watching and releases input (safe default). `glint-ctl` and `glint-lab` never stop it by disconnecting (ADR 0009) |
 | Engine crashes | UI shows "Engine stopped unexpectedly" with **Restart**; the restart runs the defensive release |
 | `SIGTERM`, `SIGINT`, `SIGHUP` to the engine | Graceful stop: release input, clean up, exit 0 |
 | Panic inside the engine | Panic hook releases input on connection D, then aborts |
@@ -250,7 +250,7 @@ Two engines watching the same screen would double every click, so the single-ins
 
 ### 5.1 Where Glint looks
 
-**Screen center.** Monitors come from RandR 1.5 `GetMonitors` (fallbacks: RandR CRTCs, then Xinerama, then the whole root window). You pick a monitor; the default is the primary. "Center of the screen" is the center of that monitor, never of the whole root window, which on a two-monitor setup sits on the seam between them. The center is `(x + w/2, y + h/2)`. With an even width or height the true center falls *between* pixels, so patterns anchor on the 2×2 block around it (§5.3): the anchor pixel is `(x + ⌊w/2⌋, y + ⌊h/2⌋)`, which is the center pixel for an odd size and the pixel just right of and below the true center for an even one; Center 2×2 covers the four pixels around the center, and odd-sized patterns center on the anchor (ADR 0006). An X/Y offset in pixels allows fine-tuning. Monitor changes arrive as RandR notifications and bump the epoch, so a resolution change can't cause a click (R7).
+**Screen center.** Monitors come from RandR 1.5 `GetMonitors` (fallbacks: RandR CRTCs, then Xinerama, then the whole root window). You pick a monitor; the default is the primary, or the first active monitor when none is primary (RandR's primary output can be a disconnected one; ADR 0009). "Center of the screen" is the center of that monitor, never of the whole root window, which on a two-monitor setup sits on the seam between them. The center is `(x + w/2, y + h/2)`. With an even width or height the true center falls *between* pixels, so patterns anchor on the 2×2 block around it (§5.3): the anchor pixel is `(x + ⌊w/2⌋, y + ⌊h/2⌋)`, which is the center pixel for an odd size and the pixel just right of and below the true center for an even one; Center 2×2 covers the four pixels around the center, and odd-sized patterns center on the anchor (ADR 0006). An X/Y offset in pixels allows fine-tuning. Monitor changes arrive as RandR notifications and bump the epoch, so a resolution change can't cause a click (R7).
 
 **Window center.** The target is the application's *client* window (the one carrying `WM_STATE`), not the window manager's frame, so the center is the center of the content and excludes the title bar. Its root-relative position comes from `TranslateCoordinates` and is kept current by the window tracker (§8). The window-buffer backend uses window-relative coordinates instead.
 
@@ -545,6 +545,7 @@ Hotkeys live in the engine, so they keep working with the UI closed, which is wh
 | `subscribe` | `telemetry_hz` (0–10), `live_hz` (0–20) | Streams of `telemetry` and `live` |
 | `set_profile` | `profile` (complete object) | `profile_applied {rev}` or `error {field}` |
 | `use_profile` · `list_profiles` | `name` | `state` · `profiles` |
+| `get_profile` | `name` (optional: the active profile) | `profile {profile}` (added in Phase 2 for `glint-ctl profile show`/`export`, ADR 0009) |
 | `set_settings` | `settings` (close policy, hotkeys, engine options) | `settings_applied` |
 | `start` · `stop` · `toggle` · `emergency_stop` · `release_all` | — | `state` |
 | `pick_window` | — | `pick_started`, then `window_picked` or `pick_cancelled` |
@@ -580,7 +581,7 @@ socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/glint/glintd-0.sock"
 {"type":"get_state"}
 ```
 
-**`glint-ctl`** wraps the protocol: `status`, `start`, `stop`, `toggle`, `panic`, `release-all`, `profile list`, `profile use <name>`, `profile show`, `profile export <name>`, `profile import <file>`, `pick-window`, `sample-center`, `diag`, `lab <scenario> [--count N]`, and `quit`.
+**`glint-ctl`** wraps the protocol: `status`, `start`, `stop`, `toggle`, `panic`, `release-all`, `profile list`, `profile use <name>`, `profile show`, `profile export <name>`, `profile import <file>`, `pick-window`, `sample-center`, `diag`, `lab <scenario> [--count N]`, and `quit`. `release-all` also works when no engine answers: it releases every button and key through XTest directly (ADR 0009).
 
 ---
 

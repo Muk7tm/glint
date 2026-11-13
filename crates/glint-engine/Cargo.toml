@@ -16,16 +16,23 @@ assert_no_alloc.workspace = true
 arc-swap.workspace = true
 clap.workspace = true
 glint-core.workspace = true
+glint-ipc.workspace = true
 glint-x11.workspace = true
+rayon.workspace = true
 rtrb.workspace = true
+rustix = { workspace = true, features = ["net", "process"] }
+serde_json.workspace = true
 signal-hook.workspace = true
 thiserror.workspace = true
 triple_buffer.workspace = true
 x11rb.workspace = true
 
 [dev-dependencies]
+clap.workspace = true
+glint-ctl.workspace = true
 glint-x11 = { workspace = true, features = ["sandbox"] }
 rtrb.workspace = true
+rustix = { workspace = true, features = ["process"] }
 signal-hook.workspace = true
 
 [lints]

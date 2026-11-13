@@ -11,6 +11,13 @@ name = "glint-ctl"
 path = "src/main.rs"
 
 [dependencies]
+clap.workspace = true
+glint-core.workspace = true
+glint-ipc.workspace = true
+glint-x11.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+x11rb.workspace = true
 
 [lints]
 workspace = true

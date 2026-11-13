@@ -4,7 +4,15 @@
 
 use std::process::ExitCode;
 
+use clap::Parser as _;
+use glint_engine::lifecycle::{Options, run};
+
 fn main() -> ExitCode {
-    eprintln!("glintd {}: not implemented yet (Phase 2)", env!("CARGO_PKG_VERSION"));
-    ExitCode::FAILURE
+    match run(Options::parse()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("glintd: {e}");
+            ExitCode::from(e.exit_code())
+        }
+    }
 }

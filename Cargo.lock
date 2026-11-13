@@ -475,6 +475,15 @@ dependencies = [
 [[package]]
 name = "glint-ctl"
 version = "0.1.0"
+dependencies = [
+ "clap",
+ "glint-core",
+ "glint-ipc",
+ "glint-x11",
+ "serde_json",
+ "thiserror",
+ "x11rb",
+]
 
 [[package]]
 name = "glint-engine"
@@ -485,8 +494,13 @@ dependencies = [
  "assert_no_alloc",
  "clap",
  "glint-core",
+ "glint-ctl",
+ "glint-ipc",
  "glint-x11",
+ "rayon",
  "rtrb",
+ "rustix",
+ "serde_json",
  "signal-hook",
  "thiserror",
  "triple_buffer",
@@ -496,6 +510,13 @@ dependencies = [
 [[package]]
 name = "glint-ipc"
 version = "0.1.0"
+dependencies = [
+ "glint-core",
+ "rustix",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "glint-lab"

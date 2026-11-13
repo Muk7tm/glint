@@ -64,3 +64,195 @@ pub fn watch_signals(on_signal: impl Fn(i32) + Send + 'static) -> std::io::Resul
         })?;
     Ok(())
 }
+
+/// `glintd`'s command line.
+#[derive(clap::Parser, Debug, Default)]
+#[command(
+    name = "glintd",
+    version,
+    about = "The Glint engine: watches the screen and clicks (GPL-3.0-or-later)"
+)]
+pub struct Options {
+    /// Start watching as soon as the engine is ready. Without it, the engine waits for Start,
+    /// because watching never starts on its own.
+    #[arg(long)]
+    pub start_on_launch: bool,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StartError {
+    #[error(transparent)]
+    Display(#[from] glint_x11::env::DisplayError),
+    #[error("another engine is already running for display {0}")]
+    AlreadyRunning(String),
+    #[error("connecting to the X server: {0}")]
+    Connect(#[from] x11rb::errors::ConnectError),
+    #[error(transparent)]
+    Wire(#[from] glint_x11::wire::WireError),
+    #[error(transparent)]
+    Caps(#[from] glint_x11::caps::CapsError),
+    #[error(transparent)]
+    Keymap(#[from] glint_x11::keymap::KeymapError),
+    #[error(transparent)]
+    Monitors(#[from] glint_x11::monitors::MonitorError),
+    #[error(transparent)]
+    Format(#[from] glint_x11::format::FormatError),
+    #[error(transparent)]
+    Compile(#[from] crate::controller::CompileError),
+    #[error("the X server has no screen {0}")]
+    NoScreen(u16),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+    #[error("the socket directory {0} belongs to someone else")]
+    ForeignSocketDir(String),
+}
+
+impl StartError {
+    /// `glintd`'s exit code: 3 means "already running" (§4.3), 2 a missing or remote display.
+    pub fn exit_code(&self) -> u8 {
+        match self {
+            Self::AlreadyRunning(_) => 3,
+            Self::Display(_) => 2,
+            _ => 1,
+        }
+    }
+}
+
+/// The engine from start to exit (§4.3).
+pub fn run(options: Options) -> Result<(), StartError> {
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use glint_core::{Lut, Profile, Settings};
+    use glint_x11::capture::getimage::GetImageCapture;
+    use glint_x11::conn::{self, ScreenInfo};
+    use glint_x11::env::LocalDisplay;
+    use glint_x11::format::PixelFormat;
+    use glint_x11::inject::{Action, Injector, Input};
+    use glint_x11::keymap::Keymap;
+    use glint_x11::wire::RawConn;
+    use glint_x11::{caps, monitors};
+
+    use crate::controller::{Command, Controller, compile, release_keycodes, spawn_listener};
+    use crate::hot::HotHandle;
+    use crate::telemetry::{self, Stats};
+
+    // 1. The display; remote displays are refused.
+    let display = LocalDisplay::from_env()?;
+    // 2. One engine per display. The socket check below stands in until the lock (item 6).
+    let socket = prepare_socket(display)?;
+
+    // 3. X connections A–D and the capability probe; missing XTEST is fatal.
+    let c = conn::open(display)?;
+    let caps = caps::probe(&c)?;
+    let (a, setup) = RawConn::connect(display)?;
+    let (b, _) = RawConn::connect(display)?;
+    let screen = ScreenInfo::from_setup(&setup, display.screen).ok_or(StartError::NoScreen(display.screen))?;
+    let keymap = Keymap::fetch(&c)?;
+    let monitors = monitors::list(&c, screen.root, (screen.width, screen.height), caps.randr)?;
+    let compositor = compositor_running(&c, display.screen);
+
+    // 5. Settings and profiles (the store comes with item 6).
+    let settings = Settings::default();
+    let active = settings.active_profile.clone();
+    let profiles = BTreeMap::from([(active.clone(), Profile::new(active.clone()))]);
+
+    // 4. The defensive release: anything a killed engine left pressed (C10).
+    let keycodes = release_keycodes(profiles.values(), &keymap);
+    let mut injector = Injector::new(
+        b,
+        screen.root,
+        caps.xtest_opcode,
+        Action::new(Input::Button(1), Duration::ZERO),
+    )?;
+    injector.release_everything(&keycodes)?;
+    let emergency = Arc::new(Emergency::new(conn::open(display)?, screen.root, keycodes));
+    install_panic_hook(Arc::clone(&emergency));
+
+    // The active profile, compiled on a pool smaller than the machine.
+    let threads = std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1));
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|i| format!("glintd-lut-{i}"))
+        .build()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let profile = &profiles[&active];
+    let lut = Arc::new(pool.install(|| Lut::build(&profile.rules())));
+    let compiled = compile(profile, &keymap, Arc::clone(&lut), (0, 0))?;
+
+    // 6. The socket, then the hot, telemetry, signal and IPC threads.
+    let listener = std::os::unix::net::UnixListener::bind(&socket)?;
+    let fmt = PixelFormat::root(&setup, display.screen.into())?;
+    let capture = GetImageCapture::new(a, screen.root, fmt);
+    let (hot, events, preview) = HotHandle::spawn(Box::new(capture), injector, compiled)?;
+    let stats = Arc::new(Mutex::new(Stats::default()));
+    let (commands, receiver) = mpsc::channel();
+    {
+        let (shared, stats, commands) = (Arc::clone(hot.shared()), Arc::clone(&stats), commands.clone());
+        std::thread::Builder::new()
+            .name("glintd-telemetry".into())
+            .spawn(move || {
+                telemetry::run(events, shared, stats, |n| {
+                    let _ = commands.send(Command::Notice(n));
+                });
+            })?;
+    }
+    {
+        let commands = commands.clone();
+        watch_signals(move |s| {
+            let _ = commands.send(Command::Signal(s));
+        })?;
+    }
+    spawn_listener(listener, commands)?;
+
+    let mut controller = Controller::new(
+        display, caps, compositor, keymap, monitors, hot, preview, stats, emergency, settings, profiles, active, lut,
+        receiver, pool,
+    );
+    // 8. Ready and stopped; watching starts only when asked.
+    if options.start_on_launch
+        && let glint_ipc::Event::Error { message, .. } = controller.start()
+    {
+        eprintln!("glintd: --start-on-launch: {message}");
+    }
+    controller.run();
+    // Dropping the controller stops the hot thread, which releases input before it exits.
+    drop(controller);
+    let _ = std::fs::remove_file(&socket);
+    Ok(())
+}
+
+/// Creates the socket directory (mode 0700, ours only) and clears a stale socket (§10).
+fn prepare_socket(display: glint_x11::env::LocalDisplay) -> Result<std::path::PathBuf, StartError> {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+    let dir = glint_ipc::socket_dir();
+    std::fs::create_dir_all(&dir)?;
+    if std::fs::metadata(&dir)?.uid() != rustix::process::getuid().as_raw() {
+        return Err(StartError::ForeignSocketDir(dir.display().to_string()));
+    }
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    let path = glint_ipc::socket_path(display.number);
+    if path.exists() {
+        if std::os::unix::net::UnixStream::connect(&path).is_ok() {
+            return Err(StartError::AlreadyRunning(display.canonical()));
+        }
+        std::fs::remove_file(&path)?;
+    }
+    Ok(path)
+}
+
+/// A compositor owns the selection `_NET_WM_CM_S<screen>` (§8).
+fn compositor_running(conn: &RustConnection, screen: u16) -> bool {
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    let name = format!("_NET_WM_CM_S{screen}");
+    let Ok(Ok(atom)) = conn.intern_atom(false, name.as_bytes()).map(|c| c.reply()) else {
+        return false;
+    };
+    conn.get_selection_owner(atom.atom)
+        .ok()
+        .and_then(|c| c.reply().ok())
+        .is_some_and(|r| r.owner != x11rb::NONE)
+}
