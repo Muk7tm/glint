@@ -125,8 +125,28 @@ both clients at once). No client can avoid these.
 
 ## 5. Injection (`spike-inject`)
 
-Not measured yet: it injects input, so it may run only inside Xvfb or Xephyr, and neither is installed. The spike
-is built and refuses to run on display `:0`.
+Run inside Xvfb 21.1.26 (`xvfb-run -a -s "-screen 0 1280x720x24"`, display `:99`), because nothing may inject
+into the real desktop before Phase 2's exit. Xvfb is a software X server, so these numbers are the protocol path
+(two client sockets and the server's event delivery), not the NVIDIA desktop; the real-desktop number comes at
+Phase 2's exit. 2,000 trials per event type; time from sending `FakeInput` (with flush) to the event arriving
+on the test window's own connection:
+
+| Event | p50 | p90 | p99 | p99.9 | max |
+| --- | --- | --- | --- | --- | --- |
+| Button press | 6.0 µs | 6.2 µs | 8.0 µs | 64.8 µs | 88.2 µs |
+| Button release | 4.3 µs | 4.5 µs | 17.7 µs | 62.4 µs | 75.6 µs |
+| Key press | 5.9 µs | 6.1 µs | 8.0 µs | 22.9 µs | 87.4 µs |
+| Key release | 5.9 µs | 6.0 µs | 18.5 µs | 23.9 µs | 29.7 µs |
+
+Behavior the engine relies on, all confirmed:
+
+- **Defensive release is harmless.** Releases for buttons 1, 2, 3, 8, 9 and keycodes 8–255 that weren't held
+  produced no events.
+- **Connection D can release what connection B pressed**, for a button and for a key.
+- **`XTestGrabControl(impervious)` is needed.** While another client held a server grab, the impervious injector's
+  press arrived at once; a plain one arrived only after the ungrab (it was held back for the whole 300 ms grab).
+- **A 0 ms hold works.** A press and a release in one flush arrive as press, then release.
+- No stray events after 8,000 timed events.
 
 ## 6. UI (`spike-ui`)
 
