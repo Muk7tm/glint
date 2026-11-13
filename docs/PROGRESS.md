@@ -111,7 +111,18 @@ listed in §13 (written as their content appears).
   `--uninstall` removes it all. Tested into a scratch prefix, and on a hidden Xvfb display: the restart
   replaced the window and engine, or only the engine; "no" left it running; uninstall stopped it; Glint on
   `:0` was untouched.)*
-- [ ] README, TUNING (compositor settings, rtkit, CPU governor), TROUBLESHOOTING.
+- [x] README, TUNING (compositor settings, rtkit, CPU governor), TROUBLESHOOTING. *(`README.md`: what Glint does,
+  the plan's warning about games' rules, `install.sh`, how to use it, one click per appearance, `glint-ctl`,
+  building and testing, the license. `docs/TUNING.md`: the compositor (and what to do on picom, KDE, GNOME and
+  Xfce), rtkit, the CPU governor, the speed presets, pinning and memory locking, measuring.
+  `docs/TROUBLESHOOTING.md`:
+  - stuck input, no click, a late first click;
+  - another engine, *Restart engine*, real-time off;
+  - hotkeys, XWayland, the window-buffer fallback;
+  - Start at login, the latency test;
+  - terminal messages, and where Glint keeps its files.
+
+  Every label, message and default quoted was checked against the code.)*
 - [ ] `LICENSE` in every package and the AppImage; license line and source URL in `--version` and diagnostics.
 - [ ] 60-minute soak on the owner's machine (ADR 0021).
 - [x] Owner request: *Click if it's already there when I start* (ADR 0023). *(A switch in CLICKING for the
