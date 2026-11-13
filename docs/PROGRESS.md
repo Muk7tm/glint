@@ -5,8 +5,9 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 ## Status
 
-- **Active phase:** Phase 4 (UI in Pulse's style), started 2026-11-13. The owner decided against a shared kit:
-  Glint copies Pulse's Slint files and never changes Pulse (ADR 0012). Phase 3 is complete.
+- **Active phase:** none. Phase 4 (UI in Pulse's style) is complete, and Phase 5 waits for the owner's
+  go-ahead. Glint copies Pulse's Slint files and never changes Pulse (ADR 0012). Open question for the owner:
+  keep GPL-3.0-or-later, or switch to MIT under Slint's royalty-free license (AboutSlint + a badge).
   All 17 lab scenarios pass in CI (https://github.com/Muk7tm/glint/actions/runs/43426780742) and at full count
   locally (MEASUREMENTS.md §9).
 - **Repository:** public at https://github.com/Muk7tm/glint (the owner chose GitHub, public, for CI).
@@ -71,7 +72,7 @@ listed in §13 (written as their content appears).
 - [x] Connect to or spawn the engine, handshake, subscriptions, live swatch. *(`client.rs`: a reader thread blocked on the socket and a writer thread, so the window never waits on the engine and wakes only for messages; it starts `glintd` when none answers and reports at once if it exits. The hero button becomes *Restart engine* when the engine is gone. A new `get_settings` request feeds the hotkey and close-policy rows. Checked end to end on Xvfb: the window started its engine, showed an imported profile, Stop while watching, the live swatch "#3BD16F · match", and the restart button after a `kill -9`.)*
 - [x] Close dialog and policies (Ask / Keep running / Quit), engine-crash handling. *(The close button and *Quit Glint* follow the policy; *Keep running* detaches and *Quit Glint* quits the engine, each written before the window exits. Without an engine the hero offers *Restart engine*. The engine now sends the live swatch only while watching, and the window drops it while minimized. Checked on Xvfb with Openbox: Keep running left the engine watching and a new window reconnected to it; Quit Glint ended both; the window used 10–30 ms of CPU per 5 s in every state.)*
 - [x] Color picking with the magnifier, *Sample center*, key picker. *(The engine grabs the pointer with a crosshair and streams 11 × 11 pixels around it, about 30 frames a second; a left click picks, Escape or another button cancels; refused while watching. The window shows the magnifier at ×8 with the center cell outlined. F6 (*Sample center*) and a pick set the color with the chosen shades. The key pickers store X key names, with keycodes from the X keymap. Tested end to end: `glintd.rs` picks, cancels and checks the grab swallows the click; on Xvfb the window picked #3BD16F, captured F9 and `e`, and saved Loose shades and a new hold.)*
-- **Exit:** everything in the main window works without the CLI, and the UI uses about 0% CPU while hidden.
+- **Exit:** everything in the main window works without the CLI, and the UI uses about 0% CPU while hidden. *(Met 2026-11-13: every control checked on Xvfb against a real engine; 10–30 ms of CPU per 5 s in every state; CI green, run 43436946481.)*
 
 ## Phase 5 — Window mode and guards (M)
 
