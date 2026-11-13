@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+# Start at login (More options → Engine): the window writes this to ~/.config/autostart/glintd.desktop
+# with Exec set to the engine's full path, and deletes it when the switch is turned off.
+[Desktop Entry]
+Type=Application
+Name=Glint engine
+Comment=Starts Glint's engine at login. It waits for your start key and never starts watching on its own.
+Exec=glintd
+Icon=glint
+Terminal=false
+X-GNOME-Autostart-enabled=true

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+# An optional alternative to Start at login (PLAN §18), for packages: /usr/lib/systemd/user/glintd.service.
+# It needs DISPLAY and XAUTHORITY in the systemd user environment
+# (systemctl --user import-environment DISPLAY XAUTHORITY, which many X11 sessions already do).
+# Enable with: systemctl --user enable --now glintd.service
+[Unit]
+Description=Glint engine
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/glintd
+Restart=on-failure
+# Exit code 3: another engine already runs on this display, so starting again would only fail again.
+RestartPreventExitStatus=3
+
+[Install]
+WantedBy=graphical-session.target

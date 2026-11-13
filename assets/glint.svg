@@ -1,0 +1,18 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Glint's icon: a glint, a four-point sparkle, on a dark tile in the window's own colors. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2A2A2A"/>
+      <stop offset="1" stop-color="#0A0A0A"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#tile)" stroke="#3A3A3A" stroke-width="2"/>
+  <circle cx="58" cy="70" r="40" fill="url(#glow)"/>
+  <path fill="#FAFAFA" d="M58 24 C65 53 75 63 102 70 C75 77 65 87 58 116 C51 87 41 77 14 70 C41 63 51 53 58 24 Z"/>
+  <path fill="#FAFAFA" fill-opacity="0.8" d="M98 19 C100 27.2 102.8 30 111 32 C102.8 34 100 36.8 98 45 C96 36.8 93.2 34 85 32 C93.2 30 96 27.2 98 19 Z"/>
+</svg>

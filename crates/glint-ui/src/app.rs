@@ -103,6 +103,7 @@ impl App {
         APP.with(|slot| *slot.borrow_mut() = Some(app));
         with(|app| {
             app.refresh();
+            app.show_start_at_login();
             app.geometry
                 .start(slint::TimerMode::Repeated, Duration::from_secs(1), || {
                     with(App::report_geometry)

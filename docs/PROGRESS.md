@@ -5,7 +5,8 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 ## Status
 
-- **Active phase:** none. Phase 7 (packaging and release) is next and waits for the owner's go-ahead.
+- **Active phase:** Phase 7 (packaging and release), started 2026-11-13. v1.0 is checked on the owner's
+  machine, nothing is published, and `install.sh` installs Glint (owner decisions, ADR 0021).
 - Phase 6 is complete: the exit run passed on 2026-11-13 (`glint-lab basic --count 10000 --real-desktop`:
   10,000 clicks for 10,000 appearances, 0 extra, 0 missed, p50 0.44 ms, p99 0.72 ms, max 1.05 ms, no X server
   stall; MEASUREMENTS.md §11). Phases 4 and 5 are complete.
@@ -87,20 +88,29 @@ listed in §13 (written as their content appears).
 
 - [x] rtkit real-time priority, timer slack, prefault and mlock, optional CPU pinning; screen lock over D-Bus. *(`rt.rs`: rtkit makes the hot thread SCHED_RR 10, and puts it back to normal under Max or with `off`; `RLIMIT_RTTIME` with a SIGXCPU fallback; `required` refuses Start without real-time; 1 ns timer slack; pinning to a core; memory locked only with an unlimited `RLIMIT_MEMLOCK`; the LUT build prefaults. `state` reports the priority and CPU, and `glint-ctl status` prints them. The screen lock also follows D-Bus `ActiveChanged` signals. Tested: the kernel shows SCHED_RR 10 on core 0, normal under Max, the other threads normal; a lock on a private D-Bus stops watching. Test sandboxes run with real-time off. No direct `RLIMIT_RTPRIO` path: no safe `sched_setscheduler` (ADR 0017).)*
 - [x] `screen-shm` backend; `damage` backend with its self-healing fallback. *(`screen-shm`: a memfd segment attached on connection C, filled by raw `ShmGetImage` on A; chosen when asked or for patterns over 32×32; identical pixels to the socket on Xvfb; the lab's `basic` passes through it. `damage`: the object lives on connection A, reports are noted in the raw packet loop and cleared before each check, the hot thread sleeps in `poll()` between reports and 10 ms safety checks, the trigger's gap is 15 ms, and three unannounced changes in a minute switch to polling for good with a warning. Opt-in only (ADR 0018). Tested on Xvfb: wakes for changes over the spot only; `basic`, `flicker` and `rapid` pass with it, `rapid` also under picom.)*
-- [x] *More options*: Detection, Color range (shade strips, exclusions, *Record 5 s*, *Check hex*), Engine (diagnostics, latency test, profiles). *(DETECTION: pattern, Must match, checks, Gone after, Min gap, Safety stop, Read from, offset. COLOR RANGE: model and tolerances, shade and hue strips classified by the engine, Also/Never match lists, Check hex, Record 5 s, Sample center. ENGINE: real-time, live read times, a latency test in a test X server, profiles, Copy diagnostics, Import and Export through the desktop's file dialog. New requests `record_palette` and `diagnostics` (`glint-ctl diag` prints the text). Sample center now reads the window's center in window mode, and More options reopens as left (ADR 0019). Checked on Xvfb: every row edits the profile; strips, Check hex, Never match and its removal, a recording, the clipboard, and a 200-run latency test with 0 extra.)*
+- [x] *More options*: Detection, Color range (shade strips, exclusions, *Record 5 s*, *Check hex*), Engine (diagnostics, latency test, profiles). *(DETECTION: pattern, Must match, checks, Gone after, Min gap, Safety stop, Read from, offset. COLOR RANGE: model and tolerances, shade and hue strips classified by the engine, Also/Never match lists, Check hex, Record 5 s, Sample center. ENGINE: real-time, live read times, a latency test in a test X server, profiles, Copy diagnostics, Import and Export through the desktop's file dialog. New requests `record_palette` and `diagnostics` (`glint-ctl diag` prints the text). Sample center now reads the window's center in window mode, and More options reopens as left (ADR 0019). Checked on Xvfb: every row edits the profile; strips, Check hex, Never match and its removal, a recording, the clipboard, and a 200-run latency test with 0 extra. The owner checked Import and Export on their desktop.)*
 - [x] *Capture* hotkey mode. (*Hold to watch* exists since Phase 2, ADR 0013.) *(The hotkeys are grabbed on every lock-key combination, with modifier masks from the server's mapping; the engine gives the keyboard or pointer back the moment a grab fires, so Hold to watch keeps the game's input (ADR 0020). A switch in CLICKING with the trade-off. Tested on Xvfb for F7 and Mouse5, and in the engine with Hold to watch.)*
 - **Exit:** on your hardware, with no compositor running, `glint-lab basic --count 10000` at Balanced shows p99 ≤ 2 ms and max ≤ 10 ms over the trials that didn't coincide with an X server stall (those are listed separately), with 0 extra and 0 missed (ADR 0004). *(Met 2026-11-13 on the owner's desktop (NVIDIA, no compositor): 10,000 clicks for 10,000 appearances, 0 extra, 0 missed, 0 possible misses; p50 0.44 ms, p99 0.72 ms, max 1.05 ms; no X server stall in 99 minutes, so no trial was set apart (MEASUREMENTS.md §11).)*
 
 ## Phase 7 — Packaging and release (S/M)
 
-- [ ] Static musl engine, baseline-glibc UI, AppImage, AUR, `.deb` and `.rpm`.
-- [ ] `.desktop` file, icon, optional autostart.
+- [ ] Static musl engine, baseline-glibc UI, AppImage, a PKGBUILD, `.deb` and `.rpm`, built locally (ADR 0021).
+- [x] `.desktop` file, icon, optional autostart; `install.sh` (owner request, ADR 0021). *(`assets/glint.svg`: a
+  white sparkle on a dark tile, readable at 16 px, also the window's icon (`_NET_WM_ICON` 64×64).
+  `assets/glint.desktop` passes `desktop-file-validate`. More options → ENGINE has *Start the engine when I
+  log in*: it writes `~/.config/autostart/glintd.desktop` with the engine's full path, quoted as the Desktop
+  Entry spec requires, and deletes it when switched off (3 unit tests; switched on and off in a window on
+  Xvfb). `packaging/systemd/glintd.service` doesn't retry exit code 3. `install.sh` builds and installs the
+  four programs, the menu entry and the icon into `~/.local`, re-points Start at login, offers a restart, and
+  `--uninstall` removes it all. Tested into a scratch prefix, and on a hidden Xvfb display: the restart
+  replaced the window and engine, or only the engine; "no" left it running; uninstall stopped it; Glint on
+  `:0` was untouched.)*
 - [ ] README, TUNING (compositor settings, rtkit, CPU governor), TROUBLESHOOTING.
 - [ ] `LICENSE` in every package and the AppImage; license line and source URL in `--version` and diagnostics.
-- [ ] Hardware matrix + 60-minute soak.
+- [ ] 60-minute soak on the owner's machine (ADR 0021).
 - **Exit:** the v1.0 definition of done below.
 
-**Definition of done for v1.0:** every lab scenario passes 10,000 trials on at least two GPU vendors; engine
-response p99 ≤ 2 ms at Balanced and never above 10 ms; zero extra clicks and zero missed appearances; UI idle
-CPU about 0% while hidden; engine CPU at Balanced measured and documented (budget ≤ 10% of one core); every
+**Definition of done for v1.0:** every lab scenario passes 10,000 trials on the owner's machine (ADR 0021);
+engine response p99 ≤ 2 ms at Balanced and never above 10 ms; zero extra clicks and zero missed appearances; UI
+idle CPU about 0% while hidden; engine CPU at Balanced measured and documented (budget ≤ 10% of one core); every
 stuck-input test passes (SIGTERM, SIGINT, panic, SIGKILL + restart).

@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+# The apps-menu entry (PLAN §18). install.sh writes it with Exec set to the window's full path.
+[Desktop Entry]
+Type=Application
+Name=Glint
+GenericName=Color Clicker
+Comment=Click the moment a color appears on screen (X11)
+Exec=glint
+Icon=glint
+Terminal=false
+Categories=Utility;
+Keywords=clicker;autoclicker;color;pixel;trigger;mouse;click;
+StartupNotify=true
+StartupWMClass=glint

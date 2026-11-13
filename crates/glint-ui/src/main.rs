@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 mod app;
+mod autostart;
 mod bind;
 mod client;
 mod keys;
@@ -51,6 +52,7 @@ fn main() -> Result<(), slint::PlatformError> {
     actions.on_choose_recorded(|i| app::with(|a| a.choose_recorded(i)));
     actions.on_sample_for_check(|| app::with(App::sample_for_check));
     actions.on_more_toggled(|| app::with(App::more_toggled));
+    actions.on_start_at_login_toggled(|| app::with(App::start_at_login_toggled));
     actions.on_latency_test(|| app::with(App::latency_test));
     actions.on_use_profile(|i| app::with(|a| a.use_profile(i)));
     actions.on_copy_diagnostics(|| app::with(App::copy_diagnostics));

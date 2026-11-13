@@ -754,6 +754,7 @@ The hero card works exactly like Pulse's: one big button and a status line. **CO
 ┌──────────────────────────────────────────────────────────────┐
 │ ENGINE                                                       │
 │ When closing    ( [Ask]  Keep running  Quit )                │
+│ (○ ) Start the engine when I log in                          │
 │ Real-time       on (rtkit)                                   │
 │ Response        2,000/sec · read p50 0.02, p99 0.40 ms       │
 │ Latency test    [ Run ]  in a test X server                  │
@@ -763,7 +764,7 @@ The hero card works exactly like Pulse's: one big button and a status line. **CO
 └──────────────────────────────────────────────────────────────┘
 ```
 
-The labels are plain words for the settings in §5: *Must match* is `k_enter` (with `k_stay` derived), *Gone after* is `rearm_absent_ms`, *Min gap* is `min_fire_interval_ms`, *Safety stop* is `max_clicks_per_sec`, and *Read from* is the capture backend. Each shade strip is a row of 16 swatches generated around your color and classified by the engine (`classify`): swatches that count are drawn at full color, the rest dimmed to 25%, so you can *see* where your range starts and stops. *Check hex*, a recorded swatch and *Sample center* all put a color in one place, with *Also match* and *Never match* to add it; the latency test runs `glint-lab basic` in a test X server; *Import* and *Export* use the desktop's file dialog (xdg-desktop-portal); *Copy diagnostics* copies the §17 text block (ADR 0019).
+The labels are plain words for the settings in §5: *Must match* is `k_enter` (with `k_stay` derived), *Gone after* is `rearm_absent_ms`, *Min gap* is `min_fire_interval_ms`, *Safety stop* is `max_clicks_per_sec`, and *Read from* is the capture backend. Each shade strip is a row of 16 swatches generated around your color and classified by the engine (`classify`): swatches that count are drawn at full color, the rest dimmed to 25%, so you can *see* where your range starts and stops. *Check hex*, a recorded swatch and *Sample center* all put a color in one place, with *Also match* and *Never match* to add it; the latency test runs `glint-lab basic` in a test X server; *Import* and *Export* use the desktop's file dialog (xdg-desktop-portal); *Copy diagnostics* copies the §17 text block (ADR 0019). *Start the engine when I log in* writes or removes an XDG autostart entry (§18, ADR 0021).
 
 ### 12.5 Close dialog
 
@@ -846,6 +847,7 @@ glint/
 ├── rust-toolchain.toml           stable + rustfmt + clippy + musl target
 ├── deny.toml                     cargo-deny: licenses and advisories
 ├── LICENSE                       MIT text
+├── install.sh                    build and install for the current user, with a menu entry (ADR 0021)
 ├── crates/
 │   ├── glint-core/               pure logic, no I/O, #![forbid(unsafe_code)]
 │   │   ├── src/color/            oklab.rs · hsv.rs · rule.rs · lut.rs
@@ -1060,12 +1062,7 @@ Phase 3 implements every scenario above except `move`, `focus` and `ui-overlap`,
 
 **CI** (GitHub Actions on Ubuntu 24.04, `.github/workflows/ci.yml`; ADR 0010): `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`; `cargo nextest run --workspace` with Xvfb installed, which covers the exhaustive table test (`glint-core` is optimized even in test builds) and the whole Xvfb integration suite, because every engine test and lab scenario starts its own Xvfb and `glintd` (`.config/nextest.toml` runs the exhaustive test alone and at most two sandboxes at a time); an optional job that runs the lab scenarios with `GLINT_LAB_COMPOSITOR=picom`, which starts `picom --backend xrender` on every sandbox; and `cargo deny check` (`deny.toml` allows Slint's `LicenseRef-Slint-Royalty-free-2.0` and no GPL license, so a GPL-only dependency fails the check; ADR 0016). CI checks correctness only and never asserts timing, because shared runners are far too noisy; latency is measured on real hardware.
 
-**Hardware matrix before v1.0:**
-
-- GPUs: Intel integrated (modesetting + glamor), AMD, NVIDIA proprietary.
-- Desktops: no compositor (i3 or Openbox), picom with its glx and xrender backends, KWin on X11, GNOME on Xorg, Xfce with compositing on and off, and your own desktop.
-- Displays: 60, 144 and 240 Hz; two monitors with different refresh rates; 4K at 2× scaling.
-- Power: a laptop on battery with the powersave CPU governor.
+**Hardware before v1.0:** the owner's own machine (NVIDIA proprietary driver, Openbox), with no compositor and with picom's glx and xrender backends (ADR 0021).
 
 **Manual checklist before each release:**
 
@@ -1096,9 +1093,19 @@ Phase 3 implements every scenario above except `move`, `focus` and `ui-overlap`,
 | `glintd`, `glint-ctl`, `glint-lab` | `--target x86_64-unknown-linux-musl`, fully static (pure-Rust X11 and D-Bus) | Any x86_64 Linux with an X server |
 | `glint` (UI) | glibc build on an old baseline (an older-distro container, or `cargo zigbuild --target x86_64-unknown-linux-gnu.2.31`) | Any distribution with a normal X11 desktop |
 | AppImage | All four binaries + `.desktop` file + icon | Portable single file |
-| AUR `glint` / `glint-bin` | PKGBUILD from source / from release binaries | Arch and derivatives |
+| `glint` PKGBUILD (`packaging/aur/`) | Builds from source; install with `makepkg -si` | Arch and derivatives |
 | `.deb` / `.rpm` | `cargo-deb` / `cargo-generate-rpm` | Debian and Ubuntu / Fedora and openSUSE |
+| `install.sh` | Builds from source and installs for the current user into `~/.local` | Any distribution with Rust, a C compiler, pkg-config and fontconfig |
 | aarch64 builds | Same recipes | Later |
+
+Everything is built locally from this repository; nothing is published (ADR 0021).
+
+**`install.sh`** (ADR 0021):
+
+- installs `glint`, `glintd`, `glint-ctl` and `glint-lab` into `~/.local/bin` (or `$PREFIX/bin`);
+- installs the menu entry, with `Exec` set to the window's full path, and the icon;
+- offers to restart a Glint already running on this display;
+- `--uninstall` removes it all and keeps `~/.config/glint`.
 
 **Install layout:** `/usr/bin/glint`, `/usr/bin/glintd`, `/usr/bin/glint-ctl`, `/usr/share/applications/glint.desktop`, `/usr/share/icons/hicolor/scalable/apps/glint.svg`, and optionally `/usr/lib/systemd/user/glintd.service`. The UI looks for the engine next to its own executable first, then on `$PATH`.
 
@@ -1107,22 +1114,34 @@ Phase 3 implements every scenario above except `move`, `focus` and `ui-overlap`,
 **UI runtime libraries** (present on any X11 desktop): libX11, libXcursor, libXrandr, libXi, libxkbcommon and libxkbcommon-x11, fontconfig and freetype. The GPU renderers would add libGL/EGL; the software renderer avoids them.
 
 ```ini
-# glint.desktop
+# glint.desktop (assets/glint.desktop)
 [Desktop Entry]
 Type=Application
 Name=Glint
-Comment=Click the moment a color appears
-Exec=env SLINT_BACKEND=winit-software glint
+GenericName=Color Clicker
+Comment=Click the moment a color appears on screen (X11)
+Exec=glint
 Icon=glint
-Categories=Utility;
-StartupWMClass=glint
 Terminal=false
+Categories=Utility;
+Keywords=clicker;autoclicker;color;pixel;trigger;mouse;click;
+StartupNotify=true
+StartupWMClass=glint
 ```
 
-**Autostart** is off by default and offered under *More options*. The recommended way is XDG autostart: `~/.config/autostart/glintd.desktop` with `Exec=glintd`. A systemd user unit also works, but it needs `DISPLAY` and `XAUTHORITY` in the systemd user environment (`systemctl --user import-environment DISPLAY XAUTHORITY`, which many X11 sessions already do):
+The window selects the software renderer itself (§12.8), so `Exec` needs no `SLINT_BACKEND`. The window uses the same icon (`assets/glint.svg`) as its `Window.icon` (ADR 0021).
+
+**Autostart** is off by default. *More options → ENGINE* offers it as *Start the engine when I log in* (§12.4), through XDG autostart:
+
+- When the switch is on, the window writes `~/.config/autostart/glintd.desktop` from `packaging/autostart/glintd.desktop`.
+- `Exec` is the engine's full path, the same engine the window starts, so it doesn't depend on the session's `PATH`.
+- When the switch is off, the window deletes the file.
+- `install.sh` points an existing entry at the installed engine, and `--uninstall` removes it (ADR 0021).
+
+A systemd user unit also works. It needs `DISPLAY` and `XAUTHORITY` in the systemd user environment (`systemctl --user import-environment DISPLAY XAUTHORITY`, which many X11 sessions already do):
 
 ```ini
-# glintd.service (optional alternative)
+# glintd.service (packaging/systemd/, optional alternative)
 [Unit]
 Description=Glint engine
 PartOf=graphical-session.target
@@ -1131,6 +1150,8 @@ After=graphical-session.target
 [Service]
 ExecStart=/usr/bin/glintd
 Restart=on-failure
+# Exit code 3: another engine already runs on this display.
+RestartPreventExitStatus=3
 
 [Install]
 WantedBy=graphical-session.target
@@ -1204,14 +1225,14 @@ Effort sizes are relative: S is a few days, M about a week or two, L longer, for
 
 ### Phase 7 — Packaging and release (S/M)
 
-- [ ] Static musl engine, baseline-glibc UI, AppImage, AUR, `.deb` and `.rpm`.
-- [ ] `.desktop` file, icon, optional autostart.
+- [ ] Static musl engine, baseline-glibc UI, AppImage, a PKGBUILD, `.deb` and `.rpm`, built locally (ADR 0021).
+- [ ] `.desktop` file, icon, optional autostart; `install.sh` (owner request, ADR 0021).
 - [ ] README, TUNING (compositor settings, rtkit, CPU governor), TROUBLESHOOTING.
 - [ ] `LICENSE` in every package and the AppImage; license line and source URL in `--version` and diagnostics.
-- [ ] Hardware matrix + 60-minute soak.
+- [ ] 60-minute soak on the owner's machine (ADR 0021).
 - **Exit:** the v1.0 definition of done below.
 
-**Definition of done for v1.0:** every lab scenario passes 10,000 trials on at least two GPU vendors; engine response p99 ≤ 2 ms at Balanced and never above 10 ms, measured with no compositor and excluding trials that coincide with an X server stall, which are reported separately (ADR 0004); zero extra clicks and zero missed appearances; UI idle CPU about 0% while hidden; engine CPU at Balanced measured and documented (budget ≤ 10% of one core); every stuck-input test passes (SIGTERM, SIGINT, panic, SIGKILL + restart).
+**Definition of done for v1.0:** every lab scenario passes 10,000 trials on the owner's machine (ADR 0021); engine response p99 ≤ 2 ms at Balanced and never above 10 ms, measured with no compositor and excluding trials that coincide with an X server stall, which are reported separately (ADR 0004); zero extra clicks and zero missed appearances; UI idle CPU about 0% while hidden; engine CPU at Balanced measured and documented (budget ≤ 10% of one core); every stuck-input test passes (SIGTERM, SIGINT, panic, SIGKILL + restart).
 
 ---
 

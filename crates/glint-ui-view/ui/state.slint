@@ -119,6 +119,7 @@ export global Form {
 
     // More options → ENGINE
     in-out property <int> closing-index;
+    in-out property <bool> start-at-login;
     in property <string> realtime-text;
     in property <string> response-text: "not watching";
     in property <bool> latency-running;
@@ -150,6 +151,7 @@ export global Actions {
     callback choose-recorded(int);
     callback sample-for-check();
     // ENGINE
+    callback start-at-login-toggled();
     callback latency-test();
     callback use-profile(int);
     callback copy-diagnostics();

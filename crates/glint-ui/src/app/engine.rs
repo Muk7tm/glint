@@ -13,6 +13,7 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use super::{App, LIVE_HZ, with};
 use crate::bind::thousands;
 use crate::portal::{self, Choose};
+use crate::{autostart, spawn};
 
 /// Appearances in the latency test: about a minute in a test X server.
 const LATENCY_RUNS: u32 = 200;
@@ -46,6 +47,35 @@ impl App {
         self.link.send(self.subscription(LIVE_HZ));
         if open {
             self.link.send(Request::ListProfiles);
+            // The entry may have changed outside Glint, in the desktop's own autostart settings.
+            self.show_start_at_login();
+        }
+    }
+
+    /// Whether the engine starts at login, as the autostart entry says.
+    pub(super) fn show_start_at_login(&self) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let on = autostart::entry_path().is_some_and(|entry| autostart::is_on(&entry));
+        ui.global::<Form>().set_start_at_login(on);
+    }
+
+    /// *Start the engine when I log in* turned on or off: the autostart entry follows, and runs
+    /// the same engine this window starts.
+    pub fn start_at_login_toggled(&mut self) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let form = ui.global::<Form>();
+        let on = form.get_start_at_login();
+        let result = match autostart::entry_path() {
+            Some(entry) => autostart::set(&entry, on, &spawn::engine_path()).map_err(|e| e.to_string()),
+            None => Err("no home folder".to_owned()),
+        };
+        match result {
+            Ok(()) if on => self.toast("Glint's engine will start when you log in.", Tone::Neutral),
+            Ok(()) => self.toast("Glint's engine won't start when you log in.", Tone::Neutral),
+            Err(e) => {
+                form.set_start_at_login(!on);
+                self.toast(&format!("Couldn't change starting at login: {e}."), Tone::Error);
+            }
         }
     }
 

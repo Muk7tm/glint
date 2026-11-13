@@ -25,6 +25,7 @@ plan also updates the affected plan section in the same commit.
 | [0018](0018-damage-backend.md) | The `damage` backend: reports on the hot connection, a 15 ms check gap, opt-in only | Accepted | §5.2, §5.5, §19, §21 |
 | [0019](0019-more-options-panels.md) | More options: what the plan left open about its three panels | Accepted | §10, §12.4, §12.9, §17, §19 |
 | [0020](0020-capture-gives-input-back.md) | Capture mode gives the keyboard or pointer back at once | Accepted | §9, §12.3, §19 |
+| [0021](0021-v1-on-the-owners-machine-and-install-sh.md) | Phase 7: v1.0 is checked on the owner's machine, nothing is published, and `install.sh` installs it | Accepted (owner decisions) | §12.4, §13, §17, §18, §19 |
 
 ## Template
 

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-// More options → ENGINE (PLAN §12.4): the close policy, the hot thread's priority, live response
-// numbers, the latency test, the active profile, diagnostics, and importing or exporting a
-// profile.
+// More options → ENGINE (PLAN §12.4): the close policy, starting at login, the hot thread's
+// priority, live response numbers, the latency test, the active profile, diagnostics, and
+// importing or exporting a profile.
 
 import { Theme } from "../pulse/theme.slint";
-import { Card, Segmented, FieldRow, PButton, Select } from "../pulse/components.slint";
+import { Card, Segmented, FieldRow, PButton, Select, Toggle, Note, Tone } from "../pulse/components.slint";
 import { Form, Actions } from "../state.slint";
 
 component Value inherits Text {
@@ -27,6 +27,22 @@ export component EngineCard inherits Card {
                 Actions.form-changed();
             }
         }
+    }
+
+    // Not an engine setting: the window writes or removes an autostart entry (PLAN §18), so it
+    // works while the engine is away too.
+    Toggle {
+        text: "Start the engine when I log in";
+        checked <=> Form.start-at-login;
+        toggled => {
+            Actions.start-at-login-toggled();
+        }
+    }
+
+    if Form.start-at-login: Note {
+        width: root.width - 2 * Theme.card-padding;
+        message: "It starts without the window and waits for your start key.";
+        tone: Tone.neutral;
     }
 
     FieldRow {
