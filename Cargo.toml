@@ -81,3 +81,10 @@ lto = "fat"
 codegen-units = 1
 debug = "line-tables-only" # readable perf and flamegraph traces
 panic = "abort"            # the engine's panic hook releases input first (§4.3)
+
+# The packages (packaging/build.sh, PLAN §18): the release build without debug info. Function names
+# stay in the symbol table, so a crash's backtrace still names its functions.
+[profile.dist]
+inherits = "release"
+debug = false
+strip = "debuginfo"

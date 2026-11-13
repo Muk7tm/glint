@@ -1,6 +1,7 @@
 [package]
 name = "glint-ui"
-description = "the Glint window (Slint)"
+# Also the packages' summary: this crate carries their metadata (below).
+description = "Click the moment a color appears on screen (X11)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -22,3 +23,61 @@ zbus.workspace = true
 
 [lints]
 workspace = true
+
+# The .deb and .rpm for all of Glint (packaging/build.sh, PLAN §18, ADR 0022): the four programs
+# staged in dist/stage/ (the engine static, the window against the build machine's glibc), the menu
+# entry, the icon, the optional systemd user unit and the license. Paths are relative to this
+# folder. Nothing is uploaded (ADR 0021). The window loads its X11 libraries at run time, so the
+# dependencies name them.
+[package.metadata.deb]
+name = "glint"
+maintainer = "The Glint authors"
+copyright = "The Glint authors"
+license-file = ["../../LICENSE", "0"]
+extended-description = """\
+Glint watches a spot on the screen, or in one window, and clicks or presses a key the moment a \
+chosen color appears there: once per appearance, never twice. It has a window to set it up and \
+an engine that does the watching, and needs an X11 session."""
+section = "utils"
+priority = "optional"
+depends = "libc6 (>= 2.31), libgcc-s1, libfontconfig1, libx11-6, libx11-xcb1, libxcb1, libxcursor1, libxi6, libxrandr2, libxkbcommon-x11-0"
+recommends = "rtkit"
+suggests = "xvfb"
+assets = [
+    ["../../dist/stage/glint", "usr/bin/", "755"],
+    ["../../dist/stage/glintd", "usr/bin/", "755"],
+    ["../../dist/stage/glint-ctl", "usr/bin/", "755"],
+    ["../../dist/stage/glint-lab", "usr/bin/", "755"],
+    ["../../assets/glint.desktop", "usr/share/applications/", "644"],
+    ["../../assets/glint.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["../../packaging/systemd/glintd.service", "usr/lib/systemd/user/", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "glint"
+release = "1"
+summary = "Click the moment a color appears on screen (X11)"
+assets = [
+    { source = "../../dist/stage/glint", dest = "/usr/bin/glint", mode = "755" },
+    { source = "../../dist/stage/glintd", dest = "/usr/bin/glintd", mode = "755" },
+    { source = "../../dist/stage/glint-ctl", dest = "/usr/bin/glint-ctl", mode = "755" },
+    { source = "../../dist/stage/glint-lab", dest = "/usr/bin/glint-lab", mode = "755" },
+    { source = "../../assets/glint.desktop", dest = "/usr/share/applications/glint.desktop", mode = "644" },
+    { source = "../../assets/glint.svg", dest = "/usr/share/icons/hicolor/scalable/apps/glint.svg", mode = "644" },
+    { source = "../../packaging/systemd/glintd.service", dest = "/usr/lib/systemd/user/glintd.service", mode = "644" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/glint/LICENSE", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+glibc = ">= 2.31"
+fontconfig = "*"
+libX11 = "*"
+libX11-xcb = "*"
+libxcb = "*"
+libXcursor = "*"
+libXi = "*"
+libXrandr = "*"
+libxkbcommon-x11 = "*"
+
+[package.metadata.generate-rpm.recommends]
+rtkit = "*"

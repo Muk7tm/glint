@@ -3,3 +3,4 @@
 *.profraw
 perf.data*
 flamegraph.svg
+/dist

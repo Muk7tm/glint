@@ -26,6 +26,7 @@ plan also updates the affected plan section in the same commit.
 | [0019](0019-more-options-panels.md) | More options: what the plan left open about its three panels | Accepted | §10, §12.4, §12.9, §17, §19 |
 | [0020](0020-capture-gives-input-back.md) | Capture mode gives the keyboard or pointer back at once | Accepted | §9, §12.3, §19 |
 | [0021](0021-v1-on-the-owners-machine-and-install-sh.md) | Phase 7: v1.0 is checked on the owner's machine, nothing is published, and `install.sh` installs it | Accepted (owner decisions) | §12.4, §13, §17, §18, §19 |
+| [0022](0022-packaging.md) | Packaging: a static engine built apart from the window, staged files, a Debian 11 build in CI, and the engine copied out of the AppImage | Accepted | §13, §14, §18, §19 |
 
 ## Template
 

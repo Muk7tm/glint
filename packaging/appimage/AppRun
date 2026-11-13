@@ -1,0 +1,17 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Glint's AppImage (PLAN §18): opens the window, or runs another of Glint's programs by name.
+#   Glint-x86_64.AppImage                    opens the window
+#   Glint-x86_64.AppImage glint-ctl status   runs glint-ctl (also glintd and glint-lab)
+# The window copies the engine out before starting it (ADR 0022): this AppImage is mounted at a new
+# path every time, and the engine outlives the window. Run here by name, a program keeps the
+# AppImage mounted itself.
+here="$(dirname "$(readlink -f "$0")")"
+case "${1:-}" in
+    glint | glintd | glint-ctl | glint-lab)
+        name="$1"
+        shift
+        exec "$here/usr/bin/$name" "$@"
+        ;;
+esac
+exec "$here/usr/bin/glint" "$@"

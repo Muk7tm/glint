@@ -233,8 +233,10 @@ main() {
 
     check_build_tools
     say "Building Glint (the first build downloads its dependencies and takes a few minutes)…"
-    (cd "$ROOT" && cargo build --release --locked -p glint-engine -p glint-ui -p glint-ctl -p glint-lab) ||
-        die "the build failed (see above)"
+    # The engine apart from the window: built together, the window's winit would switch on x11rb's
+    # libxcb loading for the engine too, which the engine must never use (PLAN §14).
+    (cd "$ROOT" && cargo build --release --locked -p glint-engine -p glint-ctl -p glint-lab &&
+        cargo build --release --locked -p glint-ui) || die "the build failed (see above)"
 
     install_files
     say "Installed Glint into $BIN_DIR and added it to your apps menu."

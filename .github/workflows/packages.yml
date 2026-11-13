@@ -1,0 +1,83 @@
+# Builds every package in a Debian 11 container, so the window needs no glibc newer than 2.31, and
+# checks what each holds (PLAN §18, ADR 0022). Nothing is uploaded: Glint isn't published (ADR 0021).
+name: Packages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packaging/**"
+      - "assets/**"
+      - "LICENSE"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/*/Cargo.toml"
+      - ".github/workflows/packages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  packages:
+    name: build and check the packages (not uploaded)
+    runs-on: ubuntu-24.04
+    container: debian:11
+    steps:
+      - name: Build tools, the window's libraries, and dpkg-deb and rpm for the checks
+        run: >-
+          apt-get update && apt-get install -y --no-install-recommends
+          ca-certificates curl git build-essential pkg-config libfontconfig-dev
+          binutils file rpm desktop-file-utils
+      - uses: actions/checkout@v7
+      - name: Rust from rust-toolchain.toml, with the musl target
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo-deb and cargo-generate-rpm
+        run: cargo install --locked cargo-deb@3.8.0 cargo-generate-rpm@0.21.1
+      - name: appimagetool
+        run: |
+          curl -fsSL -o /usr/local/bin/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /usr/local/bin/appimagetool
+      - name: Build every package
+        env:
+          # No FUSE in a container: appimagetool, itself an AppImage, unpacks itself instead.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: packaging/build.sh --require
+      - name: Check the window's glibc and what each package holds
+        working-directory: dist
+        run: |
+          set -eu
+          need="$(objdump -T stage/glint | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)"
+          echo "The window needs $need"
+          test "$(printf '%s\n' "$need" GLIBC_2.31 | sort -V | tail -n 1)" = GLIBC_2.31
+          files="usr/bin/glint usr/bin/glintd usr/bin/glint-ctl usr/bin/glint-lab
+            usr/share/applications/glint.desktop usr/share/icons/hicolor/scalable/apps/glint.svg
+            usr/lib/systemd/user/glintd.service"
+          dpkg-deb --info glint_*.deb
+          dpkg-deb --contents glint_*.deb | tee deb.txt
+          for f in $files usr/share/doc/glint/copyright; do grep -q " \./$f\$" deb.txt; done
+          rpm -qip glint-*.rpm
+          rpm -qlp glint-*.rpm | tee rpm.txt
+          for f in $files usr/share/licenses/glint/LICENSE; do grep -qx "/$f" rpm.txt; done
+          ./Glint-*-x86_64.AppImage --appimage-extract > /dev/null
+          for f in $files usr/share/licenses/glint/LICENSE LICENSE glint.desktop glint.svg AppRun; do
+            test -e "squashfs-root/$f" || { echo "missing in the AppImage: $f"; exit 1; }
+          done
+          desktop-file-validate squashfs-root/glint.desktop
+          squashfs-root/AppRun --version
+          squashfs-root/AppRun glintd --version
+          squashfs-root/AppRun glint-ctl --version
+          squashfs-root/AppRun glint-lab --version

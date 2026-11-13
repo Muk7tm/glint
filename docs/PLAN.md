@@ -869,11 +869,12 @@ glint/
 │   │   └── src/                  main.rs · client.rs · spawn.rs · bind.rs
 │   ├── glint-ctl/                lib + bin: glint-ctl
 │   └── glint-lab/                lib + bin: glint-lab (scenarios in its own Xvfb; --real-desktop on request)
-├── assets/                       glint.svg · glint.desktop · metainfo.xml
-├── packaging/                    appimage/ · aur/PKGBUILD · deb/ · rpm/ · systemd/ · autostart/
+├── assets/                       glint.svg · glint.desktop
+├── packaging/                    build.sh · appimage/AppRun · aur/PKGBUILD · systemd/ · autostart/
+│                                 (the .deb and .rpm metadata is in crates/glint-ui/Cargo.toml, ADR 0022)
 ├── docs/                         ARCHITECTURE.md · PROTOCOL.md · MEASUREMENTS.md · TUNING.md
 │                                 TROUBLESHOOTING.md · adr/
-└── .github/workflows/ci.yml
+└── .github/workflows/            ci.yml · packages.yml (builds and checks the packages, uploads nothing)
 ```
 
 Every source file starts with `// SPDX-License-Identifier: MIT`. The files copied from Pulse also name their origin (Pulse, MIT).
@@ -951,6 +952,11 @@ lto = "fat"
 codegen-units = 1
 debug = "line-tables-only"   # readable perf and flamegraph traces
 panic = "abort"              # the engine's panic hook releases input first (§4.3)
+
+[profile.dist]                 # the packages (§18, ADR 0022)
+inherits = "release"
+debug = false
+strip = "debuginfo"            # function names stay, for backtraces
 ```
 
 ```toml
@@ -961,7 +967,7 @@ components = ["rustfmt", "clippy"]
 targets = ["x86_64-unknown-linux-musl"]
 ```
 
-Versions were updated on 2026-11-13 to the then-current majors, except `x11rb`, which stays on 0.13.2, and Slint, which is pinned to Pulse's exact version and features (ADR 0001). Keep `x11rb` free of its `allow-unsafe-code`/libxcb features so the engine stays fully static.
+Versions were updated on 2026-11-13 to the then-current majors, except `x11rb`, which stays on 0.13.2, and Slint, which is pinned to Pulse's exact version and features (ADR 0001). Keep `x11rb` free of its `allow-unsafe-code`/libxcb features so the engine stays fully static. The window's winit switches both on, and Cargo unifies features within one build command, so the engine is always built in a command without the window (ADR 0022).
 
 ---
 
@@ -1090,15 +1096,23 @@ Phase 3 implements every scenario above except `move`, `focus` and `ui-overlap`,
 
 | Artifact | How it's built | Runs on |
 |---|---|---|
-| `glintd`, `glint-ctl`, `glint-lab` | `--target x86_64-unknown-linux-musl`, fully static (pure-Rust X11 and D-Bus) | Any x86_64 Linux with an X server |
-| `glint` (UI) | glibc build on an old baseline (an older-distro container, or `cargo zigbuild --target x86_64-unknown-linux-gnu.2.31`) | Any distribution with a normal X11 desktop |
-| AppImage | All four binaries + `.desktop` file + icon | Portable single file |
+| `glintd`, `glint-ctl`, `glint-lab` | `--target x86_64-unknown-linux-musl --profile dist`, fully static (pure-Rust X11 and D-Bus), in a build command without the window (§14, ADR 0022) | Any x86_64 Linux with an X server |
+| `glint` (UI) | glibc build in CI's Debian 11 container (glibc 2.31); a local build needs the build machine's glibc (ADR 0022) | Any distribution with a normal X11 desktop |
+| AppImage | All four programs, the `.desktop` file, the icon and the license, with an `AppRun` that runs any of them by name | Portable single file |
 | `glint` PKGBUILD (`packaging/aur/`) | Builds from source; install with `makepkg -si` | Arch and derivatives |
-| `.deb` / `.rpm` | `cargo-deb` / `cargo-generate-rpm` | Debian and Ubuntu / Fedora and openSUSE |
+| `.deb` / `.rpm` | `cargo-deb` / `cargo-generate-rpm`, from the programs staged in `dist/stage/` (metadata in `crates/glint-ui/Cargo.toml`) | Debian and Ubuntu / Fedora and openSUSE |
 | `install.sh` | Builds from source and installs for the current user into `~/.local` | Any distribution with Rust, a C compiler, pkg-config and fontconfig |
 | aarch64 builds | Same recipes | Later |
 
-Everything is built locally from this repository; nothing is published (ADR 0021).
+`packaging/build.sh` builds the static programs, the window, the AppImage, the `.deb` and the `.rpm` into `dist/`. It skips a package whose tool is missing, or fails with `--require`. CI's `packages.yml` builds them all in Debian 11 and checks:
+
+- what each package holds;
+- that the window needs no glibc newer than 2.31;
+- that the AppImage's programs run.
+
+Nothing is uploaded or published (ADR 0021, ADR 0022).
+
+**Inside the AppImage**, the window copies the engine to `~/.local/share/glint/<version>/glintd` before starting it, and *Start at login* runs that copy. An AppImage is mounted at a new path every time it runs. The copy gives *Start at login* a path that lasts. The engine also no longer depends on the AppImage staying mounted after its window closes (ADR 0022).
 
 **`install.sh`** (ADR 0021):
 
@@ -1107,11 +1121,23 @@ Everything is built locally from this repository; nothing is published (ADR 0021
 - offers to restart a Glint already running on this display;
 - `--uninstall` removes it all and keeps `~/.config/glint`.
 
-**Install layout:** `/usr/bin/glint`, `/usr/bin/glintd`, `/usr/bin/glint-ctl`, `/usr/share/applications/glint.desktop`, `/usr/share/icons/hicolor/scalable/apps/glint.svg`, and optionally `/usr/lib/systemd/user/glintd.service`. The UI looks for the engine next to its own executable first, then on `$PATH`.
+**Install layout:**
+
+- `/usr/bin/glint`, `/usr/bin/glintd`, `/usr/bin/glint-ctl` and `/usr/bin/glint-lab`, which the latency test needs;
+- `/usr/share/applications/glint.desktop` and `/usr/share/icons/hicolor/scalable/apps/glint.svg`;
+- `/usr/lib/systemd/user/glintd.service`, which stays off until enabled;
+- the license: `/usr/share/licenses/glint/LICENSE`, or `/usr/share/doc/glint/copyright` in the `.deb`.
+
+The UI looks for the engine next to its own executable first, then on `$PATH`.
 
 **License:** every package and the AppImage include the `LICENSE` file (MIT), and `glint --version`, `glintd --version` and `glint-ctl diag` print the license and the source repository URL, so anyone who gets a binary knows where the source lives.
 
-**UI runtime libraries** (present on any X11 desktop): libX11, libXcursor, libXrandr, libXi, libxkbcommon and libxkbcommon-x11, fontconfig and freetype. The GPU renderers would add libGL/EGL; the software renderer avoids them.
+**UI runtime libraries** (present on any X11 desktop):
+
+- loaded at run time: libX11, libX11-xcb, libxcb, libXcursor, libXrandr, libXi and libxkbcommon-x11;
+- linked: fontconfig and glibc.
+
+No dependency detection sees the libraries loaded at run time, so the packages name them (ADR 0022). The GPU renderers would add libGL/EGL; the software renderer avoids them.
 
 ```ini
 # glint.desktop (assets/glint.desktop)
@@ -1225,7 +1251,7 @@ Effort sizes are relative: S is a few days, M about a week or two, L longer, for
 
 ### Phase 7 — Packaging and release (S/M)
 
-- [ ] Static musl engine, baseline-glibc UI, AppImage, a PKGBUILD, `.deb` and `.rpm`, built locally (ADR 0021).
+- [ ] Static musl engine, baseline-glibc UI, AppImage, a PKGBUILD, `.deb` and `.rpm`, never uploaded (ADR 0021, ADR 0022).
 - [ ] `.desktop` file, icon, optional autostart; `install.sh` (owner request, ADR 0021).
 - [ ] README, TUNING (compositor settings, rtkit, CPU governor), TROUBLESHOOTING.
 - [ ] `LICENSE` in every package and the AppImage; license line and source URL in `--version` and diagnostics.

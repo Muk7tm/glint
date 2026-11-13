@@ -7,16 +7,19 @@
 ## Context
 
 Phase 7 (§19) packages Glint and checks the v1.0 definition of done. The plan assumed:
+
 - a hardware matrix of other GPUs, desktops and displays (§17), and "at least two GPU vendors" in the definition
   of done;
 - published packages: AUR `glint` and `glint-bin`, the second built from release binaries (§18).
 
 At the start of Phase 7 the owner decided:
+
 - no testing on other graphics cards and no publishing of any kind (no AUR uploads, no releases). They want
   neither, and asked that neither be raised again;
 - an `install.sh` like Pulse's, which installs Glint and adds it to the apps menu.
 
 Building §19's second item also showed:
+
 - **The window picks its renderer itself.** `glint-ui/src/main.rs` selects winit with the software renderer
   (§12.8), so the menu entry needs no `env SLINT_BACKEND=winit-software`.
 - **`Exec=glintd` in the autostart entry needs the engine on the session's `PATH`.** `~/.local/bin` often
@@ -29,7 +32,8 @@ Building §19's second item also showed:
 - **v1.0 is judged on the owner's machine** (NVIDIA proprietary driver, Openbox), with no compositor and with
   picom's xrender and glx backends. Every other point of the definition of done stays.
 - **Nothing is published.**
-  - Packages are built and checked locally.
+  - Packages are built from this repository, locally and in CI to check them, and never uploaded
+    (ADR 0022).
   - There is no `glint-bin`, because it needs release binaries.
   - `packaging/aur/PKGBUILD` builds from source, for `makepkg -si`.
 - **`install.sh`** at the repository root, modelled on Pulse's:
