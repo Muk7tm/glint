@@ -11,6 +11,7 @@ export component ClickingCard inherits Card {
     FieldRow {
         label: "Click";
         error: Form.err-key;
+        warning: Form.key-hint;
         Select {
             width: Form.click-index == 5 ? 128px : 160px;
             name: "What to click";

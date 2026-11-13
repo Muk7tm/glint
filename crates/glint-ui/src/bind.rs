@@ -19,7 +19,7 @@ const BUTTONS: [MouseButton; 5] = [
     MouseButton::Back,
     MouseButton::Forward,
 ];
-const KEYBOARD_KEY: i32 = BUTTONS.len() as i32;
+pub const KEYBOARD_KEY: i32 = BUTTONS.len() as i32;
 const SHADES: [ShadePreset; 3] = [ShadePreset::Tight, ShadePreset::Normal, ShadePreset::Loose];
 const CLOSING: [ClosePolicy; 3] = [ClosePolicy::Ask, ClosePolicy::KeepRunning, ClosePolicy::Quit];
 
@@ -172,11 +172,6 @@ pub fn hero(f: &Fields, started: bool, cannot_start: Option<&str>) -> Hero {
     }
 }
 
-/// Keys offered in the key dropdowns until the key picker (item 5) can capture any key.
-fn key_names() -> Vec<String> {
-    (1..=12).map(|n| format!("F{n}")).collect()
-}
-
 fn names(list: &[String]) -> ModelRc<SharedString> {
     ModelRc::new(VecModel::from(list.iter().map(SharedString::from).collect::<Vec<_>>()))
 }
@@ -196,7 +191,7 @@ pub fn apply(ui: &AppWindow, f: &Fields, hero: &Hero) {
     form.set_shades_index(f.shades);
     form.set_watch_index(f.watch);
     form.set_click_index(f.click);
-    let keys = key_names();
+    let keys = crate::keys::names();
     form.set_key_names(names(&keys));
     form.set_key_name(f.key_name.as_str().into());
     form.set_key_index(index_of(&keys, &f.key_name));

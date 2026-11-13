@@ -6,6 +6,7 @@
 mod app;
 mod bind;
 mod client;
+mod keys;
 mod spawn;
 
 use glint_ui_view::{Actions, AppWindow, Tone};
@@ -39,6 +40,10 @@ fn main() -> Result<(), slint::PlatformError> {
     let actions = ui.global::<Actions>();
     actions.on_main_button(|| app::with(App::main_button));
     actions.on_form_changed(|| app::with(App::form_changed));
+    actions.on_key_captured(|text| app::with(|a| a.key_captured(&text)));
+    actions.on_key_chosen(|name| app::with(|a| a.key_chosen(&name)));
+    actions.on_hotkey_captured(|text| app::with(|a| a.hotkey_captured(&text)));
+    actions.on_hotkey_chosen(|name| app::with(|a| a.hotkey_chosen(&name)));
     actions.on_pick_color(|| app::with(|a| a.toast("Picking a color comes next.", Tone::Neutral)));
     actions.on_pick_window(|| {
         app::with(|a| {

@@ -12,8 +12,11 @@ use glint_ipc::{Event, Phase, Request, StateSnapshot};
 use glint_ui_view::{AppWindow, Form, Tone, Ui};
 use slint::ComponentHandle;
 
+use glint_core::profile::{ActionKind, KeySpec};
+
 use crate::bind::{self, Fields};
 use crate::client::{FromEngine, Link};
+use crate::keys::{self, Resolver};
 
 /// How long a message stays in the hero card's message line.
 const TOAST: Duration = Duration::from_secs(5);
@@ -35,6 +38,9 @@ pub struct App {
     settings: Settings,
     state: StateSnapshot,
     shown: Fields,
+    /// *Keyboard key* is chosen but has no key yet: nothing is sent until it has one.
+    choosing_key: bool,
+    keys: Resolver,
     toast: slint::Timer,
     /// While minimized the live swatch is off, and this checks once a second for the window
     /// coming back (Slint has no event for it), so a hidden window costs about nothing.
@@ -72,6 +78,8 @@ impl App {
             settings: Settings::default(),
             state: StateSnapshot::default(),
             shown: Fields::default(),
+            choosing_key: false,
+            keys: Resolver::default(),
             toast: slint::Timer::default(),
             hidden: slint::Timer::default(),
         };
@@ -83,6 +91,9 @@ impl App {
     fn refresh(&mut self) {
         let Some(ui) = self.ui.upgrade() else { return };
         self.shown = bind::fields(&self.profile, &self.settings);
+        if self.choosing_key {
+            self.shown.click = bind::KEYBOARD_KEY;
+        }
         let mut hero = bind::hero(&self.shown, self.state.started, self.state.cannot_start.as_deref());
         if !self.connected {
             // Without an engine, the hero button starts one (§4.3).
@@ -94,6 +105,12 @@ impl App {
             };
         }
         bind::apply(&ui, &self.shown, &hero);
+        let hint = if self.choosing_key {
+            "Press a key, or pick one from the list."
+        } else {
+            ""
+        };
+        ui.global::<Form>().set_key_hint(hint.into());
         ui.global::<Form>().set_editable(self.connected);
         ui.global::<Ui>().set_connected(self.connected);
         if !self.watching() {
@@ -267,7 +284,12 @@ impl App {
     pub fn form_changed(&mut self) {
         let Some(ui) = self.ui.upgrade() else { return };
         let edits = bind::read(&ui, &self.shown);
-        let (profile, settings) = bind::edited(&self.profile, &self.settings, &edits);
+        let (mut profile, settings) = bind::edited(&self.profile, &self.settings, &edits);
+        // A key action needs its key first.
+        self.choosing_key = profile.action.kind == ActionKind::Key && profile.action.key.is_none();
+        if self.choosing_key {
+            profile.action = self.profile.action.clone();
+        }
         if profile != self.profile {
             self.link.send(Request::SetProfile {
                 profile: Box::new(profile.clone()),
@@ -280,6 +302,54 @@ impl App {
             });
             self.settings = settings;
         }
+        self.refresh();
+    }
+}
+
+impl App {
+    /// A key pressed in the *Key to press* picker.
+    pub fn key_captured(&mut self, text: &str) {
+        match keys::name_from_slint(text) {
+            Some(name) => self.key_chosen(&name),
+            None => self.toast("Glint can't press that key; pick one from the list.", Tone::Warning),
+        }
+    }
+
+    /// The key to press, by name.
+    pub fn key_chosen(&mut self, name: &str) {
+        let Some(keycode) = self.keys.keycode(name) else {
+            return self.toast(&format!("This keyboard has no {name} key."), Tone::Warning);
+        };
+        let mut profile = self.profile.clone();
+        profile.action.kind = ActionKind::Key;
+        profile.action.key = Some(KeySpec {
+            keycode,
+            name: name.to_owned(),
+        });
+        self.choosing_key = false;
+        self.link.send(Request::SetProfile {
+            profile: Box::new(profile.clone()),
+        });
+        self.profile = profile;
+        self.refresh();
+    }
+
+    /// A key pressed in the *Start/stop key* picker.
+    pub fn hotkey_captured(&mut self, text: &str) {
+        match keys::name_from_slint(text) {
+            Some(name) => self.hotkey_chosen(&name),
+            None => self.toast("That key can't be a hotkey; pick one from the list.", Tone::Warning),
+        }
+    }
+
+    /// The start/stop hotkey, by name. The engine checks it (§9) and says why if it refuses.
+    pub fn hotkey_chosen(&mut self, name: &str) {
+        let mut settings = self.settings.clone();
+        settings.hotkeys.start_stop = name.to_owned();
+        self.link.send(Request::SetSettings {
+            settings: Box::new(settings.clone()),
+        });
+        self.settings = settings;
         self.refresh();
     }
 }
