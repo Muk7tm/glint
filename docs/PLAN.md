@@ -117,7 +117,7 @@ The engine (`glintd`) and the UI (`glint`) are separate processes with separate 
  X server's screen image / window buffer now contains the color ............ t0 "appeared"
         │  wait for Glint's next check ............. 0 – 0.5 ms   (Balanced = 2,000 checks/s)
         ▼
- GetImage round trip for a 3×3 patch ............... ~0.03 – 0.3 ms  (measured in Phase 0)
+ GetImage round trip for a 3×3 patch ............... 0.016 – 0.02 ms; up to ~1.3 ms while the server is busy (Phase 0)
         ▼
  classify 9 pixels + trigger decision .............. < 0.002 ms
         ▼
@@ -149,6 +149,16 @@ The number that actually dominates on most desktops is the **compositor**. When 
 | Max over 10,000 appearances | ≤ 5 ms | 10 ms |
 | Extra clicks | 0 | 0 |
 | Missed appearances lasting at least one frame | 0 | 0 |
+
+**Measured in Phase 0** on the reference machine (NVIDIA 620.70.06, Xorg 21.1.26; `docs/MEASUREMENTS.md`, ADR 0004):
+
+- **Round trip:** p50 is 16–20 µs. The tail comes from the X server being busy with other clients (about 10% of
+  the time with no compositor): paced at 2,000/s, p99 is 1.1 ms.
+- **Expected engine response without a compositor:** p50 ≈ 0.27 ms, p99 ≈ 1.6 ms, which meets the targets.
+- **With picom:** the paced capture p99 rises to 2.7–3.2 ms because of server-side compositing and GPU syncs, so
+  p99 ≤ 2 ms is not reachable there.
+- **Server stalls:** the X server stalls for 10–18 ms about once a minute whatever the load, so a check that
+  lands in one exceeds the 10 ms ceiling regardless of Glint. How v1.0 counts those is open (ADR 0004).
 
 There is no "a pixel changed" event in X11, which is why the default design polls a tiny region rather than waiting for notifications. Polling a 3×3 patch is cheap and deterministic. Event-driven checking via the DAMAGE extension is added later as an optimization with self-checks, because not every driver reports every update (§5.2).
 
@@ -184,7 +194,7 @@ There is no "a pixel changed" event in X11, which is why the default design poll
 
 | Thread | Owns | Must never |
 |---|---|---|
-| **hot** | X connections A (capture) and B (input), the trigger state machine, the injector | Take a lock, allocate in steady state (beyond the small `GetImage` reply buffer), log, or do any I/O other than X socket traffic and sleeping |
+| **hot** | X connections A (capture) and B (input) over the allocation-free raw protocol path (ADR 0003), the trigger state machine, the injector | Take a lock, allocate, log, or do any I/O other than X socket traffic and sleeping |
 | **controller** | IPC server, settings and profiles on disk, LUT compilation (on a low-priority rayon pool), X connection C (window tracking, focus, hotkeys, picking), RandR monitor tracking | Touch connections A, B or D |
 | **telemetry** | Drains the event ring, keeps latency histograms, hands snapshots to the controller | Block the hot thread (it can't: the ring is wait-free) |
 | **panic/signal path** | X connection D, opened at startup and kept idle | Be used for anything except emergency releases |
@@ -406,8 +416,10 @@ A complete Rust version of this state machine, with a test, is in Appendix A.1.
 - **Never combine real-time priority with Max.** A real-time thread that never blocks can starve its CPU core, and rtkit's `RLIMIT_RTTIME` kills such threads with `SIGXCPU`. Balanced blocks on every round trip and every sleep, so it's safe; selecting Max automatically drops the hot thread to normal priority.
 - **CPU affinity.** Optional pinning (`cpu = none | auto | <core>`); `auto` means don't pin unless Phase 0 measurements show a benefit.
 - **Memory.** Preallocate everything at start, touch every page of the lookup table once (prefault), and call `mlockall(MCL_CURRENT | MCL_FUTURE)` best-effort; it fails gracefully if `RLIMIT_MEMLOCK` is low.
-- **Nothing slow inside the loop.** No logging, locking or allocation in the steady state, apart from the small reply buffer of plain `GetImage` (the SHM backend removes even that). Debug builds wrap the loop body in `assert_no_alloc` to enforce this.
-- **The X server tax.** The X server handles requests on a single thread, so each check costs it a little time, and with glamor-accelerated drivers a GPU readback sync. Phase 0 measures how much Glint slows other clients' round trips, and the speed presets let you trade speed for system load. Target: Balanced adds under 0.2 ms at p99 to other clients.
+- **Nothing slow inside the loop.** No logging, locking or allocation in the steady state. x11rb allocates on every request and reply (measured: 5 allocations per GetImage, 3 per ShmGetImage) and locks internal mutexes, so connections A and B use a small raw protocol client with fixed buffers instead, at the same round-trip cost (ADR 0003). Debug builds wrap the loop body in `assert_no_alloc` to enforce this.
+- **The X server tax.** The X server handles requests on a single thread, so each check costs it a little time, and with glamor-accelerated drivers a GPU readback sync. The speed presets let you trade speed for system load. Target: Balanced adds under 0.2 ms at p99 to other clients.
+  - *Measured in Phase 0 on NVIDIA 620.70.06:* Balanced adds about +0.45 ms and Eco about +0.25 ms at p99.
+  - The same number of trivial requests adds nothing. GetImage makes the server wait for GPU work queued by other clients, so the number of GetImages is the lever (Eco, or the DAMAGE backend), not the number of requests (ADR 0004).
 
 ---
 
@@ -847,8 +859,9 @@ glint/
 │   │   ├── src/                  pattern.rs · trigger.rs · profile.rs · settings.rs · validate.rs
 │   │   └── benches/classify.rs
 │   ├── glint-x11/                X11 backends; unsafe only in capture/shm.rs, with SAFETY comments
-│   │   └── src/                  conn.rs · caps.rs · format.rs · inject.rs · monitors.rs · windows.rs
-│   │                             picker.rs · hotkeys.rs · env.rs · capture/{getimage,shm,window,damage}.rs
+│   │   └── src/                  conn.rs · wire.rs (raw hot-path protocol, ADR 0003) · caps.rs · format.rs
+│   │                             inject.rs · monitors.rs · windows.rs · picker.rs · hotkeys.rs · env.rs
+│   │                             capture/{getimage,shm,window,damage}.rs
 │   ├── glint-ipc/                protocol types, framing, client and server helpers
 │   ├── glint-engine/             bin: glintd
 │   │   └── src/                  main.rs · hot.rs · controller.rs · telemetry.rs · lifecycle.rs
@@ -1210,7 +1223,8 @@ Effort sizes are relative: S is a few days, M about a week or two, L longer, for
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| `GetImage` is slow on some drivers (GPU readback sync on glamor or NVIDIA) | Medium | Higher p99, more X server load | Measure in Phase 0; speed presets; SHM; DAMAGE backend |
+| `GetImage` is slow on some drivers (GPU readback sync on glamor or NVIDIA) | Confirmed on NVIDIA (Phase 0) | +0.45 ms p99 to other clients at Balanced | Speed presets; DAMAGE backend (fewer GetImages). SHM doesn't help at 3×3 |
+| The X server stalls 10–18 ms about once a minute (other clients, GPU syncs), whatever Glint does | High (seen in every Phase 0 run) | A check landing in a stall exceeds the 10 ms ceiling | Nothing in Glint can shorten it; `glint-lab` reports stall-coincident trials separately (ADR 0004) |
 | A compositor adds a frame in screen mode | High | 7–17 ms before Glint can see the color | `window-buffer` backend; tuning guide (unredirect fullscreen windows) |
 | DAMAGE misses updates on some page-flip paths | Medium | Late or missed clicks in damage mode | Safety checks + automatic fallback to polling |
 | `window-buffer` reads the wrong surface (child windows, Wine, container-based clients) | Medium | Blank reads | Self-check + fallback to `screen` |
@@ -1473,6 +1487,8 @@ pub fn run_hot(mut h: Hot) -> ! {
 
 ### A.3 GetImage capture and pixel decoding (`glint-x11/src/capture/getimage.rs`)
 
+The request and reply logic below is written against x11rb for readability. The hot path sends the same GetImage over the allocation-free raw client instead (ADR 0003; reference implementation in `spikes/spike-capture`). The pixel decoding applies unchanged.
+
 ```rust
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ConnectionExt as _, Drawable, ImageFormat};
@@ -1546,6 +1562,8 @@ impl PixelFormat {
 ```
 
 ### A.4 XTest injector (`glint-x11/src/inject.rs`)
+
+Shown with x11rb for readability. Connection B sends these requests (FakeInput, GrabControl) over the allocation-free raw client (ADR 0003).
 
 ```rust
 use std::time::Instant;

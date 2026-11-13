@@ -1,0 +1,16 @@
+[package]
+name = "spike-capture"
+description = "Phase 0: GetImage round-trip cost (x11rb, raw protocol, MIT-SHM) and the X server tax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+x11rb.workspace = true
+x11rb-protocol.workspace = true
+rustix.workspace = true
+memmap2.workspace = true
+
+[lints]
+workspace = true

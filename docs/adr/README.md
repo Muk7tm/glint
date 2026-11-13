@@ -4,8 +4,10 @@ One short file per decision that changes or settles something in `docs/PLAN.md`.
 plan also updates the affected plan section in the same commit.
 
 | # | Title | Status | Plan sections |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | [0001](0001-dependency-versions.md) | Dependency versions differ from §14 | Accepted | §14 |
+| [0003](0003-raw-protocol-hot-path.md) | Allocation-free raw X protocol path for the hot connections | Accepted | §4.2, §5.6, §13, A.3–A.4 |
+| [0004](0004-phase-0-defaults-and-latency-budget.md) | Phase 0: defaults confirmed, latency and server-tax expectations corrected | Accepted; v1.0 target treatment open | §3, §5.6, §20 |
 
 ## Template
 

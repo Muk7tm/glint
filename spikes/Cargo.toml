@@ -1,0 +1,35 @@
+# Phase 0 spikes (PLAN §19): small throwaway crates, kept out of the main
+# workspace so they never affect the product's build or CI.
+[workspace]
+resolver = "3"
+members = ["spike-capture"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+# Same versions as the main workspace (ADR 0001).
+x11rb = { version = "=0.13.2", features = ["xtest", "shm", "damage", "composite", "randr", "xinput", "xfixes", "screensaver"] }
+x11rb-protocol = { version = "=0.13.2", default-features = false, features = ["std"] }
+rustix = { version = "1", features = ["fs", "system", "thread", "time"] }
+memmap2 = "0.9"
+slint = { version = "=1.18.1", default-features = false, features = [
+    "std",
+    "compat-1-18",
+    "backend-winit-x11",
+    "renderer-femtovg",
+    "renderer-software",
+    "accessibility",
+] }
+slint-build = "=1.18.1"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+debug = "line-tables-only"
