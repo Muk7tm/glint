@@ -1021,7 +1021,7 @@ Develop the engine against Xephyr first: a bug there can't click into your real 
 |---|---|---|
 | Unit | Color math against test vectors, rules, patterns, state-machine transitions, validation, migrations | `glint-core` |
 | Property (`proptest`) | The six invariants of §5.5 over random check streams with random timing; IPC encode/decode round trips | core, ipc |
-| Exhaustive | The lookup table equals the reference math for all 16,777,216 colors (release mode, a few seconds) | core |
+| Exhaustive | The lookup table equals the reference math for all 16,777,216 colors (optimized build, a few seconds; `glint-core` is built with `opt-level = 3` even in dev, so it runs in every `cargo test`) | core |
 | Fuzzing (`cargo-fuzz`) | The IPC line parser and the profile parser | ipc, core |
 | Integration (Xvfb) | Engine + lab end-to-end scenarios below, correctness only | `glint-lab`, CI |
 | Performance | Latency distributions, X server tax, CPU use | `glint-lab` on real hardware |

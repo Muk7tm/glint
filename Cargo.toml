@@ -62,6 +62,11 @@ dbg_macro = "warn"
 todo = "warn"
 unwrap_used = "warn"
 
+# glint-core's exhaustive lookup-table test (16.7 million colors per rule set) and its property
+# tests run in every `cargo test`; optimizing the crate keeps them to seconds (PLAN §16).
+[profile.dev.package.glint-core]
+opt-level = 3
+
 [profile.release]
 opt-level = 3
 lto = "fat"

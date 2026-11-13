@@ -30,7 +30,7 @@ listed in §13 (written as their content appears).
 ## Phase 1 — `glint-core` (M)
 
 - [x] OKLab/OKLCh, HSV and RGB rules; include and exclude colors; hysteresis; achromatic guard. *(HSV/RGB fields and presets, exclusion defaults, gray-pixel guard: ADR 0005.)*
-- [ ] 2-bit lookup-table builder (rayon) + the exhaustive equality test.
+- [x] 2-bit lookup-table builder (rayon) + the exhaustive equality test. *(One build: ~145 ms on 12 threads. The exhaustive test checks 8 rule sets against a separate reference, ~6.5 s.)*
 - [ ] Sample patterns and pixel agreement.
 - [ ] Trigger state machine + the six invariants as property tests.
 - [ ] Profile and settings types, validation, migrations.

@@ -11,6 +11,7 @@ pub mod lut;
 pub mod oklab;
 pub mod rule;
 
+pub use lut::{Lut, LutStats};
 pub use rule::{ColorEntry, ColorModel, ColorRules, CompiledRules, ShadePreset, Tolerances};
 
 /// A 24-bit sRGB color, `0xRRGGBB`. Profiles and the protocol write it as `"#RRGGBB"`.
