@@ -250,7 +250,7 @@ Two engines watching the same screen would double every click, so the single-ins
 
 ### 5.1 Where Glint looks
 
-**Screen center.** Monitors come from RandR 1.5 `GetMonitors` (fallbacks: RandR CRTCs, then Xinerama, then the whole root window). You pick a monitor; the default is the primary. "Center of the screen" is the center of that monitor, never of the whole root window, which on a two-monitor setup sits on the seam between them. The center is `(x + w/2, y + h/2)`. With an even width or height the true center falls *between* pixels, so patterns anchor on the 2×2 block around it (§5.3). An X/Y offset in pixels allows fine-tuning. Monitor changes arrive as RandR notifications and bump the epoch, so a resolution change can't cause a click (R7).
+**Screen center.** Monitors come from RandR 1.5 `GetMonitors` (fallbacks: RandR CRTCs, then Xinerama, then the whole root window). You pick a monitor; the default is the primary. "Center of the screen" is the center of that monitor, never of the whole root window, which on a two-monitor setup sits on the seam between them. The center is `(x + w/2, y + h/2)`. With an even width or height the true center falls *between* pixels, so patterns anchor on the 2×2 block around it (§5.3): the anchor pixel is `(x + ⌊w/2⌋, y + ⌊h/2⌋)`, which is the center pixel for an odd size and the pixel just right of and below the true center for an even one; Center 2×2 covers the four pixels around the center, and odd-sized patterns center on the anchor (ADR 0006). An X/Y offset in pixels allows fine-tuning. Monitor changes arrive as RandR notifications and bump the epoch, so a resolution change can't cause a click (R7).
 
 **Window center.** The target is the application's *client* window (the one carrying `WM_STATE`), not the window manager's frame, so the center is the center of the content and excludes the title bar. Its root-relative position comes from `TranslateCoordinates` and is kept current by the window tracker (§8). The window-buffer backend uses window-relative coordinates instead.
 
@@ -307,10 +307,10 @@ Validation enforces `k_stay ≤ k_enter ≤ n`, and the tight range is always in
 | Center 2×2 | 4 | 3 | 2 | Even-sized screens or windows where you want the true center |
 | **Square 3×3 (default)** | 9 | 5 | 3 | General use; ignores single-pixel noise and edges |
 | Square 5×5 | 25 | 13 | 7 | Large color areas or noisy content |
-| Plus | 5 (center + 4 at distance d) | 4 | 2 | Thin shapes crossing the center |
-| Custom | up to 64 offsets | yours | yours | Anything else |
+| Plus | 5 (center + 4 at distance d = `plus_distance`, 1–31, default 2) | 4 | 2 | Thin shapes crossing the center |
+| Custom | `offsets = [[dx, dy], …]`: up to 64, within ±31 px | yours (default: a majority) | yours | Anything else |
 
-Pixel agreement is Glint's main noise filter, and it adds zero delay: a single odd pixel (anti-aliasing, a dithered gradient, a one-pixel overlay) can't make or break an appearance. The UI shows one "Must match" control; `k_stay` is derived as `ceil(0.6 × k_enter)` and can be overridden in the profile file.
+Pixel agreement is Glint's main noise filter, and it adds zero delay: a single odd pixel (anti-aliasing, a dithered gradient, a one-pixel overlay) can't make or break an appearance. The UI shows one "Must match" control; `k_stay` is derived as `⌈k_enter / 2⌉`, which reproduces every row of the table (the earlier `⌈0.6 × k_enter⌉` gave 8 for 5×5 and 3 for Plus; ADR 0006), and can be overridden in the profile file. A pattern captures its bounding rectangle, so a plus pattern reads (2d + 1)² pixels and counts 5 of them.
 
 ### 5.4 Color matching
 
@@ -1936,8 +1936,10 @@ offset = { x = 0, y = 0 }       # pixels away from the exact center
 
 [sampling]
 pattern = "square3"             # pixel | center2x2 | square3 | square5 | plus | custom
-k_enter = 5                     # of 9 pixels must be in the tight range to start
-k_stay = 3                      # of 9 pixels must be in the wide range to stay present
+# plus_distance = 2             # plus: arm length in pixels (1–31)
+# offsets = [[0, 0], [4, 0]]    # custom: up to 64 [dx, dy] offsets within ±31 px
+k_enter = 5                     # of 9 pixels must be in the tight range to start (optional: §5.3 default)
+k_stay = 3                      # of 9 pixels must be in the wide range to stay present (optional: ⌈k_enter / 2⌉)
 speed = "balanced"              # eco (500/s) | balanced (2000/s) | max | integer checks per second
 backend = "auto"                # auto | screen | screen-shm | window-buffer | damage
 
