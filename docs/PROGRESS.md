@@ -5,7 +5,7 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 ## Status
 
-- **Active phase:** Phase 5 (window mode and guards) is complete (2026-11-13); Phase 6 waits for the owner's go-ahead. Phase 4 is complete. Glint copies Pulse's Slint files and never changes Pulse (ADR 0012). Glint is MIT since 2026-11-13 (owner decision; the About
+- **Active phase:** Phase 6 (performance and advanced detection), started 2026-11-13: all four items are done; the exit run on the owner's hardware is next (`glint-lab basic --count 10000 --real-desktop`, no compositor, about 1 h 40 min). Phases 4 and 5 are complete. Glint copies Pulse's Slint files and never changes Pulse (ADR 0012). Glint is MIT since 2026-11-13 (owner decision; the About
   dialog shows AboutSlint, ADR 0016).
   All 17 lab scenarios pass in CI (https://github.com/Muk7tm/glint/actions/runs/43426780742) and at full count
   locally (MEASUREMENTS.md §9).
