@@ -5,9 +5,12 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 ## Status
 
-- **Active phase:** Phase 2 (engine MVP). All seven items are done, and `basic`, `near-miss` and
-  `arm-while-present` pass under Xvfb. The last exit check, Glint clicking on the real desktop, needs the
-  owner's permission (CLAUDE.md): `glint-lab basic --real-desktop`.
+- **Active phase:** none. Phase 2 (engine MVP) is complete, and Phase 3 waits for the owner's go-ahead. The
+  real-desktop exit run passed on 2026-11-13: `glint-lab basic --real-desktop --count 100` gave 100 clicks for
+  100 appearances, 0 extra, 0 missed, p50 0.48 ms, p99 0.71 ms (MEASUREMENTS.md §8).
+- **Phase 3 needs from the owner:** `cargo-nextest` and `cargo-deny` installed
+  (`sudo pacman -S cargo-nextest cargo-deny`), and a decision on where CI runs: the repository has no GitHub
+  remote yet.
 - **Owner decisions (2026-11-13):** v1.0 timing is judged with no compositor, with X-server-stall trials
   listed separately (ADR 0004); preventing extra clicks is the top priority, so only watched absence re-arms
   and possible misses are reported (ADR 0007, revised).
@@ -51,7 +54,7 @@ listed in §13 (written as their content appears).
 - [x] IPC server (newline-delimited JSON) and `glint-ctl`. *(Same-user socket, 256-message client queues, telemetry and live streams; `glintd` startup per §4.3 with exit code 3 for a second engine; `glint-ctl` incl. `release-all` without an engine; C3, C9, C10, L2 and `get_profile`: ADR 0009. Tested end to end on Xvfb.)*
 - [x] Single-instance lock; settings store with debounced atomic writes. *(flock keyed by the canonical display (C6); 300 ms debounce, temp file + fsync + rename; `.bak` on migration; unreadable files reported and left alone; persistence across restarts tested on Xvfb.)*
 - [x] Hotkeys through XI2 raw events (F7/F8/F6) with the XTEST-source filter. *(F8 disarms and releases from the X-events thread without waiting for the controller; toggle and hold modes; F6 samples on connection C; keymap changes followed. Tested end to end on Xvfb with keys typed "on" Xvfb's own keyboard device.)*
-- **Exit:** from the command line alone, Glint clicks once per appearance on a real desktop, and `basic`, `near-miss` and `arm-while-present` pass under Xvfb.
+- **Exit:** from the command line alone, Glint clicks once per appearance on a real desktop, and `basic`, `near-miss` and `arm-while-present` pass under Xvfb. *(Met 2026-11-13: 100 of 100 on the owner's desktop, 0 extra, MEASUREMENTS.md §8.)*
 
 ## Phase 3 — Lab and CI (M)
 

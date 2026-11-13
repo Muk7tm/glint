@@ -193,7 +193,7 @@ Same machine; `cargo bench -p glint-core` (criterion 0.8.2, release profile with
 - `cargo test -p glint-core` (dev profile): 79 tests in ~6.5 s, most of it the exhaustive table test (8 rule
   sets × 16,777,216 colors against the reference) and 2,000 property-test cases for the trigger.
 
-## 8. Phase 2: lab scenarios under Xvfb
+## 8. Phase 2: lab scenarios (Xvfb, then the real desktop)
 
 `glint-lab <scenario> --count N` (release build) starts its own Xvfb (1280×720, 24-bit, black root) and its own
 `glintd`, paints the color in a 40×40 patch at the monitor's center, and records when the engine's
@@ -215,6 +215,21 @@ other clients, so these numbers are the engine's floor, not the NVIDIA desktop's
 - The 300-trial run found two bugs, both fixed. The engine sent `fired` notices to clients that never subscribed
   and then cut a non-reading client off. The lab scored clicks against the wrong appearance when the engine beat
   the lab's own round trip.
+
+### On the real desktop: the Phase 2 exit run
+
+`glint-lab basic --real-desktop --count 100` (release build), run by the owner on 2026-11-13 in their normal
+session (the environment above, no compositor running). The lab's full-screen window on HDMI-1 took the clicks.
+
+| Scenario | Trials | Clicks | Extra | Missed | Response p50 / p95 / p99 / max |
+| --- | --- | --- | --- | --- | --- |
+| `basic` (on 30–500 ms, off 60–600 ms) | 100 | 100 | 0 | 0 | 0.48 / 0.70 / 0.71 / 0.71 ms |
+
+- 0.1–0.2 ms slower than Xvfb. The difference isn't broken down yet; Phase 3's report adds the per-stage split
+  from `fired`. A likely part is GetImage waiting for the GPU to finish the lab's own drawing (ADR 0004 traced
+  the server tax to the same kind of wait).
+- Well inside p99 ≤ 2 ms and max ≤ 10 ms, but 100 trials say little about p99, and no trial met an X server
+  stall. The v1.0 timing verdict is Phase 6's 10,000-trial run (ADR 0004).
 
 ## Conclusions for the defaults (Phase 0 exit)
 
