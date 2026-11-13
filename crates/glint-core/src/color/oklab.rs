@@ -90,6 +90,29 @@ impl Oklch {
     pub fn from_rgb(rgb: Rgb) -> Self {
         Oklab::from_rgb(rgb).to_lch()
     }
+
+    /// The nearest sRGB color (channels clamped), for drawing a range: the UI's shade and hue
+    /// strips (§12.4).
+    pub fn to_rgb(self) -> Rgb {
+        let (a, b) = (self.c * self.h.to_radians().cos(), self.c * self.h.to_radians().sin());
+        let l_ = self.l + 0.3963377774 * a + 0.2158037573 * b;
+        let m_ = self.l - 0.1055613458 * a - 0.0638541728 * b;
+        let s_ = self.l - 0.0894841775 * a - 1.2914855480 * b;
+        let (l, m, s) = (l_ * l_ * l_, m_ * m_ * m_, s_ * s_ * s_);
+        let r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+        let g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+        let bl = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+        let encode = |v: f64| {
+            let v = v.clamp(0.0, 1.0);
+            let e = if v <= 0.0031308 {
+                12.92 * v
+            } else {
+                1.055 * v.powf(1.0 / 2.4) - 0.055
+            };
+            (e * 255.0).round().clamp(0.0, 255.0) as u8
+        };
+        Rgb::new(encode(r), encode(g), encode(bl))
+    }
 }
 
 /// The angle of `(a, b)` in degrees, in `[0, 360]`.
@@ -114,6 +137,33 @@ mod tests {
 
     fn close(x: f64, y: f64, eps: f64) -> bool {
         (x - y).abs() <= eps
+    }
+
+    #[test]
+    fn back_to_rgb() {
+        for hex in [
+            0x86_04_A0u32,
+            0x3B_D1_6F,
+            0xFF_FF_FF,
+            0x00_00_00,
+            0xE0_30_78,
+            0x12_34_56,
+            0xCB_49_DE,
+        ] {
+            let rgb = Rgb::from_u32(hex);
+            let back = Oklch::from_rgb(rgb).to_rgb();
+            for (x, y) in [(rgb.r(), back.r()), (rgb.g(), back.g()), (rgb.b(), back.b())] {
+                assert!(x.abs_diff(y) <= 1, "{hex:06X} came back as {back:?}");
+            }
+        }
+        // Out of gamut: clamped, not wrapped.
+        let vivid = Oklch {
+            l: 0.9,
+            c: 0.5,
+            h: 140.0,
+        }
+        .to_rgb();
+        assert!(vivid.g() > 200, "{vivid:?}");
     }
 
     #[test]

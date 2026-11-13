@@ -116,7 +116,7 @@ pub fn execute(cli: &Cli, out: &mut dyn Write) -> Result<(), CtlError> {
         }
         return Err(CtlError::NoEngine(socket.display().to_string()));
     };
-    let hello = client.hello(ClientKind::Ctl, WAIT)?;
+    client.hello(ClientKind::Ctl, WAIT)?;
     let reply = |client: &mut Client, r: Request| -> Result<Event, CtlError> {
         match client.call(r, WAIT)? {
             Event::Error { message, field, .. } => Err(CtlError::Engine(match field {
@@ -211,24 +211,11 @@ pub fn execute(cli: &Cli, out: &mut dyn Write) -> Result<(), CtlError> {
             }
         }
         Command::Diag => {
+            // One text block for bug reports, the same as the window's *Copy diagnostics* (§17).
             writeln!(out, "glint-ctl {} · MIT", env!("CARGO_PKG_VERSION"))?;
-            writeln!(out, "{}", serde_json::to_string(&hello).unwrap_or_default())?;
-            let state = reply(&mut client, Request::GetState)?;
-            writeln!(out, "{}", serde_json::to_string(&state).unwrap_or_default())?;
-            client.send(Request::Subscribe {
-                telemetry_hz: 10,
-                live_hz: 0,
-                trace: false,
-            })?;
-            loop {
-                if let Event::Telemetry(t) = client.next_event(WAIT)?.body {
-                    writeln!(
-                        out,
-                        "{}",
-                        serde_json::to_string(&Event::Telemetry(t)).unwrap_or_default()
-                    )?;
-                    break;
-                }
+            match reply(&mut client, Request::Diagnostics)? {
+                Event::Diagnostics { text } => write!(out, "{text}")?,
+                e => return Err(unexpected(&e)),
             }
         }
     }

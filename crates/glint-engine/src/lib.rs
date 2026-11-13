@@ -14,6 +14,7 @@ pub mod desktop;
 pub mod hot;
 pub mod lifecycle;
 pub mod lock;
+pub mod palette;
 pub mod pick;
 pub mod rt;
 pub mod store;

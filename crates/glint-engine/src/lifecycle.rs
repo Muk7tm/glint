@@ -320,6 +320,7 @@ pub fn run(options: Options) -> Result<(), StartError> {
     );
     // The hot thread's priority and CPUs (§5.6), and the screen lock over D-Bus (§8, ADR 0014).
     controller.memory = memory;
+    controller.queue = Some(commands.clone());
     controller.shm = shm;
     controller.damage = damage;
     controller.schedule();

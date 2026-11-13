@@ -32,7 +32,6 @@ use glint_x11::inject::{Action, Input, MAX_MODIFIERS};
 use glint_x11::keymap::{Keymap, keysym};
 use glint_x11::monitors::{self, Monitor};
 use x11rb::connection::Connection as _;
-use x11rb::protocol::xproto::{ConnectionExt as _, ImageFormat};
 use x11rb::rust_connection::RustConnection;
 
 use crate::desktop::{DesktopEvent, Watch};
@@ -190,6 +189,11 @@ impl From<Rejected> for Event {
 
 /// What the controller thread acts on.
 pub enum Command {
+    /// A recording for `client` finished (§12.9).
+    Palette {
+        client: ClientId,
+        result: Result<Vec<glint_ipc::PaletteEntry>, String>,
+    },
     Connected {
         client: ClientId,
         outbox: SyncSender<String>,
@@ -447,6 +451,11 @@ pub struct Controller {
     /// The capture has an MIT-SHM segment, and `screen-shm` reads through it (§5.2).
     pub shm: bool,
     use_shm: bool,
+    /// Its own queue, for threads it starts (a recording).
+    pub queue: Option<Sender<Command>>,
+    recording: bool,
+    /// The last 20 warnings, for diagnostics (§17).
+    warnings: std::collections::VecDeque<String>,
     /// The capture can follow DAMAGE, the `damage` backend is in use, and whether it proved
     /// unreliable on this desktop (§5.2).
     pub damage: bool,
@@ -531,6 +540,9 @@ impl Controller {
             damage: false,
             use_damage: false,
             damage_failed: false,
+            queue: None,
+            recording: false,
+            warnings: std::collections::VecDeque::new(),
         }
     }
 
@@ -829,6 +841,14 @@ impl Controller {
                 }
             }
             Command::Notice(n) => self.notice(n),
+            Command::Palette { client, result } => {
+                self.recording = false;
+                let event = match result {
+                    Ok(entries) => Event::Palette { entries },
+                    Err(why) => Event::error("record", why, None),
+                };
+                self.send(client, None, event);
+            }
             Command::Pick(input) => self.pick_input(input),
             Command::Window(event) => self.on_window(event),
             Command::Desktop(event) => self.on_desktop(event),
@@ -1416,27 +1436,162 @@ impl Controller {
             .map_or((0, 0), |s| (s.width_in_pixels, s.height_in_pixels))
     }
 
+    /// The watched spot as the hot thread reads it (§12.9): the pattern's rectangle in the
+    /// drawable it reads, in window mode the window's.
+    fn spot(&self, profile: &Profile) -> Result<crate::palette::Spot, Issue> {
+        let (x, y) = self.origin(profile)?;
+        let pattern = profile
+            .pattern()
+            .map_err(|e| Issue::new("sampling.pattern", e.to_string()))?;
+        let (w, h) = pattern.size();
+        let (drawable, format) = self.capture_target();
+        Ok(crate::palette::Spot {
+            drawable,
+            format,
+            rect: Rect::new(x.into(), y.into(), w, h),
+            pattern,
+        })
+    }
+
     pub fn sample_center(&self) -> Event {
         let profile = self.active_profile();
-        let (x, y) = watched_spot(&self.monitors, &profile);
-        let reply = self
-            .conn
-            .get_image(ImageFormat::Z_PIXMAP, self.root, x, y, 1, 1, u32::MAX)
-            .map_err(|e| e.to_string())
-            .and_then(|c| c.reply().map_err(|e| e.to_string()));
-        let mut px = [0u32; 1];
-        match reply.map(|r| self.root_format.decode(&r.data, 1, 1, &mut px)) {
-            Ok(Ok(())) => {
-                let rgb = Rgb::from_u32(px[0]);
+        let read = self
+            .spot(&profile)
+            .map_err(|issue| issue.message)
+            .and_then(|spot| spot.read(&self.conn));
+        match read {
+            Ok(rgb) => {
                 let lch = Oklch::from_rgb(rgb);
                 Event::ColorSampled {
                     rgb,
                     oklch: [lch.l as f32, lch.c as f32, lch.h as f32],
                 }
             }
-            Ok(Err(e)) => Event::error("sample", e.to_string(), None),
             Err(e) => Event::error("sample", e, None),
         }
+    }
+
+    /// *Record 5 s* (§12.9): reads the spot on a thread of its own for `ms`; the palette goes to
+    /// `client` when done.
+    fn record_palette(&mut self, client: ClientId, ms: u32) -> Event {
+        if !(100..=10_000).contains(&ms) {
+            return Event::error("invalid", "Record between 100 ms and 10 s.", Some("ms".into()));
+        }
+        if self.recording {
+            return Event::error("busy", "A recording is already running.", None);
+        }
+        let spot = match self.spot(&self.active_profile()) {
+            Ok(spot) => spot,
+            Err(issue) => return Event::error("record", issue.message, Some(issue.field)),
+        };
+        let (Some(queue), conn) = (self.queue.clone(), Arc::clone(&self.conn)) else {
+            return Event::error("record", "Recording isn't available.", None);
+        };
+        let spawned = std::thread::Builder::new().name("glintd-record".into()).spawn(move || {
+            let result = crate::palette::record(&conn, spot, Duration::from_millis(ms.into()));
+            let _ = queue.send(Command::Palette { client, result });
+        });
+        match spawned {
+            Ok(_) => {
+                self.recording = true;
+                Event::Recording { ms }
+            }
+            Err(e) => Event::error("record", e.to_string(), None),
+        }
+    }
+
+    /// One text block for bug reports (§17).
+    fn diagnostics(&self) -> String {
+        use std::fmt::Write as _;
+        let profile = self.active_profile();
+        let state = self.state();
+        let setup = self.conn.setup();
+        let stats = self.stats.lock().map(|s| s.clone()).unwrap_or_default();
+        let mut t = String::new();
+        let _ = writeln!(t, "Glint {} (glintd) · MIT", env!("CARGO_PKG_VERSION"));
+        let _ = writeln!(t, "Kernel: {}", rustix::system::uname().release().to_string_lossy());
+        let _ = writeln!(
+            t,
+            "X server: {} {} · display {} · XWayland {}",
+            String::from_utf8_lossy(&setup.vendor),
+            {
+                // X.Org packs 1.21.1.26 as 12101026.
+                let r = setup.release_number;
+                format!(
+                    "{}.{}.{}.{}",
+                    r / 10_000_000,
+                    r / 100_000 % 100,
+                    r / 1000 % 100,
+                    r % 1000
+                )
+            },
+            self.display.canonical(),
+            if self.caps.xwayland || glint_x11::env::wayland_session() {
+                "yes"
+            } else {
+                "no"
+            },
+        );
+        let v = |v: Option<glint_x11::caps::Version>| v.map_or_else(|| "none".to_owned(), |v| v.to_string());
+        let _ = writeln!(
+            t,
+            "Extensions: XTEST {} · MIT-SHM {} · DAMAGE {} · Composite {} · RANDR {} · XInput {} · XFIXES {} · MIT-SCREEN-SAVER {}",
+            self.caps.xtest,
+            v(self.caps.shm),
+            v(self.caps.damage),
+            v(self.caps.composite),
+            v(self.caps.randr),
+            v(self.caps.xinput),
+            v(self.caps.xfixes),
+            v(self.caps.screensaver),
+        );
+        let _ = writeln!(
+            t,
+            "Session: compositor {} · real-time {} · runs on {} · memory {}",
+            if self.compositor { "running" } else { "none" },
+            self.priority.describe(),
+            self.pinned,
+            self.memory,
+        );
+        let _ = writeln!(
+            t,
+            "Watching: {} · {} {} · backend {}{} · check gap {:.1} ms",
+            if state.started { "yes" } else { "no" },
+            match profile.target.mode {
+                TargetMode::Screen => "monitor",
+                TargetMode::Window => "window",
+            },
+            state.target.name,
+            state.backend,
+            state.backend_reason.map(|r| format!(" ({r})")).unwrap_or_default(),
+            f64::from(state.check_gap_us) / 1e3,
+        );
+        let _ = writeln!(
+            t,
+            "Metrics: {:.0} checks/s · capture p50 {:.0} µs, p99 {:.0} µs · response p50 {:.0} µs, max {:.0} µs · clicks {} · suppressed {} · possible misses {} · stalls {} (worst {:.1} ms) · dropped {}",
+            stats.checks_per_sec,
+            stats.capture_p50_us,
+            stats.capture_p99_us,
+            stats.decide_p50_us,
+            stats.decide_max_us,
+            stats.clicks,
+            stats.suppressed,
+            stats.maybe_missed,
+            stats.stalls,
+            stats.worst_stall_ms,
+            stats.dropped,
+        );
+        let _ = writeln!(t, "Warnings: {}", if self.warnings.is_empty() { "none" } else { "" });
+        for w in &self.warnings {
+            let _ = writeln!(t, "  ▲ {w}");
+        }
+        let _ = writeln!(t, "Profile:");
+        let _ = writeln!(
+            t,
+            "{}",
+            profile.to_toml().unwrap_or_else(|e| format!("(can't be written: {e})"))
+        );
+        t
     }
 
     fn request(&mut self, client: ClientId, request: Request) -> Event {
@@ -1570,6 +1725,10 @@ impl Controller {
                 Err(e) => Event::error("x11", e.to_string(), None),
             },
             Request::SampleCenter => self.sample_center(),
+            Request::RecordPalette { ms } => self.record_palette(client, ms),
+            Request::Diagnostics => Event::Diagnostics {
+                text: self.diagnostics(),
+            },
             Request::Classify { colors } => {
                 if colors.len() > MAX_CLASSIFY {
                     return Event::error("too_many", format!("At most {MAX_CLASSIFY} colors at once."), None);
@@ -1740,6 +1899,12 @@ impl Controller {
     }
 
     fn broadcast(&mut self, event: Event) {
+        if let Event::Warning { message, .. } = &event {
+            if self.warnings.len() == 20 {
+                self.warnings.pop_front();
+            }
+            self.warnings.push_back(message.clone());
+        }
         let ids: Vec<ClientId> = self.clients.keys().copied().collect();
         for id in ids {
             self.send(id, None, event.clone());

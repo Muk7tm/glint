@@ -978,3 +978,54 @@ fn a_screen_lock_announced_over_d_bus_stops_watching() {
         std::panic::resume_unwind(e);
     }
 }
+
+/// §12.9 *Record 5 s* (shortened) and §17 diagnostics: the recording names the color at the spot
+/// and its share; the diagnostics block covers versions, extensions, the session and the profile.
+#[test]
+fn recording_the_spot_and_the_diagnostics() {
+    let Some(engine) = Engine::start() else { return };
+    let screen = Screen::open(&engine.x);
+    screen.show(true);
+    let mut c = engine.client();
+    assert!(matches!(
+        c.call(
+            Request::SetProfile {
+                profile: Box::new(green_profile())
+            },
+            WAIT
+        )
+        .unwrap(),
+        Event::ProfileApplied { .. }
+    ));
+    assert_eq!(
+        c.call(Request::RecordPalette { ms: 300 }, WAIT).unwrap(),
+        Event::Recording { ms: 300 }
+    );
+    // One recording at a time.
+    assert!(matches!(
+        c.call(Request::RecordPalette { ms: 300 }, WAIT).unwrap(),
+        Event::Error { ref code, .. } if code == "busy"
+    ));
+    let entries = wait_event(&mut c, |e| match e {
+        Event::Palette { entries } => Some(entries),
+        _ => None,
+    });
+    assert_eq!(entries[0].rgb, Rgb::from_u32(GREEN), "{entries:?}");
+    assert!(entries[0].share > 0.9, "{entries:?}");
+
+    let Event::Diagnostics { text } = c.call(Request::Diagnostics, WAIT).unwrap() else {
+        panic!()
+    };
+    for part in [
+        "Glint ",
+        "Kernel: ",
+        "X server: ",
+        "Extensions: XTEST 2.2",
+        "Session: ",
+        "Metrics: ",
+        "Profile:",
+        "name = \"Green\"",
+    ] {
+        assert!(text.contains(part), "{part:?} in\n{text}");
+    }
+}

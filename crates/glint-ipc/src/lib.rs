@@ -108,6 +108,14 @@ pub enum Request {
     Classify {
         colors: Vec<Rgb>,
     },
+    /// Every color at the watched spot for `ms` (100–10,000) milliseconds, grouped: `recording`
+    /// now, `palette` when done (§12.9, *Record 5 s*).
+    RecordPalette {
+        ms: u32,
+    },
+    /// One text block for bug reports (§17): versions, capabilities, session, the active profile,
+    /// metrics and recent warnings. The UI's *Copy diagnostics* and `glint-ctl diag`.
+    Diagnostics,
     /// The client leaves; the engine keeps running.
     Detach,
     /// The engine stops, releases input, removes its socket and exits.
@@ -138,6 +146,17 @@ pub enum Event {
     ColorSampled {
         rgb: Rgb,
         oklch: [f32; 3],
+    },
+    /// A recording started; `palette` follows after `ms`.
+    Recording {
+        ms: u32,
+    },
+    /// The most frequent colors of a recording, most frequent first (at most 12).
+    Palette {
+        entries: Vec<PaletteEntry>,
+    },
+    Diagnostics {
+        text: String,
     },
     PickStarted,
     /// The pixels around the pointer while picking: `size` × `size`, row by row, and the one
@@ -365,6 +384,14 @@ pub struct StateSnapshot {
 }
 
 /// The picked game window and how it is right now.
+/// One color of a recording: the most frequent exact color of a group of near-identical ones,
+/// and the group's share of the samples (0–1).
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub struct PaletteEntry {
+    pub rgb: Rgb,
+    pub share: f32,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub struct WindowStatus {
     /// Its title, or the class it's known by while it isn't open.

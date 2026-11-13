@@ -556,8 +556,9 @@ Hotkeys live in the engine, so they keep working with the UI closed, which is wh
 | `pick_color` | — | `pick_started`, `magnifier` frames, then `color_picked` or `pick_cancelled` (the engine grabs the pointer with a crosshair; Escape or another button cancels; refused while watching) |
 | `cancel_pick` | — | `pick_cancelled` |
 | `sample_center` | — | `color_sampled {rgb, oklch}` |
-| `record_palette` | `ms` | `palette {entries}` |
+| `record_palette` | `ms` (100–10,000) | `recording {ms}` now, then `palette {entries}` (at most 12, most frequent first, each with its share) to that client; reads the anchor pixel of the watched pattern every 4 ms, from the drawable the hot thread reads |
 | `classify` | `colors` (up to 256) | `classified {verdicts}` (powers the UI's shade strips and "Check hex") |
+| `diagnostics` | — | `diagnostics {text}`: the §17 text block (`glint-ctl diag` and *Copy diagnostics*) |
 | `run_lab` | `scenario`, `count` | `lab_progress`, `lab_result` |
 | `ui_geometry` | `x`, `y`, `w`, `h` | — (used for the overlap warning) |
 | `detach` · `quit` · `ping` | — | `bye` · `bye` · `pong` |
