@@ -67,6 +67,10 @@ unwrap_used = "warn"
 [profile.dev.package.glint-core]
 opt-level = 3
 
+# proptest's value generation dominates the property tests' run time in an unoptimized build.
+[profile.dev.package.proptest]
+opt-level = 3
+
 [profile.release]
 opt-level = 3
 lto = "fat"

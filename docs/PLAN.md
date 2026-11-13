@@ -72,9 +72,9 @@ Every rule you gave becomes a precise requirement, a mechanism that enforces it,
 | R4 | Speed and one-click-per-appearance never conflict | Faster settings can't add clicks; safer settings can't add delay | Rising-edge / falling-edge split (§5.5) | `flicker`, `rapid` |
 | R5 | Similar shades only, never other colors even if similar | The range is shades of one hue, tightly bounded; explicit exclusions always win | OKLCh shade model compiled into a lookup table (§5.4) | `near-miss`, `distractor` |
 | R6 | Normal mouse clicks or specific keyboard keys | Any mouse button or any physical key, with a hold time | XTest injector (§6) | `action-matrix` |
-| R7 | Nothing while the color is gone; fire only at the start | Firing requires having *seen* the color absent first. No click when you start watching, when the window moves, or when it comes back to front while the color is already showing | Observed-absence re-arm + "latch if already present" on every (re)start (§5.5) | `arm-while-present`, `move`, `focus` |
+| R7 | Nothing while the color is gone; fire only at the start | Firing requires having *seen* the color absent first. No click when you start watching, when the window moves, or when it comes back to front while the color is already showing | Observed-absence re-arm + every (re)start begins latched (§5.5, ADR 0007) | `arm-while-present`, `move`, `focus` |
 
-> **Definition — appearance.** An appearance begins at the first check whose result is *Enter* after Glint has observed the color absent for at least `rearm_absent_ms` **and** at least `rearm_absent_samples` checks. It ends when that same absence condition is met again. Anything that vanishes for less than the re-arm window is part of the same appearance.
+> **Definition — appearance.** An appearance begins at the first check whose result is *Enter* after Glint has observed the color absent for at least `rearm_absent_ms` **and** at least `rearm_absent_samples` checks (observed: a stall between two checks doesn't count as watching, §5.5). It ends when that same absence condition is met again. Anything that vanishes for less than the re-arm window is part of the same appearance.
 
 ---
 
@@ -365,24 +365,26 @@ Test vectors (cross-check them against the `palette` crate in a unit test): `#FF
 
 ### 5.5 The trigger state machine
 
-States: **Stopped** · **Idle** (watching; absence has been observed) · **Confirming** (only if you enable confirmation) · **Latched** (fired; waiting for an observed absence).
+States: **Stopped** · **Paused** (started, but the target window isn't in front) · **Idle** (watching; absence has been observed) · **Confirming** (only if you enable confirmation) · **Latched** (fired or (re)started; waiting for an observed absence).
 
 | From | Check result | Condition | To | Output |
 |---|---|---|---|---|
-| Stopped | — | Start | **Latched** if the color is present right now (unless `fire_if_present_on_start`), otherwise **Idle** | — |
+| Stopped | — | Manual Start (button, hotkey, `start`, `--start-on-launch`) | **Latched** with a fresh absence count, whatever the color is doing; **Idle** with `fire_if_present_on_start` | — |
 | Idle | Enter | `confirm_samples = 1` and `confirm_min_ms = 0` | Latched | **FIRE** |
 | Idle | Enter | confirmation enabled | Confirming | — |
 | Idle | Present or Absent | — | Idle | — |
 | Confirming | Enter | count and time reached | Latched | **FIRE** |
 | Confirming | Present or Absent | — | Idle | — |
 | Latched | Enter or Present | — | Latched (absence counter reset) | — |
-| Latched | Absent | absent for ≥ `rearm_absent_ms` **and** ≥ `rearm_absent_samples` checks, both counted from the *first observed* absent check | Idle | — |
-| Any watching state | — | Epoch changed (moved, resized, profile edited, focus regained) | As if Stopped → Start (latches if present) | Release held input |
-| Any | — | Stop, emergency stop, focus lost, target hidden or closed | Stopped | Release held input |
+| Latched | Absent | absent for ≥ `rearm_absent_ms` **and** ≥ `rearm_absent_samples` checks, both counted from the *first observed* absent check; between two absent checks at most the check gap counts (four periods, ≥ 2 ms) | Idle | — |
+| Any watching state or Paused | — | Epoch changed (moved, resized, profile edited, back in front) | **Latched** with a fresh absence count; `fire_if_present_on_start` doesn't apply | Release held input |
+| Any watching state | — | Target window left the front (*Only click in this window*) | Paused | Release held input |
+| Paused | any | — | Paused | — |
+| Any | — | Stop, emergency stop, safety stop, target hidden or closed, screen locked | Stopped; only a manual Start leaves it (a restart doesn't) | Release held input |
 
-**What FIRE does, in this order.** First it sets the latch, so whatever happens next this appearance is consumed and can never produce a late click. Then two safety checks run. If the previous click was less than `min_fire_interval_ms` ago, the click is *suppressed* (counted and shown in diagnostics). If this click would exceed `max_clicks_per_sec` within the last second, the **safety stop** trips: Glint stops, releases input, and shows "Stopped: 16 clicks in 1 s — looks like a loop". That catches feedback loops where the click itself makes the color blink. Otherwise the press goes out.
+**What FIRE does, in this order.** First it sets the latch, so whatever happens next this appearance is consumed and can never produce a late click. Then two safety checks run. If the previous click was less than the minimum gap ago (`min_fire_interval_ms`, raised to `hold_ms` + 1 so a click can never come due while the previous one is held; ADR 0007), the click is *suppressed* (counted and shown in diagnostics). If this click would exceed `max_clicks_per_sec` within the last second, the **safety stop** trips: Glint stops, releases input, and shows "Stopped: 16 clicks in 1 s — looks like a loop". That catches feedback loops where the click itself makes the color blink. Otherwise the press goes out.
 
-**Why absence is counted from observed checks only.** If the engine stalls for 30 ms (a system hiccup) and the next check finds the color gone, the color may only have blinked for 1 ms. Counting from the last time it was *present* would re-arm on an absence nobody actually saw, and could double-click. Counting only observed absence is never wrong in the dangerous direction.
+**Why absence is counted from observed checks only.** If the engine stalls for 30 ms (a system hiccup) and the next check finds the color gone, the color may only have blinked for 1 ms. Counting from the last time it was *present* would re-arm on an absence nobody actually saw, and could double-click. Counting only observed absence is never wrong in the dangerous direction. The same goes for gaps *inside* an absence: if a stall hides the color between two short dropouts, two absent checks 45 ms apart don't prove 45 ms of absence. So between two consecutive absent checks Glint credits at most the check gap (four check periods, the stall threshold of §5.6, and at least 2 ms) toward `rearm_absent_ms`; a stall can delay re-arming, never cause it (ADR 0007).
 
 **Why confirmation is off by default.** Glint checks far faster than any screen refreshes, so two consecutive checks usually see the same frame; "confirm over 2 checks" adds delay without proving anything. Pixel agreement (§5.3) filters noise at zero cost. If you do want time-based confirmation, set `confirm_min_ms` to at least one frame (7 ms at 144 Hz) and accept that delay.
 
@@ -391,8 +393,8 @@ States: **Stopped** · **Idle** (watching; absence has been observed) · **Confi
 1. Every FIRE happens on an Enter result.
 2. Between any two FIREs there is an observed absence run that satisfies both re-arm conditions.
 3. No two FIREs are closer together than `min_fire_interval_ms`.
-4. After any (re)start with the color present, no FIRE happens until an observed absence (unless `fire_if_present_on_start`).
-5. After a safety stop, no FIRE happens until a manual Start.
+4. After any (re)start, no FIRE happens until an observed absence that satisfies both re-arm conditions, whether or not the color was present (unless `fire_if_present_on_start` on a manual Start; ADR 0007).
+5. After a safety stop, no FIRE happens until a manual Start (restarts and focus changes don't count).
 6. Each FIRE produces exactly one press and exactly one release, in that order.
 
 | Setting | Default | Range | Meaning |
@@ -401,11 +403,11 @@ States: **Stopped** · **Idle** (watching; absence has been observed) · **Confi
 | `confirm_min_ms` | 0 | 0–50 | Minimum match duration before firing |
 | `rearm_absent_ms` | 40 | 0–2000 | Gaps shorter than this belong to the same appearance |
 | `rearm_absent_samples` | 2 | 1–100 | Absent checks needed on top of the time |
-| `min_fire_interval_ms` | 25 | 0–1000 | Absolute floor between two clicks |
+| `min_fire_interval_ms` | 25 | 0–1000 | Absolute floor between two clicks; the engine uses at least `hold_ms` + 1 |
 | `max_clicks_per_sec` | 15 | 1–100 | Safety-stop threshold |
 | `fire_if_present_on_start` | off | — | Click immediately if the color is already showing when you press Start |
 
-A complete Rust version of this state machine, with a test, is in Appendix A.1.
+The implementation is `glint-core/src/trigger.rs`, with scenario tests and property tests for the six invariants; Appendix A.1 summarizes it.
 
 ### 5.6 Pacing and scheduling
 
@@ -458,11 +460,11 @@ Glint injects input with **XTest** (`FakeInput`, extension version 2.2), which n
 | 2 | One-frame dropouts or a blinking animation during an appearance | Observed-absence re-arm window | `flicker` |
 | 3 | A fade passes through the range | It's one appearance, so one click; exclude colors for hues it passes through | `fade` |
 | 4 | A similar but wrong color | Tight start range + exclude list | `near-miss` |
-| 5 | Pressing Start while the color is already showing | Latch-if-present on every start | `arm-while-present` |
-| 6 | The window moves or resizes, or monitors change | Epoch restart, latching if present | `move` |
+| 5 | Pressing Start while the color is already showing | Every start begins latched | `arm-while-present` |
+| 6 | The window moves or resizes, or monitors change | Epoch restart, which begins latched | `move` |
 | 7 | The window comes back to the front with the color showing | Regaining focus counts as a restart | `focus` |
 | 8 | You edit the range while running | Lookup-table swap counts as a restart | `live-edit` |
-| 9 | An engine stall followed by a late check | Absence counted only from observed checks | `stall` |
+| 9 | An engine stall followed by a late check | Absence counted only from observed checks; a stall between checks doesn't count as absence | `stall` |
 | 10 | Two engines on the same display | Single-instance lock | `two-engines` |
 | 11 | The click itself makes the color blink (a feedback loop) | Safety stop on clicks per second | `feedback` |
 | 12 | A stuck key auto-repeating | 200 ms hold cap + guaranteed releases | `kill-mid-press` |
@@ -1258,164 +1260,47 @@ These are starting points, not drop-in code: the names follow this plan and the 
 
 ### A.1 Trigger state machine (`glint-core/src/trigger.rs`)
 
+Implemented in Phase 1; the source and its tests are the reference (ADR 0007). Its shape:
+
 ```rust
-use std::collections::VecDeque;
-use std::time::{Duration, Instant};
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Verdict { Absent, Present, Enter } // Enter implies Present
-
-impl Verdict {
-    pub fn present(self) -> bool { self != Verdict::Absent }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct TriggerCfg {
-    pub confirm_samples: u32,      // ≥ 1
-    pub confirm_min: Duration,     // zero = off
-    pub rearm_absent: Duration,
-    pub rearm_absent_samples: u32, // ≥ 1
-    pub min_fire_interval: Duration,
-    pub max_clicks_per_sec: u32,
-    pub fire_if_present_on_start: bool,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum Phase {
-    Stopped,
-    Idle,
-    Confirming { since: Instant, count: u32 },
-    Latched { absent_since: Option<Instant>, absent_n: u32 },
-}
-
-#[derive(Debug, PartialEq, Eq)]
+pub enum Verdict { Absent, Present, Enter }            // from the sample pattern (§5.3); Enter implies Present
 pub enum Step { None, Fire, Suppressed, SafetyStop }
 
-pub struct Trigger {
-    cfg: TriggerCfg,
-    phase: Phase,
-    last_fire: Option<Instant>,
-    recent: VecDeque<Instant>, // never grows past its initial capacity
-}
-
 impl Trigger {
-    pub fn new(cfg: TriggerCfg) -> Self {
-        let recent = VecDeque::with_capacity(cfg.max_clicks_per_sec as usize + 1);
-        Self { cfg, phase: Phase::Stopped, last_fire: None, recent }
-    }
-
-    /// Start, focus regained, target moved, profile swapped. Never fire for a color
-    /// that was already showing when watching (re)started (rule R7).
-    pub fn begin_watch(&mut self, v: Verdict) {
-        self.phase = if v.present() && !self.cfg.fire_if_present_on_start {
-            Phase::Latched { absent_since: None, absent_n: 0 }
-        } else {
-            Phase::Idle
-        };
-    }
-
-    pub fn stop(&mut self) { self.phase = Phase::Stopped; }
-
-    pub fn step(&mut self, now: Instant, v: Verdict) -> Step {
-        match self.phase {
-            Phase::Stopped => Step::None,
-            Phase::Idle => match v {
-                Verdict::Enter if self.cfg.confirm_samples <= 1 && self.cfg.confirm_min.is_zero() => {
-                    self.fire(now)
-                }
-                Verdict::Enter => {
-                    self.phase = Phase::Confirming { since: now, count: 1 };
-                    Step::None
-                }
-                _ => Step::None, // Present alone never starts an appearance
-            },
-            Phase::Confirming { since, count } => {
-                if v != Verdict::Enter {
-                    self.phase = Phase::Idle;
-                    return Step::None;
-                }
-                let count = count + 1;
-                if count >= self.cfg.confirm_samples && now.duration_since(since) >= self.cfg.confirm_min {
-                    self.fire(now)
-                } else {
-                    self.phase = Phase::Confirming { since, count };
-                    Step::None
-                }
-            }
-            Phase::Latched { absent_since, absent_n } => {
-                if v.present() {
-                    self.phase = Phase::Latched { absent_since: None, absent_n: 0 };
-                } else {
-                    // Count only absence that was actually observed (§5.5).
-                    let since = absent_since.unwrap_or(now);
-                    let n = absent_n + 1;
-                    self.phase = if n >= self.cfg.rearm_absent_samples
-                        && now.duration_since(since) >= self.cfg.rearm_absent
-                    {
-                        Phase::Idle
-                    } else {
-                        Phase::Latched { absent_since: Some(since), absent_n: n }
-                    };
-                }
-                Step::None
-            }
-        }
-    }
-
-    fn fire(&mut self, now: Instant) -> Step {
-        // 1. Consume the appearance first, so nothing below can lead to a late click.
-        self.phase = Phase::Latched { absent_since: None, absent_n: 0 };
-        // 2. Absolute floor between clicks.
-        if self.last_fire.is_some_and(|t| now.duration_since(t) < self.cfg.min_fire_interval) {
-            return Step::Suppressed;
-        }
-        // 3. Safety stop for feedback loops.
-        while self.recent.front().is_some_and(|&t| now.duration_since(t) >= Duration::from_secs(1)) {
-            self.recent.pop_front();
-        }
-        if self.recent.len() as u32 >= self.cfg.max_clicks_per_sec {
-            self.phase = Phase::Stopped;
-            return Step::SafetyStop;
-        }
-        self.recent.push_back(now);
-        self.last_fire = Some(now);
-        Step::Fire
-    }
+    pub fn start(&mut self);   // manual Start: Latched (Idle with fire_if_present_on_start); no-op while started
+    pub fn restart(&mut self); // epoch change: Latched with a fresh absence count; no-op while stopped
+    pub fn pause(&mut self);   // the target window left the front; a restart resumes
+    pub fn stop(&mut self);    // only a manual Start leaves Stopped, also after a safety stop
+    pub fn step(&mut self, now: Instant, v: Verdict) -> Step;
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn ms(n: u64) -> Duration { Duration::from_millis(n) }
-    fn cfg() -> TriggerCfg {
-        TriggerCfg { confirm_samples: 1, confirm_min: Duration::ZERO, rearm_absent: ms(40),
-                     rearm_absent_samples: 2, min_fire_interval: ms(25), max_clicks_per_sec: 15,
-                     fire_if_present_on_start: false }
-    }
+// Latched + Absent: count only absence that was actually observed.
+if let Some(last) = absence.last {
+    absence.observed += now.saturating_duration_since(last).min(cfg.max_check_gap); // a stall isn't absence
+}
+absence.checks += 1;
+absence.last = Some(now);
+if absence.checks >= cfg.rearm_absent_samples && absence.observed >= cfg.rearm_absent {
+    self.phase = Phase::Idle;
+}
 
-    #[test]
-    fn a_dropout_shorter_than_rearm_never_refires() {
-        let mut t = Trigger::new(cfg());
-        let t0 = Instant::now();
-        t.begin_watch(Verdict::Absent);
-        assert_eq!(t.step(t0, Verdict::Enter), Step::Fire);
-        assert_eq!(t.step(t0 + ms(10), Verdict::Absent), Step::None); // absence starts here
-        assert_eq!(t.step(t0 + ms(30), Verdict::Absent), Step::None); // only 20 ms observed
-        assert_eq!(t.step(t0 + ms(31), Verdict::Enter), Step::None);  // same appearance
+fn fire(&mut self, now: Instant) -> Step {
+    self.phase = Phase::Latched(Absence::default()); // 1. consume the appearance before anything else
+    if self.last_fire.is_some_and(|t| now.saturating_duration_since(t) < self.cfg.min_fire_interval) {
+        return Step::Suppressed;                     // 2. the floor, at least hold_ms + 1
     }
-
-    #[test]
-    fn starting_while_present_waits_for_the_color_to_leave() {
-        let mut t = Trigger::new(cfg());
-        let t0 = Instant::now();
-        t.begin_watch(Verdict::Enter);
-        assert_eq!(t.step(t0, Verdict::Enter), Step::None);
-        assert_eq!(t.step(t0 + ms(1), Verdict::Absent), Step::None);
-        assert_eq!(t.step(t0 + ms(50), Verdict::Absent), Step::None); // 49 ms, 2 checks: re-armed
-        assert_eq!(t.step(t0 + ms(51), Verdict::Enter), Step::Fire);
+    if self.history.last_second(now) >= self.cfg.max_clicks_per_sec {
+        self.phase = Phase::Stopped;                 // 3. fixed 100-entry history: never allocates
+        return Step::SafetyStop;
     }
+    self.history.push(now);
+    self.last_fire = Some(now);
+    Step::Fire
 }
 ```
+
+`Hold` (same file) keeps the press and release timing (`press`, `due`, `release`) that the injector follows,
+so invariant 6 is tested without an X server.
 
 ### A.2 Hot loop (`glint-engine/src/hot.rs`)
 
@@ -1427,6 +1312,7 @@ mod tests {
 pub fn run_hot(mut h: Hot) -> ! {
     rt::set_timerslack_ns(1);
     let mut seen_epoch = u16::MAX;
+    let mut was_armed = false;
     let mut px = Pixels::new(); // fixed capacity (64), never reallocates
     let mut next = Instant::now();
     loop {
@@ -1436,15 +1322,15 @@ pub fn run_hot(mut h: Hot) -> ! {
         if ctl.epoch != seen_epoch {
             seen_epoch = ctl.epoch;
             h.profile = h.profiles.load_full();
+            h.trigger.set_cfg(h.profile.trigger);
             let _ = h.injector.release_now();
-            if ctl.armed {
-                match h.capture.grab(h.profile.rect_at(ctl.origin), &mut px) {
-                    Ok(()) => h.trigger.begin_watch(h.profile.classify(&px)),
-                    Err(e) => { h.fail(e); continue; }
-                }
-            } else {
-                h.trigger.stop();
+            // Every (re)start begins latched, so no capture is needed to decide (ADR 0007).
+            match (was_armed, ctl.armed) {
+                (false, true) => h.trigger.start(),  // a manual Start
+                (true, true) => h.trigger.restart(), // moved, resized, profile swapped, back in front
+                (_, false) => h.trigger.stop(),
             }
+            was_armed = ctl.armed;
             next = Instant::now();
         }
         if !ctl.armed {
@@ -1455,11 +1341,13 @@ pub fn run_hot(mut h: Hot) -> ! {
         let t_req = Instant::now();
         if let Err(e) = h.capture.grab(h.profile.rect_at(ctl.origin), &mut px) {
             h.fail(e); // release input, request a stop with a reason, push an event
+            was_armed = false; // we stopped ourselves: the next Start is a manual Start
             continue;
         }
         let t_cap = Instant::now();
         let verdict = h.profile.classify(&px); // table lookups + pixel agreement
 
+        let _ = h.injector.service(t_cap); // a due release goes out before this check can fire (ADR 0007)
         match h.trigger.step(t_cap, verdict) {
             Step::Fire => {
                 let _ = h.injector.press(t_cap);
@@ -1468,11 +1356,11 @@ pub fn run_hot(mut h: Hot) -> ! {
             Step::Suppressed => h.events.push_suppressed(t_cap),
             Step::SafetyStop => {
                 let _ = h.injector.release_now();
-                h.request_stop(StopReason::SafetyStop);
+                h.request_stop(StopReason::SafetyStop); // clears `armed` and bumps the epoch
+                was_armed = false; // even if a Start lands before the next iteration, it's a manual Start
             }
             Step::None => {}
         }
-        let _ = h.injector.service(t_cap); // timed release
         h.preview.publish(&px, verdict);   // wait-free hand-off for the UI swatch
 
         next += h.profile.period;
