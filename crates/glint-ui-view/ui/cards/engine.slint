@@ -1,8 +1,18 @@
 // SPDX-License-Identifier: MIT
-// More options → ENGINE (PLAN §12.4). Phase 4 has the close policy; the rest comes in Phase 6.
+// More options → ENGINE (PLAN §12.4): the close policy, the hot thread's priority, live response
+// numbers, the latency test, the active profile, diagnostics, and importing or exporting a
+// profile.
 
-import { Card, Segmented, FieldRow } from "../pulse/components.slint";
+import { Theme } from "../pulse/theme.slint";
+import { Card, Segmented, FieldRow, PButton, Select } from "../pulse/components.slint";
 import { Form, Actions } from "../state.slint";
+
+component Value inherits Text {
+    color: Theme.text-secondary;
+    font-size: Theme.font-caption;
+    vertical-alignment: center;
+    overflow: elide;
+}
 
 export component EngineCard inherits Card {
     title: "ENGINE";
@@ -15,6 +25,86 @@ export component EngineCard inherits Card {
             enabled: Form.editable;
             changed => {
                 Actions.form-changed();
+            }
+        }
+    }
+
+    FieldRow {
+        label: "Real-time";
+        Value {
+            text: Form.realtime-text;
+        }
+    }
+
+    FieldRow {
+        label: "Response";
+        Value {
+            text: Form.response-text;
+        }
+    }
+
+    FieldRow {
+        label: "Latency test";
+        PButton {
+            text: Form.latency-running ? "Running…" : "Run";
+            enabled: !Form.latency-running;
+            clicked => {
+                Actions.latency-test();
+            }
+        }
+
+        Value {
+            text: Form.latency-running ? "about a minute…" : "in a test X server";
+        }
+    }
+
+    if Form.latency-text != "": HorizontalLayout {
+        padding-left: Theme.label-width + Theme.gap-s;
+        Value {
+            text: Form.latency-text;
+            wrap: word-wrap;
+        }
+    }
+
+    FieldRow {
+        label: "Profile";
+        Select {
+            width: 200px;
+            name: "Profile";
+            model: Form.profile-names;
+            current-index <=> Form.profile-index;
+            enabled: Form.editable;
+            open-upward: true;
+            selected(i) => {
+                Actions.use-profile(i);
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: Theme.gap-s;
+        alignment: start;
+        PButton {
+            text: "Copy diagnostics";
+            enabled: Form.editable;
+            clicked => {
+                Actions.copy-diagnostics();
+            }
+        }
+
+        PButton {
+            text: "Import";
+            enabled: Form.editable;
+            clicked => {
+                Actions.import-profile();
+            }
+        }
+
+        PButton {
+            text: "Export";
+            enabled: Form.editable;
+            clicked => {
+                Actions.export-profile();
             }
         }
     }

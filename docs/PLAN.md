@@ -725,14 +725,14 @@ The hero card works exactly like Pulse's: one big button and a status line. **CO
 ▾ More options
 ┌──────────────────────────────────────────────────────────────┐
 │ DETECTION                                                    │
-│ Pattern         ( Pixel  [3×3]  5×5  Custom )                │
+│ Pattern         ( Pixel  2×2  [3×3]  5×5  Plus )             │
 │ Must match      [ -   5   + ]  of 9 pixels                   │
 │ Checks          ( Eco  [Balanced]  Max )  2,000/sec          │
 │ Gone after      [ -  10   + ]  ms without the color          │
 │ ▲ Under 15 ms, flicker can count as a new appearance.        │
 │ Min gap         [ -  25   + ]  ms between clicks             │
 │ Safety stop     [ -  15   + ]  clicks/sec                    │
-│ Read from       [ Auto       ▾ ]  window buffer              │
+│ Read from       [ Auto       ▾ ]  now: window-buffer         │
 │ Offset          X [ -  0  + ]   Y [ -  0  + ]                │
 └──────────────────────────────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
@@ -743,21 +743,27 @@ The hero card works exactly like Pulse's: one big button and a status line. **CO
 │ Hue ±           [ -   7   + ]  degrees                       │
 │ Shade strip     ░░░░██████████░░  lightness range            │
 │ Hue strip       ░░░░░░████░░░░░░  hue range                  │
-│ Never match     ■ #6BD13B  ×      [ + Add ]                  │
-│ [ Record 5 s ]   [ Sample center (F6) ]   [ Check hex ]      │
+│ Also match      ■ #CB49DE ×                                  │
+│ Never match     ■ #6BD13B ×                                  │
+│ Check hex       [■ #CB49DE      ]                            │
+│                 ✓ Counts: it starts an appearance.           │
+│                 [ Also match ]  [ Never match ]              │
+│ Recorded        ■ ■ ■ ■ ■ ■                                  │
+│ [ Record 5 s ]   [ Sample center (F6) ]                      │
 └──────────────────────────────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
 │ ENGINE                                                       │
 │ When closing    ( [Ask]  Keep running  Quit )                │
 │ Real-time       on (rtkit)                                   │
-│ Response        p50 0.42 · p99 0.91 ms · 2,000/sec           │
-│ [ Run latency test ]  last: 1,000 runs · 0 extra             │
+│ Response        2,000/sec · read p50 0.02, p99 0.40 ms       │
+│ Latency test    [ Run ]  in a test X server                  │
+│                 last: 200 runs · 0 extra · 0 missed · …      │
 │ Profile         [ Sober — green flash  ▾ ]                   │
 │ [ Copy diagnostics ]   [ Import ]   [ Export ]               │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-The labels are plain words for the settings in §5: *Must match* is `k_enter` (with `k_stay` derived), *Gone after* is `rearm_absent_ms`, *Min gap* is `min_fire_interval_ms`, *Safety stop* is `max_clicks_per_sec`, and *Read from* is the capture backend. Each shade strip is a row of 16 swatches generated around your color and classified by the engine (`classify`): swatches that count are drawn at full color, the rest dimmed to 25%, so you can *see* where your range starts and stops.
+The labels are plain words for the settings in §5: *Must match* is `k_enter` (with `k_stay` derived), *Gone after* is `rearm_absent_ms`, *Min gap* is `min_fire_interval_ms`, *Safety stop* is `max_clicks_per_sec`, and *Read from* is the capture backend. Each shade strip is a row of 16 swatches generated around your color and classified by the engine (`classify`): swatches that count are drawn at full color, the rest dimmed to 25%, so you can *see* where your range starts and stops. *Check hex*, a recorded swatch and *Sample center* all put a color in one place, with *Also match* and *Never match* to add it; the latency test runs `glint-lab basic` in a test X server; *Import* and *Export* use the desktop's file dialog (xdg-desktop-portal); *Copy diagnostics* copies the §17 text block (ADR 0019).
 
 ### 12.5 Close dialog
 
@@ -827,7 +833,7 @@ Write the way Pulse does: short, plain, sentence case, status facts joined with 
 
 - **Pick (from the screen):** the engine grabs the pointer with a crosshair cursor, and the COLOR card turns into a live magnifier (11 × 11 pixels at ×8, updated up to 30 times a second by the engine) with the hex value under the pointer. Click to choose; Escape or a right-click cancels. Picking stops watching first.
 - **Sample center (F6):** adds the color that's at the watched spot right now. This is the practical way to capture a color that only appears briefly in a game, and it works with the UI closed.
-- **Record 5 s:** collects every color seen at the watched spot for five seconds, groups near-identical ones, and shows the 12 most frequent as swatches. Click a swatch to include it, or mark it *Never match*.
+- **Record 5 s:** collects every color seen at the watched spot for five seconds, groups near-identical ones, and shows the 12 most frequent as swatches. Click a swatch to check it, then *Also match* or *Never match* it (ADR 0019).
 - **Check hex:** paste a hex value to see whether it counts, using the very same lookup table as the engine (`classify`).
 
 ---

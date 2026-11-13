@@ -16,6 +16,7 @@ use glint_core::profile::{ActionKind, KeySpec};
 
 use crate::bind::{self, Fields};
 
+mod engine;
 mod range;
 use crate::client::{FromEngine, Link};
 use crate::keys::{self, Resolver};
@@ -54,6 +55,8 @@ pub struct App {
     last_geometry: Option<(i32, i32, u32, u32)>,
     /// More options → COLOR RANGE.
     range: range::RangeState,
+    /// More options → ENGINE: the profiles the engine has.
+    profile_names: Vec<String>,
 }
 
 thread_local! {
@@ -95,6 +98,7 @@ impl App {
             geometry: slint::Timer::default(),
             last_geometry: None,
             range: range::RangeState::default(),
+            profile_names: Vec::new(),
         };
         APP.with(|slot| *slot.borrow_mut() = Some(app));
         with(|app| {
@@ -153,6 +157,7 @@ impl App {
         };
         form.set_backend_now(now.into());
         self.show_range();
+        self.show_engine();
         let banner = if self.xwayland {
             "This is XWayland: only X11 apps can be watched and clicked."
         } else {
@@ -214,14 +219,11 @@ impl App {
                 self.starting = false;
                 self.last_geometry = None;
                 for request in [
-                    Request::Subscribe {
-                        telemetry_hz: 0,
-                        live_hz: LIVE_HZ,
-                        trace: false,
-                    },
+                    self.subscription(LIVE_HZ),
                     Request::GetState,
                     Request::GetProfile { name: None },
                     Request::GetSettings,
+                    Request::ListProfiles,
                 ] {
                     self.link.send(request);
                 }
@@ -246,6 +248,7 @@ impl App {
                 }
                 if s.profile != self.state.profile && !s.profile.is_empty() {
                     self.link.send(Request::GetProfile { name: None });
+                    self.link.send(Request::ListProfiles);
                 }
                 self.state = s;
             }
@@ -255,7 +258,13 @@ impl App {
             }
             Event::Classified { verdicts } => self.classified(&verdicts),
             Event::Palette { entries } => self.recorded(&entries),
-            Event::Settings { settings } => self.settings = *settings,
+            Event::Settings { settings } => {
+                self.settings = *settings;
+                self.settings_arrived();
+            }
+            Event::Telemetry(t) => self.telemetry(&t),
+            Event::Profiles { names, active } => self.profiles(names, &active),
+            Event::Diagnostics { text } => self.diagnostics(&text),
             Event::Live { rgb, verdict } if self.watching() => {
                 if self.ui.upgrade().is_some_and(|ui| ui.window().is_minimized()) {
                     self.hide_live();
@@ -340,13 +349,15 @@ impl App {
         if self.hidden.running() {
             return;
         }
-        self.link.send(live(0));
-        let (weak, link) = (self.ui.clone(), self.link.clone());
+        self.link.send(self.subscription(0));
+        let weak = self.ui.clone();
         self.hidden
             .start(slint::TimerMode::Repeated, Duration::from_secs(1), move || {
                 if weak.upgrade().is_some_and(|ui| !ui.window().is_minimized()) {
-                    link.send(live(LIVE_HZ));
-                    with(|app| app.hidden.stop());
+                    with(|app| {
+                        app.link.send(app.subscription(LIVE_HZ));
+                        app.hidden.stop();
+                    });
                 }
             });
     }
@@ -538,13 +549,5 @@ impl App {
             None => profile.color.include.push(entry),
         }
         self.send_profile(profile);
-    }
-}
-
-fn live(hz: u8) -> Request {
-    Request::Subscribe {
-        telemetry_hz: 0,
-        live_hz: hz,
-        trace: false,
     }
 }

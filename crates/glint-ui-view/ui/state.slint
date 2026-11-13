@@ -27,6 +27,8 @@ export global Ui {
     in property <string> stop-key: "F8";
 
     in-out property <bool> more-open;
+    // The diagnostics text the window copies to the clipboard.
+    in property <string> diagnostics;
 }
 
 export global Form {
@@ -116,6 +118,12 @@ export global Form {
 
     // More options → ENGINE
     in-out property <int> closing-index;
+    in property <string> realtime-text;
+    in property <string> response-text: "not watching";
+    in property <bool> latency-running;
+    in property <string> latency-text;
+    in property <[string]> profile-names;
+    in-out property <int> profile-index;
 }
 
 export global Actions {
@@ -140,4 +148,10 @@ export global Actions {
     callback record();
     callback choose-recorded(int);
     callback sample-for-check();
+    // ENGINE
+    callback latency-test();
+    callback use-profile(int);
+    callback copy-diagnostics();
+    callback import-profile();
+    callback export-profile();
 }

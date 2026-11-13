@@ -17,6 +17,7 @@ glint-x11.workspace = true
 serde_json.workspace = true
 glint-ui-view.workspace = true
 slint.workspace = true
+zbus.workspace = true
 
 [lints]
 workspace = true

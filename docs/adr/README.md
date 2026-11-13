@@ -23,6 +23,7 @@ plan also updates the affected plan section in the same commit.
 | [0016](0016-mit-license-and-about-dialog.md) | MIT license, with Pulse's About dialog showing AboutSlint | Accepted (owner decision) | §2, §12.3, §13, §14, §16, §18, §21 |
 | [0017](0017-hot-thread-scheduling.md) | The hot thread's scheduling: rtkit only, a safe memory lock, and the screen lock by signal | Accepted | §5.6, §8, §10, §19 |
 | [0018](0018-damage-backend.md) | The `damage` backend: reports on the hot connection, a 15 ms check gap, opt-in only | Accepted | §5.2, §5.5, §19, §21 |
+| [0019](0019-more-options-panels.md) | More options: what the plan left open about its three panels | Accepted | §10, §12.4, §12.9, §17, §19 |
 
 ## Template
 

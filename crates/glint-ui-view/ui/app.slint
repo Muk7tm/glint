@@ -30,6 +30,24 @@ export component AppWindow inherits Window {
     callback keep-running();
     callback quit-app();
 
+    // *Copy diagnostics* (§12.4): Slint copies to the clipboard from a text input, so an invisible
+    // one holds the text.
+    diagnostics-text := TextInput {
+        x: 0;
+        y: 0;
+        width: 0px;
+        height: 0px;
+        opacity: 0;
+        read-only: true;
+        text: Ui.diagnostics;
+    }
+
+    public function copy-diagnostics() {
+        diagnostics-text.select-all();
+        diagnostics-text.copy();
+        diagnostics-text.clear-selection();
+    }
+
     VerticalLayout {
         padding-left: Theme.gap-l;
         // The scroll area keeps a 10 px gutter for its scrollbar; the footer adds the same.

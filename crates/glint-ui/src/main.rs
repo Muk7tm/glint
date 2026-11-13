@@ -7,6 +7,7 @@ mod app;
 mod bind;
 mod client;
 mod keys;
+mod portal;
 mod spawn;
 
 use glint_ui_view::{Actions, AppWindow, Ui};
@@ -49,6 +50,12 @@ fn main() -> Result<(), slint::PlatformError> {
     actions.on_record(|| app::with(App::record));
     actions.on_choose_recorded(|i| app::with(|a| a.choose_recorded(i)));
     actions.on_sample_for_check(|| app::with(App::sample_for_check));
+    actions.on_more_toggled(|| app::with(App::more_toggled));
+    actions.on_latency_test(|| app::with(App::latency_test));
+    actions.on_use_profile(|i| app::with(|a| a.use_profile(i)));
+    actions.on_copy_diagnostics(|| app::with(App::copy_diagnostics));
+    actions.on_import_profile(|| app::with(App::import_profile));
+    actions.on_export_profile(|| app::with(App::export_profile));
     actions.on_key_captured(|text| app::with(|a| a.key_captured(&text)));
     actions.on_key_chosen(|name| app::with(|a| a.key_chosen(&name)));
     actions.on_hotkey_captured(|text| app::with(|a| a.hotkey_captured(&text)));
