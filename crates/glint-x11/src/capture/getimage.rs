@@ -30,6 +30,11 @@ impl GetImageCapture {
 }
 
 impl Capture for GetImageCapture {
+    fn set_target(&mut self, drawable: u32, fmt: PixelFormat) {
+        self.drawable = drawable;
+        self.fmt = fmt;
+    }
+
     fn grab(&mut self, rect: Rect, out: &mut [u32]) -> Result<(), CaptureError> {
         let (Ok(x), Ok(y)) = (i16::try_from(rect.x), i16::try_from(rect.y)) else {
             return Err(CaptureError::Coordinates(rect));

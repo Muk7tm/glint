@@ -21,7 +21,11 @@ const START_WAIT: Duration = Duration::from_secs(5);
 #[derive(Clone, PartialEq, Debug)]
 pub enum FromEngine {
     /// The engine answered the handshake.
-    Connected { engine_version: String },
+    Connected {
+        engine_version: String,
+        /// The display is XWayland: only X11 apps can be watched and clicked (§8).
+        xwayland: bool,
+    },
     /// One message from the engine.
     Event(Box<Event>),
     /// No engine: it couldn't be reached or started, or it went away.
@@ -201,7 +205,14 @@ fn read(stream: UnixStream, deliver: &impl Fn(FromEngine), closed: &Sender<Cmd>)
             continue;
         };
         match envelope.body {
-            Event::HelloAck { engine_version, .. } => deliver(FromEngine::Connected { engine_version }),
+            Event::HelloAck {
+                engine_version,
+                session,
+                ..
+            } => deliver(FromEngine::Connected {
+                engine_version,
+                xwayland: session.xwayland,
+            }),
             event => deliver(FromEngine::Event(Box::new(event))),
         }
     }
@@ -266,7 +277,8 @@ mod tests {
         assert_eq!(
             next(),
             FromEngine::Connected {
-                engine_version: "9.9".into()
+                engine_version: "9.9".into(),
+                xwayland: false,
             }
         );
         link.send(Request::GetState);

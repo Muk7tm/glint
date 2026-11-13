@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 
 pub use canvas::{BACKGROUND, Canvas, Drawn, GREEN, Input, InputKind};
 use glint_core::Profile;
-use glint_core::profile::Speed;
+use glint_core::profile::{Backend, Speed};
 use glint_ipc::{Client, Event, Request, StateSnapshot};
 pub use host::{Host, RealDesktop, Sandbox};
 pub use judge::{Change, Evidence, JudgeCfg, Mark, Report, Shown, Split, judge};
@@ -68,6 +68,8 @@ pub struct Options {
     pub count: Option<u32>,
     pub seed: u64,
     pub speed: Speed,
+    /// How the engine reads the screen (§5.2); window mode can read the window's own image.
+    pub backend: Backend,
     /// How long `soak` runs.
     pub duration: Duration,
 }
@@ -78,6 +80,7 @@ impl Default for Options {
             count: None,
             seed: 1,
             speed: Speed::Balanced,
+            backend: Backend::Auto,
             duration: Duration::from_secs(3600),
         }
     }
@@ -126,7 +129,14 @@ impl<'h> Session<'h> {
     pub fn profile(&self) -> Profile {
         let mut p = lab_profile();
         p.sampling.speed = self.opts.speed;
+        p.sampling.backend = self.opts.backend;
         p
+    }
+
+    /// Reads which backend the engine chose for the profile now in use, for the report title.
+    pub fn refresh_backend(&mut self) -> Result<(), LabError> {
+        self.backend = self.state()?.backend;
+        Ok(())
     }
 
     /// A request whose error reply is a failure.
@@ -197,6 +207,16 @@ pub fn parse_speed(text: &str) -> Result<Speed, String> {
             .parse()
             .map(Speed::PerSecond)
             .map_err(|_| format!("{n:?}: use eco, balanced, max, or a number of checks per second")),
+    }
+}
+
+/// Parses a `--backend` value.
+pub fn parse_backend(text: &str) -> Result<Backend, String> {
+    match text {
+        "auto" => Ok(Backend::Auto),
+        "screen" => Ok(Backend::Screen),
+        "window-buffer" => Ok(Backend::WindowBuffer),
+        n => Err(format!("{n:?}: use auto, screen or window-buffer")),
     }
 }
 

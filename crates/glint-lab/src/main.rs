@@ -9,7 +9,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::Parser;
-use glint_core::profile::Speed;
+use glint_core::profile::{Backend, Speed};
 use glint_lab::{LATER, Options, Report, SCENARIOS};
 
 #[derive(Parser, Debug)]
@@ -34,6 +34,9 @@ struct Cli {
     /// eco, balanced, max, or checks per second.
     #[arg(long, default_value = "balanced", value_parser = glint_lab::parse_speed)]
     speed: Speed,
+    /// auto, screen, or window-buffer (window-mode scenarios read the window's own image).
+    #[arg(long, default_value = "auto", value_parser = glint_lab::parse_backend)]
+    backend: Backend,
     /// How long `soak` runs.
     #[arg(long, default_value_t = 60.0)]
     minutes: f64,
@@ -81,6 +84,7 @@ fn main() -> ExitCode {
         count: cli.count,
         seed: cli.seed,
         speed: cli.speed,
+        backend: cli.backend,
         duration: Duration::from_secs_f64(cli.minutes.max(0.0) * 60.0),
     };
     if cli.real_desktop {

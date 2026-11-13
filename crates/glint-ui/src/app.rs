@@ -37,6 +37,8 @@ pub struct App {
     profile: Profile,
     settings: Settings,
     state: StateSnapshot,
+    /// The engine's display is XWayland.
+    xwayland: bool,
     shown: Fields,
     /// *Keyboard key* is chosen but has no key yet: nothing is sent until it has one.
     choosing_key: bool,
@@ -80,6 +82,7 @@ impl App {
             profile: Profile::default(),
             settings: Settings::default(),
             state: StateSnapshot::default(),
+            xwayland: false,
             shown: Fields::default(),
             choosing_key: false,
             keys: Resolver::default(),
@@ -136,6 +139,13 @@ impl App {
         let form = ui.global::<Form>();
         form.set_window_state(text.into());
         form.set_window_tone(tone);
+        form.set_watch_note(self.watch_note().into());
+        let banner = if self.xwayland {
+            "This is XWayland: only X11 apps can be watched and clicked."
+        } else {
+            ""
+        };
+        ui.global::<Ui>().set_banner(banner.into());
         ui.global::<Form>().set_editable(self.connected);
         ui.global::<Ui>().set_connected(self.connected);
         if !self.watching() {
@@ -144,6 +154,18 @@ impl App {
             let form = ui.global::<Form>();
             form.set_seeing_known(false);
             form.set_seeing_text("Off while this window covers the spot".into());
+        }
+    }
+
+    /// Under a compositor the screen shows each frame a refresh late (§2); the window's own
+    /// image doesn't (§5.2).
+    fn watch_note(&self) -> &'static str {
+        if !self.connected || !self.state.compositor || self.state.backend == "window-buffer" {
+            ""
+        } else if self.shown.watch == 1 {
+            "With a compositor, reading the screen sees changes one frame late."
+        } else {
+            "With a compositor, screen mode sees changes one frame late."
         }
     }
 
@@ -173,8 +195,9 @@ impl App {
 
     fn on_engine(&mut self, message: FromEngine) {
         match message {
-            FromEngine::Connected { .. } => {
+            FromEngine::Connected { xwayland, .. } => {
                 self.connected = true;
+                self.xwayland = xwayland;
                 self.starting = false;
                 self.last_geometry = None;
                 for request in [

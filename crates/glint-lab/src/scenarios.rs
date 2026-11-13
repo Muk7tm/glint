@@ -279,6 +279,7 @@ impl Run {
     /// server tax. Watching starts with [`Run::start`].
     fn begin(s: &mut Session, profile: &Profile, baseline: Duration) -> Result<Self, LabError> {
         s.set_profile(profile)?;
+        s.refresh_backend()?;
         let clear = s.canvas.clear()?;
         let probe = Probe::start(s.host.display())?;
         sleep(baseline);
@@ -840,10 +841,10 @@ fn with_game_window(
 fn moving(s: &mut Session) -> Result<Report, LabError> {
     with_game_window(s, |s| {
         let n = s.count(8);
-        let title = s.title("move", n);
         let mut rng = Rng::new(s.opts.seed);
         let profile = window_profile(s);
         let mut run = Run::begin(s, &profile, Duration::ZERO)?;
+        let title = s.title("move", n);
         run.start(s)?;
         for _ in 0..n {
             appear(&mut run, s, &mut rng, GREEN, (100, 200), (100, 200))?;
@@ -883,13 +884,13 @@ fn moving(s: &mut Session) -> Result<Report, LabError> {
 fn focus(s: &mut Session) -> Result<Report, LabError> {
     with_game_window(s, |s| {
         let n = s.count(8);
-        let title = s.title("focus", n);
         let mut rng = Rng::new(s.opts.seed);
         let profile = window_profile(s);
         let other = Canvas::game(s.host.display(), Rect::new(700, 150, 300, 200), OTHER)?;
         s.canvas.focus()?;
         s.canvas.warp_inside()?;
         let mut run = Run::begin(s, &profile, Duration::ZERO)?;
+        let title = s.title("focus", n);
         run.start(s)?;
         for _ in 0..n {
             appear(&mut run, s, &mut rng, GREEN, (100, 200), (100, 200))?;

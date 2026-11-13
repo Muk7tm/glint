@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
+use glint_core::profile::Backend;
 use glint_lab::{Options, Report};
 
 /// Sandboxes running at once. Each is an Xvfb plus an engine checking 2,000 times a second; a
@@ -38,9 +39,14 @@ impl Drop for Slot {
 }
 
 fn run(scenario: &str, count: u32) -> Option<Report> {
+    run_with(scenario, count, Backend::Auto)
+}
+
+fn run_with(scenario: &str, count: u32, backend: Backend) -> Option<Report> {
     let _slot = Slot::take();
     let opts = Options {
         count: Some(count),
+        backend,
         seed: 42,
         duration: Duration::from_secs(8),
         ..Options::default()
@@ -206,5 +212,21 @@ fn focus_changes() {
 fn ui_overlap() {
     if let Some(r) = run("ui-overlap", 2) {
         assert_eq!(r.appearances, 2, "{}", r.summary());
+    }
+}
+
+#[test]
+fn moving_the_window_read_from_its_own_image() {
+    if let Some(r) = run_with("move", 2, Backend::WindowBuffer) {
+        assert!(r.title.contains("backend window-buffer"), "{}", r.summary());
+        assert_eq!(r.appearances - r.optional, 4, "{}", r.summary());
+    }
+}
+
+#[test]
+fn focus_changes_read_from_the_window_s_own_image() {
+    if let Some(r) = run_with("focus", 2, Backend::WindowBuffer) {
+        assert!(r.title.contains("backend window-buffer"), "{}", r.summary());
+        assert_eq!(r.appearances - r.optional, 4, "{}", r.summary());
     }
 }

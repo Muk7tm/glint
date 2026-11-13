@@ -102,6 +102,7 @@ pub fn compile(
         trigger: profile.trigger_cfg(),
         action,
         period: profile.sampling.speed.period(),
+        target: None,
     })
 }
 
@@ -430,6 +431,10 @@ pub struct Controller {
     covered: bool,
     /// The fastest monitor's refresh rate, for the check gap under a compositor.
     refresh_hz: Option<f64>,
+    /// The window-buffer backend in use: the window and its pixel format (§5.2).
+    window_buffer: Option<(u32, PixelFormat)>,
+    /// The last self-check, per window: once per window, it takes 200 ms.
+    self_check: Option<(u32, Result<PixelFormat, String>)>,
 }
 
 impl Controller {
@@ -493,6 +498,8 @@ impl Controller {
             ui_rects: HashMap::new(),
             covered: false,
             refresh_hz,
+            window_buffer: None,
+            self_check: None,
         }
     }
 
@@ -549,6 +556,9 @@ impl Controller {
         if let Some(why) = self.window_blocker(&profile) {
             return Event::error("cannot_start", why, Some("target.window".into()));
         }
+        if profile.target.mode == TargetMode::Window {
+            self.republish();
+        }
         let origin = match self.origin(&profile) {
             Ok(o) => o,
             Err(issue) => return Event::error("cannot_start", issue.message, Some(issue.field)),
@@ -591,7 +601,11 @@ impl Controller {
                     TargetMode::Window => self.window_title(&profile),
                 },
             },
-            backend: "screen".into(),
+            backend: if self.window_buffer.is_some() && profile.target.mode == TargetMode::Window {
+                "window-buffer".into()
+            } else {
+                "screen".into()
+            },
             checks_per_sec: profile.sampling.speed.checks_per_second(),
             profile: profile.name.clone(),
             revision: self.revision,
@@ -617,10 +631,18 @@ impl Controller {
     /// Where the capture rectangle goes for `profile` on its monitor (§5.1).
     fn origin(&self, profile: &Profile) -> Result<(i16, i16), Issue> {
         let area = match profile.target.mode {
-            TargetMode::Window => self
-                .tracker
-                .rect()
-                .ok_or_else(|| Issue::new("target.window", "The game window isn't showing."))?,
+            TargetMode::Window => {
+                let rect = self
+                    .tracker
+                    .rect()
+                    .ok_or_else(|| Issue::new("target.window", "The game window isn't showing."))?;
+                // The window-buffer backend reads the window itself, in its own coordinates.
+                if self.window_buffer.is_some() {
+                    Rect::new(0, 0, rect.w, rect.h)
+                } else {
+                    rect
+                }
+            }
             TargetMode::Screen => {
                 monitors::pick(&self.monitors, &profile.target.monitor)
                     .ok_or_else(|| {
@@ -667,9 +689,19 @@ impl Controller {
             message: e.to_string(),
             field: None,
         })?;
+        // The profile's window first: the backend and the origin depend on it.
+        let window_changed = self
+            .tracker
+            .window()
+            .is_none_or(|w| !w.matches(&profile.target.window.class, &profile.target.window.title_contains));
+        if window_changed {
+            self.acquire(&profile.target.window);
+        }
+        self.choose_backend(&profile);
         let new_origin = self.origin(&profile);
         let mut compiled = compiled;
         compiled.trigger.max_check_gap = self.check_gap(&profile);
+        compiled.target = Some(self.capture_target());
         self.hot.set_profile(compiled);
         self.lut = lut;
         self.revision += 1;
@@ -680,14 +712,7 @@ impl Controller {
             self.store.save_settings(&self.settings, now);
         }
         self.active = profile.name.clone();
-        let window_changed = self
-            .tracker
-            .window()
-            .is_none_or(|w| !w.matches(&profile.target.window.class, &profile.target.window.title_contains));
         self.profiles.insert(profile.name.clone(), profile);
-        if window_changed {
-            self.acquire_window();
-        }
         self.emergency
             .set_keycodes(release_keycodes(self.profiles.values(), &self.keymap));
         if self.started {
@@ -951,7 +976,11 @@ impl Controller {
         let covered = self.started && {
             let control = self.hot.control();
             let (w, h) = self.active_profile().pattern().map_or((1, 1), |p| p.size());
-            let spot = Rect::new(i32::from(control.x), i32::from(control.y), w, h);
+            let (dx, dy) = match (self.window_buffer, self.tracker.rect()) {
+                (Some(_), Some(r)) => (r.x, r.y),
+                _ => (0, 0),
+            };
+            let spot = Rect::new(i32::from(control.x) + dx, i32::from(control.y) + dy, w, h);
             self.ui_rects.values().any(|r| r.intersects(&spot))
         };
         if covered == self.covered {
@@ -968,11 +997,61 @@ impl Controller {
         self.broadcast(Event::State(self.state()));
     }
 
+    /// Chooses the capture backend for `profile` (§5.2): the window's own image in window mode
+    /// under a compositor (or when the profile asks for it), if the self-check passes; the
+    /// screen otherwise.
+    fn choose_backend(&mut self, profile: &Profile) {
+        use glint_core::profile::Backend;
+        let wanted = profile.target.mode == TargetMode::Window
+            && match profile.sampling.backend {
+                Backend::WindowBuffer => true,
+                Backend::Auto => self.compositor,
+                Backend::Screen | Backend::ScreenShm | Backend::Damage => false,
+            };
+        let (Some(info), Some(rect)) = (self.tracker.window().cloned(), self.tracker.rect()) else {
+            self.window_buffer = None;
+            return;
+        };
+        if !wanted {
+            self.window_buffer = None;
+            return;
+        }
+        if self.self_check.as_ref().map(|(w, _)| *w) != Some(info.id) {
+            let result = crate::target::window_buffer_check(
+                &self.conn,
+                self.root,
+                &self.root_format,
+                info.id,
+                rect,
+                self.tracker.in_front(),
+            );
+            if let Err(why) = &result {
+                self.broadcast(Event::Warning {
+                    code: "window_buffer".into(),
+                    message: format!("{}: {why}.", info.title),
+                    field: None,
+                });
+            }
+            self.self_check = Some((info.id, result));
+        }
+        self.window_buffer = match &self.self_check {
+            Some((id, Ok(format))) => Some((*id, *format)),
+            _ => None,
+        };
+    }
+
+    /// What the hot thread reads: the target window, or the root.
+    fn capture_target(&self) -> (u32, PixelFormat) {
+        self.window_buffer.unwrap_or((self.root, self.root_format))
+    }
+
     /// The trigger's check gap (ADR 0007): four check periods and at least 2 ms; under a
-    /// compositor, which shows every frame for a whole refresh, up to most of one frame.
+    /// compositor, which shows every frame for a whole refresh, up to most of one frame. The
+    /// window's own image isn't held back by the compositor, so the window-buffer backend keeps
+    /// the base gap.
     fn check_gap(&self, profile: &Profile) -> Duration {
         let base = glint_core::TriggerCfg::check_gap(profile.sampling.speed.period());
-        if !self.compositor {
+        if !self.compositor || self.window_buffer.is_some() {
             return base;
         }
         let frame = Duration::from_secs_f64(1.0 / self.refresh_hz.unwrap_or(60.0).max(1.0));
@@ -991,7 +1070,9 @@ impl Controller {
         ) else {
             return;
         };
+        self.choose_backend(&profile);
         compiled.trigger.max_check_gap = self.check_gap(&profile);
+        compiled.target = Some(self.capture_target());
         self.hot.set_profile(compiled);
         if self.started {
             match self.origin(&profile) {
@@ -1018,6 +1099,11 @@ impl Controller {
     /// Looks for the active profile's window, if it names one.
     fn acquire_window(&mut self) {
         let window = self.active_profile().target.window;
+        self.acquire(&window);
+    }
+
+    /// Looks for `window`, or forgets the window when it names none.
+    fn acquire(&mut self, window: &glint_core::profile::WindowMatch) {
         if window.class.is_empty() && window.title_contains.is_empty() {
             self.tracker.forget();
         } else {
@@ -1075,6 +1161,9 @@ impl Controller {
             Change::Appeared => {
                 if self.tracker.window().is_none() {
                     self.acquire_window();
+                    if self.tracker.window().is_some() {
+                        self.republish();
+                    }
                 }
             }
             Change::Moved if self.started && window_mode => match self.origin(&profile) {

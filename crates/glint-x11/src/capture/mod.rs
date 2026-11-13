@@ -38,4 +38,8 @@ impl CaptureError {
 pub trait Capture: Send {
     /// Reads `rect`, in the drawable's coordinates, into `out` as `0xRRGGBB`, row by row.
     fn grab(&mut self, rect: Rect, out: &mut [u32]) -> Result<(), CaptureError>;
+
+    /// Reads from `drawable` (the root, or the target window for the window-buffer backend)
+    /// with pixel format `fmt` from now on.
+    fn set_target(&mut self, _drawable: u32, _fmt: crate::format::PixelFormat) {}
 }

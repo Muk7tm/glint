@@ -275,6 +275,22 @@ server stalls in `arm-while-present` and `live-edit` came from; the report lists
   - the trigger timed each check by its reply only (ADR 0011);
   - the raw X connection failed without an Xauthority file, so the first CI run failed every Xvfb test.
 
+## 10. Phase 5: window mode under picom (Xvfb sandbox)
+
+Environment: each run's own Xvfb 1280×720, picom `--backend xrender` (`GLINT_LAB_COMPOSITOR=picom`), no window
+manager, Balanced, debug build, 2026-11-13. Timing isn't judged under Xvfb; these runs check correctness and the
+check gap.
+
+| Run | Backend chosen | Check gap | Appearances | Clicks | Extra | Missed | Possible misses |
+|---|---|---|---|---|---|---|---|
+| `move --count 4 --backend window-buffer` | window-buffer | 2 ms | 8 | 8 | 0 | 0 | 0 |
+| `focus --count 4 --backend window-buffer` | window-buffer | 2 ms | 8 | 8 | 0 | 0 | 0 |
+| `rapid --count 4` (screen mode) | screen | 15 ms | 24 | 24 | 0 | 0 | 0 |
+
+The self-check passed for the lab's window in every run. Its two failure cases (a blank image, or one that
+disagrees with the screen) can only happen under a compositor, with apps that draw into a child window; they
+are unit-tested (`target::tests`) and wait for the check on the owner's desktop with Sober.
+
 ## Conclusions for the defaults (Phase 0 exit)
 
 - **Speed preset: Balanced (2,000/s) confirmed.** Paced response is dominated by the server's own busy periods

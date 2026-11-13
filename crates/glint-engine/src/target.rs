@@ -245,3 +245,126 @@ impl Tracker {
         }
     }
 }
+
+/// The window-buffer self-check (§5.2): reads the window's center from its own image and from
+/// the screen, 20 times over 200 ms. A blank window image (the app draws into a child window),
+/// or one that disagrees with the screen on more than 10% of the reads while the window is in
+/// front, means reading the screen instead. Returns the window's pixel format when it passes.
+pub fn window_buffer_check(
+    conn: &RustConnection,
+    root: Window,
+    root_format: &glint_x11::format::PixelFormat,
+    win: Window,
+    rect: Rect,
+    in_front: bool,
+) -> Result<glint_x11::format::PixelFormat, String> {
+    use glint_x11::format::PixelFormat;
+    use x11rb::protocol::xproto::ImageFormat;
+    let attrs = conn
+        .get_window_attributes(win)
+        .map_err(|e| e.to_string())?
+        .reply()
+        .map_err(|e| e.to_string())?;
+    let depth = conn
+        .get_geometry(win)
+        .map_err(|e| e.to_string())?
+        .reply()
+        .map_err(|e| e.to_string())?
+        .depth;
+    let format = PixelFormat::for_visual(conn.setup(), attrs.visual, depth).map_err(|e| e.to_string())?;
+    let (cx, cy) = ((rect.w / 2) as i16, (rect.h / 2) as i16);
+    let (sx, sy) = ((rect.x + i32::from(cx)) as i16, (rect.y + i32::from(cy)) as i16);
+    let read = |drawable: Window, x: i16, y: i16, f: &PixelFormat| -> Option<u32> {
+        let r = conn
+            .get_image(ImageFormat::Z_PIXMAP, drawable, x, y, 1, 1, u32::MAX)
+            .ok()?
+            .reply()
+            .ok()?;
+        let mut px = [0u32; 1];
+        f.decode(&r.data, 1, 1, &mut px).ok()?;
+        Some(px[0])
+    };
+    let (mut own, mut screen) = ([0u32; CHECKS], [0u32; CHECKS]);
+    for i in 0..CHECKS {
+        own[i] = read(win, cx, cy, &format).ok_or("its own image can't be read")?;
+        screen[i] = read(root, sx, sy, root_format).ok_or("the screen can't be read")?;
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    agree(&own, &screen, in_front)?;
+    Ok(format)
+}
+
+/// Reads per self-check.
+const CHECKS: usize = 20;
+
+/// The self-check's verdict on the window's own reads and the screen's at the same spot.
+fn agree(own: &[u32], screen: &[u32], in_front: bool) -> Result<(), String> {
+    if own.iter().all(|&p| p == 0) && screen.iter().any(|&p| p != 0) {
+        return Err("its own image is blank (it draws into a child window), so Glint reads the screen instead".into());
+    }
+    let differ = own.iter().zip(screen).filter(|(a, b)| a != b).count();
+    // More than 10% of the reads.
+    if in_front && differ * 10 > own.len() {
+        return Err("its own image doesn't match the screen, so Glint reads the screen instead".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use x11rb::protocol::xproto::{CreateWindowAux, WindowClass};
+    use x11rb::wrapper::ConnectionExt as _;
+
+    #[test]
+    fn the_self_check_s_verdict() {
+        let green = [0x3B_D1_6F; 20];
+        assert!(agree(&green, &green, true).is_ok());
+        // Blank while the screen shows something: the app draws into a child window.
+        assert!(agree(&[0; 20], &green, true).unwrap_err().contains("blank"));
+        // Black on both is just a black spot.
+        assert!(agree(&[0; 20], &[0; 20], true).is_ok());
+        // Two reads in twenty can catch a frame in between; three can't.
+        let mut own = green;
+        own[..2].fill(0x10_10_10);
+        assert!(agree(&own, &green, true).is_ok());
+        own[2] = 0x10_10_10;
+        assert!(agree(&own, &green, true).unwrap_err().contains("doesn't match"));
+        // Behind another window, the screen shows that window: no comparison.
+        assert!(agree(&own, &green, false).is_ok());
+    }
+
+    #[test]
+    fn the_self_check_reads_a_plain_window() {
+        let x = match glint_x11::sandbox::Xvfb::start(640, 480) {
+            Ok(x) => x,
+            Err(glint_x11::sandbox::SandboxError::NotInstalled) => return,
+            Err(e) => panic!("{e}"),
+        };
+        let c = glint_x11::conn::open(x.display()).unwrap();
+        let screen = &c.setup().roots[0];
+        let (root, depth, visual) = (screen.root, screen.root_depth, screen.root_visual);
+        let root_format = glint_x11::format::PixelFormat::root(c.setup(), 0).unwrap();
+        let win = c.generate_id().unwrap();
+        c.create_window(
+            depth,
+            win,
+            root,
+            100,
+            50,
+            200,
+            100,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            visual,
+            &CreateWindowAux::new().background_pixel(0x3B_D1_6F),
+        )
+        .unwrap();
+        c.map_window(win).unwrap();
+        c.sync().unwrap();
+        let format = window_buffer_check(&c, root, &root_format, win, Rect::new(100, 50, 200, 100), true).unwrap();
+        assert_eq!(format, root_format);
+    }
+}

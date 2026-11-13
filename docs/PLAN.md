@@ -273,7 +273,7 @@ else if pattern_area > 1024 && shm_available                           → scree
 else                                                                     → screen
 ```
 
-**Window-buffer self-check.** When a window is picked, Glint samples its center both ways 20 times over 200 ms. If the window-buffer reads are blank (all black or fully transparent) while the screen reads aren't, or the two disagree on more than 10% of samples while the window is in front, Glint falls back to `screen` and says why in the UI. This catches apps (including some Wine games and container-based clients) that draw into a child window the top-level buffer doesn't contain.
+**Window-buffer self-check.** When a window is picked, Glint samples its center both ways 20 times over 200 ms. If the window-buffer reads are blank (all black or fully transparent) while the screen reads aren't, or the two disagree on more than 10% of samples while the window is in front, Glint falls back to `screen` and says why in the UI. This catches apps (including some Wine games and container-based clients) that draw into a child window the top-level buffer doesn't contain. The check runs once per window, on the controller thread, whenever the backend is chosen (Start, a profile change, the window found again, a compositor starting or stopping). The window-buffer backend keeps the base check gap under a compositor: the app can change its own image at any moment, unlike the frames a compositor shows (ADR 0014).
 
 **DAMAGE backend details.** Create a damage object on the root (screen mode) or the target window (window-buffer mode) at the bounding-box report level. The hot thread waits on the X socket with `poll()`, using the safety period (default 10 ms) as the timeout. When a `DamageNotify` area intersects the sample rectangle, it subtracts the damage and checks immediately, plus once more about 1 ms later to catch late writes. On every timeout it runs a safety check. If a safety check finds a change no damage event announced, that's a miss; three misses within a minute switch the engine back to polling with the warning "This system doesn't report screen updates reliably; using regular checks."
 
@@ -489,11 +489,11 @@ Glint injects input with **XTest** (`FakeInput`, extension version 2.2), which n
 
 **"Only click in this window"** is on by default in window mode, as in Pulse. The engine watches `_NET_ACTIVE_WINDOW` on the root window through `PropertyNotify` and fires only while the active window is the target or its frame. With window managers that don't support EWMH, it falls back to `FocusIn`/`FocusOut` on the client. The status line mirrors Pulse: "In front" or "Not in front". An optional stricter check, *Pointer must be over the window*, does one `QueryPointer` at click time (about +0.1 ms).
 
-**Compositor detection.** A running compositor owns the selection `_NET_WM_CM_S<screen>`. Glint watches that ownership through XFixes selection events, shows it in diagnostics, uses it to choose the backend, and shows the hint "With a compositor, screen mode sees changes one frame late."
+**Compositor detection.** A running compositor owns the selection `_NET_WM_CM_S<screen>`. Glint watches that ownership through XFixes selection events, shows it in diagnostics, uses it to choose the backend, and shows the hint "With a compositor, screen mode sees changes one frame late." (in window mode reading the screen: "With a compositor, reading the screen sees changes one frame late.", ADR 0014)
 
 **XWayland detection.** If `XDG_SESSION_TYPE=wayland`, `WAYLAND_DISPLAY` is set, or the server advertises the XWAYLAND extension, Glint shows "This is XWayland: only X11 apps can be watched and clicked."
 
-**Screen lock.** The MIT-SCREEN-SAVER extension, plus `org.freedesktop.ScreenSaver.GetActive` on D-Bus when available, tells Glint when the screen is locked, and it stops while locked.
+**Screen lock.** The MIT-SCREEN-SAVER extension, plus `org.freedesktop.ScreenSaver.GetActive` on D-Bus when available (Phase 6, with rtkit's `zbus`; ADR 0014), tells Glint when the screen is locked, and it stops while locked.
 
 **Glint's own window.** The UI reports its window rectangle to the engine (`ui_geometry`). If that rectangle contains the watched spot, Glint warns "The Glint window covers the spot it's watching" and can auto-hide the live swatch, or the whole window, while started.
 
@@ -1188,7 +1188,7 @@ Effort sizes are relative: S is a few days, M about a week or two, L longer, for
 
 ### Phase 6 — Performance and advanced detection (M/L)
 
-- [ ] rtkit real-time priority, timer slack, prefault and mlock, optional CPU pinning.
+- [ ] rtkit real-time priority, timer slack, prefault and mlock, optional CPU pinning; screen lock over D-Bus (ADR 0014).
 - [ ] `screen-shm` backend; `damage` backend with its self-healing fallback.
 - [ ] *More options*: Detection, Color range (shade strips, exclusions, *Record 5 s*, *Check hex*), Engine (diagnostics, latency test, profiles).
 - [ ] *Capture* hotkey mode. (*Hold to watch* exists since Phase 2, ADR 0013.)

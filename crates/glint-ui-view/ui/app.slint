@@ -4,7 +4,7 @@
 
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "pulse/theme.slint";
-import { PButton, ButtonKind, Disclosure, Tone } from "pulse/components.slint";
+import { PButton, ButtonKind, Disclosure, Note, Tone } from "pulse/components.slint";
 import { Ui, Form, Actions } from "state.slint";
 import { HeroCard } from "cards/hero.slint";
 import { ColorCard } from "cards/color.slint";
@@ -33,6 +33,11 @@ export component AppWindow inherits Window {
         padding-top: Theme.gap-m;
         padding-bottom: Theme.gap-m;
         spacing: Theme.gap-m;
+
+        if Ui.banner != "": Note {
+            message: Ui.banner;
+            tone: Tone.warning;
+        }
 
         scroll := ScrollView {
             vertical-stretch: 1;

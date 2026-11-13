@@ -17,6 +17,7 @@ use glint_core::pattern::{Rect, SamplePattern};
 use glint_core::trigger::{Step, Trigger, TriggerCfg};
 use glint_core::{Lut, Verdict};
 use glint_x11::capture::{Capture, MAX_PIXELS};
+use glint_x11::format::PixelFormat;
 use glint_x11::inject::{Action, Injector};
 
 /// How long the hot thread sleeps between looks at the control word while not watching. The
@@ -109,6 +110,9 @@ pub struct CompiledProfile {
     pub action: Action,
     /// The time between checks; `None` is the Max preset, which doesn't sleep.
     pub period: Option<Duration>,
+    /// What to read and how its pixels are laid out: the root, or the target window for the
+    /// window-buffer backend (§5.2). `None` keeps what the capture was made with.
+    pub target: Option<(u32, PixelFormat)>,
 }
 
 /// What the hot thread shares with the rest of the engine.
@@ -228,6 +232,9 @@ pub fn run(mut h: Hot) {
                 h.shared.in_use.store(profile.revision, Ordering::Release);
                 let _ = h.injector.release_now();
                 h.injector.set_action(profile.action);
+                if let Some((drawable, format)) = profile.target {
+                    h.capture.set_target(drawable, format);
+                }
                 trigger.set_cfg(profile.trigger);
                 let now = Instant::now();
                 match (was_armed, ctl.armed) {
