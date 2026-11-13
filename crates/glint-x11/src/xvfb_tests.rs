@@ -553,3 +553,44 @@ fn finding_and_describing_a_client_window() {
     assert_eq!(windows::find(&c, &atoms, root, "firefox", ""), None);
     assert_eq!(windows::active(&c, &atoms, root), None);
 }
+
+/// `screen-shm` (§5.2): reading through the MIT-SHM segment gives exactly the pixels the socket
+/// gives, for the largest capture and a few small ones, at every edge of a two-color scene.
+#[test]
+fn shared_memory_reads_what_the_socket_reads() {
+    use glint_core::pattern::Rect;
+
+    use crate::capture::getimage::GetImageCapture;
+    use crate::capture::shm::ShmSegment;
+    use crate::capture::{Capture, MAX_PIXELS};
+
+    let Some(x) = xvfb() else { return };
+    let c = conn::open(x.display()).unwrap();
+    let root = c.setup().roots[0].root;
+    let _a = colored_window(&c, root, 100, 100, 200, 150, 0x3B_D1_6F);
+    let _b = colored_window(&c, root, 250, 180, 120, 90, 0xE0_30_78);
+    let (a, setup) = RawConn::connect(x.display()).unwrap();
+    let fmt = PixelFormat::root(&setup, 0).unwrap();
+    let segment = ShmSegment::new(&c, MAX_PIXELS * 4).unwrap();
+    let mut shm = GetImageCapture::new(a, root, fmt).with_shm(segment);
+    shm.set_shm(true);
+    let (b, _) = RawConn::connect(x.display()).unwrap();
+    let mut socket = GetImageCapture::new(b, root, fmt);
+    let (mut via_shm, mut via_socket) = (vec![0u32; MAX_PIXELS], vec![0u32; MAX_PIXELS]);
+    for rect in [
+        Rect::new(220, 150, 63, 63),
+        Rect::new(240, 170, 3, 3),
+        Rect::new(0, 0, 1, 1),
+        Rect::new(290, 230, 40, 17),
+    ] {
+        let n = usize::from(rect.w) * usize::from(rect.h);
+        shm.grab(rect, &mut via_shm).unwrap();
+        socket.grab(rect, &mut via_socket).unwrap();
+        assert_eq!(via_shm[..n], via_socket[..n], "{rect:?}");
+    }
+    // Both colors and the background are in the big capture.
+    let big = &via_shm[..63 * 63];
+    for color in [0x3B_D1_6F, 0xE0_30_78] {
+        assert!(big.contains(&color), "{color:06X}");
+    }
+}

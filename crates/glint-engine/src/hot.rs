@@ -113,6 +113,8 @@ pub struct CompiledProfile {
     /// What to read and how its pixels are laid out: the root, or the target window for the
     /// window-buffer backend (§5.2). `None` keeps what the capture was made with.
     pub target: Option<(u32, PixelFormat)>,
+    /// Read through the MIT-SHM segment (`screen-shm`, §5.2).
+    pub shm: bool,
 }
 
 /// What the hot thread shares with the rest of the engine.
@@ -241,6 +243,7 @@ pub fn run(mut h: Hot) {
                 if let Some((drawable, format)) = profile.target {
                     h.capture.set_target(drawable, format);
                 }
+                h.capture.set_shm(profile.shm);
                 trigger.set_cfg(profile.trigger);
                 let now = Instant::now();
                 match (was_armed, ctl.armed) {

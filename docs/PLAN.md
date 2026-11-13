@@ -261,7 +261,7 @@ Two engines watching the same screen would double every click, so the single-ins
 | Backend | How it reads | Strengths | Weaknesses | Used when |
 |---|---|---|---|---|
 | `screen` | Core `GetImage` on the root window, Z-pixmap format, tiny rectangle | Universal, simple, works on any local X server | One round trip per check; sees the composited screen | Default for screen mode |
-| `screen-shm` | MIT-SHM `GetImage` into a shared `memfd` segment | No pixel bytes through the socket, zero allocations | Same round trip; only pays off for large patterns; local servers only | Auto when the pattern exceeds 32×32, or when Phase 0 shows it's faster |
+| `screen-shm` | MIT-SHM `GetImage` into a shared `memfd` segment, attached once on connection C (x11rb passes the file descriptor) and filled by raw `ShmGetImage` requests on connection A; the mapping and its reads are the only `unsafe` code (`shm.rs`) | No pixel bytes through the socket, zero allocations | Same round trip; only pays off for large patterns; local servers only | Auto when the pattern exceeds 32×32, or when Phase 0 shows it's faster |
 | `window-buffer` | `GetImage` on the target window itself | Reads the window's pixels *before* the compositor paints them (removes up to one refresh of delay); works when the window is partly covered | Fails while the window is unmapped; 32-bit-deep windows need alpha handling; some apps render into a child window | Auto in window mode when a compositor is running and the self-check passes |
 | `damage` (Phase 6) | DAMAGE notifications trigger an immediate check; slow safety checks in between | Near-zero CPU when nothing changes; checks right after each update | Some driver and page-flip paths don't report damage | Opt-in, with automatic fallback to polling |
 

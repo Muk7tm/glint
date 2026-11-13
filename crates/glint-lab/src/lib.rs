@@ -106,6 +106,9 @@ impl<'h> Session<'h> {
             opts,
             backend: String::new(),
         };
+        // The lab's profile first, so the backend named in report titles is the run's.
+        let profile = s.profile();
+        s.set_profile(&profile)?;
         s.backend = s.state()?.backend;
         Ok(s)
     }
@@ -215,8 +218,9 @@ pub fn parse_backend(text: &str) -> Result<Backend, String> {
     match text {
         "auto" => Ok(Backend::Auto),
         "screen" => Ok(Backend::Screen),
+        "screen-shm" => Ok(Backend::ScreenShm),
         "window-buffer" => Ok(Backend::WindowBuffer),
-        n => Err(format!("{n:?}: use auto, screen or window-buffer")),
+        n => Err(format!("{n:?}: use auto, screen, screen-shm or window-buffer")),
     }
 }
 

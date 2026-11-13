@@ -42,4 +42,8 @@ pub trait Capture: Send {
     /// Reads from `drawable` (the root, or the target window for the window-buffer backend)
     /// with pixel format `fmt` from now on.
     fn set_target(&mut self, _drawable: u32, _fmt: crate::format::PixelFormat) {}
+
+    /// Reads through the MIT-SHM segment (`screen-shm`, §5.2) or not, from now on; without a
+    /// segment it keeps reading through the socket.
+    fn set_shm(&mut self, _on: bool) {}
 }

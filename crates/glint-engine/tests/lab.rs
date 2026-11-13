@@ -205,3 +205,11 @@ fn focus_changes_read_from_the_window_s_own_image() {
         assert_eq!(r.appearances - r.optional, 4, "{}", r.summary());
     }
 }
+
+#[test]
+fn basic_through_shared_memory() {
+    if let Some(r) = run_with("basic", 8, Backend::ScreenShm) {
+        assert!(r.title.contains("backend screen-shm"), "{}", r.summary());
+        every_appearance_clicked(&r);
+    }
+}

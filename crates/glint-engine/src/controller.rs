@@ -104,6 +104,7 @@ pub fn compile(
         action,
         period: profile.sampling.speed.period(),
         target: None,
+        shm: false,
     })
 }
 
@@ -441,6 +442,9 @@ pub struct Controller {
     all_cpus: rustix::thread::CpuSet,
     pub memory: String,
     rtkit: Option<rt::Rtkit>,
+    /// The capture has an MIT-SHM segment, and `screen-shm` reads through it (§5.2).
+    pub shm: bool,
+    use_shm: bool,
     /// The last self-check and its window. It takes 230 ms, so it runs again only when it
     /// couldn't compare with the screen or failed, and the window has come in front while
     /// stopped (ADR 0014).
@@ -515,6 +519,8 @@ impl Controller {
             all_cpus: rt::all_cpus(),
             memory: String::new(),
             rtkit: None,
+            shm: false,
+            use_shm: false,
         }
     }
 
@@ -621,6 +627,8 @@ impl Controller {
             },
             backend: if self.window_buffer.is_some() && profile.target.mode == TargetMode::Window {
                 "window-buffer".into()
+            } else if self.use_shm {
+                "screen-shm".into()
             } else {
                 "screen".into()
             },
@@ -724,6 +732,7 @@ impl Controller {
         let mut compiled = compiled;
         compiled.trigger.max_check_gap = self.check_gap(&profile);
         compiled.target = Some(self.capture_target());
+        compiled.shm = self.use_shm;
         self.hot.set_profile(compiled);
         self.lut = lut;
         self.revision += 1;
@@ -1096,6 +1105,22 @@ impl Controller {
     /// under a compositor (or when the profile asks for it), if the self-check passes; the
     /// screen otherwise.
     fn choose_backend(&mut self, profile: &Profile) {
+        self.choose_window_buffer(profile);
+        // Otherwise MIT-SHM, when asked for, or for a pattern larger than 32×32 (§5.2): Phase 0
+        // found it no faster for small ones.
+        use glint_core::profile::Backend;
+        let large = profile.pattern().is_ok_and(|p| p.area() > 32 * 32);
+        self.use_shm = self.shm
+            && self.window_buffer.is_none()
+            && match profile.sampling.backend {
+                Backend::ScreenShm => true,
+                Backend::Auto => large,
+                Backend::Screen | Backend::WindowBuffer | Backend::Damage => false,
+            };
+    }
+
+    /// The window's own image in window mode, when wanted and the self-check passes.
+    fn choose_window_buffer(&mut self, profile: &Profile) {
         let wanted = self.wants_window_buffer(profile);
         let (Some(info), Some(rect)) = (self.tracker.window().cloned(), self.tracker.rect()) else {
             self.window_buffer = None;
@@ -1160,8 +1185,15 @@ impl Controller {
     fn backend_reason(&self, profile: &Profile) -> Option<String> {
         use crate::target::{Compared, READS};
         use glint_core::profile::Backend;
-        if profile.target.mode != TargetMode::Window {
-            return None;
+        if profile.target.mode != TargetMode::Window || self.window_buffer.is_none() && self.use_shm {
+            return match profile.sampling.backend {
+                _ if self.use_shm && profile.sampling.backend == Backend::ScreenShm => {
+                    Some("the profile asks for shared memory".into())
+                }
+                _ if self.use_shm => Some("the pattern is larger than 32×32".into()),
+                Backend::ScreenShm => Some("MIT-SHM isn't available".into()),
+                _ => None,
+            };
         }
         Some(match profile.sampling.backend {
             Backend::Screen | Backend::ScreenShm | Backend::Damage => "the profile asks for the screen".into(),
@@ -1216,6 +1248,7 @@ impl Controller {
         self.choose_backend(&profile);
         compiled.trigger.max_check_gap = self.check_gap(&profile);
         compiled.target = Some(self.capture_target());
+        compiled.shm = self.use_shm;
         self.hot.set_profile(compiled);
         if self.started {
             match self.origin(&profile) {

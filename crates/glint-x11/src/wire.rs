@@ -311,6 +311,35 @@ pub fn get_image(drawable: u32, x: i16, y: i16, width: u16, height: u16) -> [u8;
     r
 }
 
+/// MIT-SHM `ShmGetImage` (minor 4) of a Z-pixmap with every plane, into segment `seg` at
+/// `offset`; `opcode` is the extension's major opcode. The reply carries no pixels.
+#[allow(clippy::too_many_arguments)]
+pub fn shm_get_image(
+    opcode: u8,
+    drawable: u32,
+    x: i16,
+    y: i16,
+    width: u16,
+    height: u16,
+    seg: u32,
+    offset: u32,
+) -> [u8; 32] {
+    let mut r = [0u8; 32];
+    r[0] = opcode;
+    r[1] = 4; // ShmGetImage
+    r[2..4].copy_from_slice(&8u16.to_ne_bytes());
+    r[4..8].copy_from_slice(&drawable.to_ne_bytes());
+    r[8..10].copy_from_slice(&x.to_ne_bytes());
+    r[10..12].copy_from_slice(&y.to_ne_bytes());
+    r[12..14].copy_from_slice(&width.to_ne_bytes());
+    r[14..16].copy_from_slice(&height.to_ne_bytes());
+    r[16..20].copy_from_slice(&u32::MAX.to_ne_bytes());
+    r[20] = 2; // ZPixmap
+    r[24..28].copy_from_slice(&seg.to_ne_bytes());
+    r[28..32].copy_from_slice(&offset.to_ne_bytes());
+    r
+}
+
 /// The size of one `XTestFakeInput` request.
 pub const FAKE_INPUT_LEN: usize = 36;
 

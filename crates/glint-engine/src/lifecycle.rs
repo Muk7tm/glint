@@ -228,6 +228,15 @@ pub fn run(options: Options) -> Result<(), StartError> {
     let listener = std::os::unix::net::UnixListener::bind(&socket)?;
     let fmt = PixelFormat::root(&setup, display.screen.into())?;
     let capture = GetImageCapture::new(a, screen.root, fmt);
+    // The MIT-SHM segment for `screen-shm` (§5.2), attached on connection C; without it every
+    // read goes through the socket.
+    let (capture, shm) = match glint_x11::capture::shm::ShmSegment::new(&*c, glint_x11::capture::MAX_PIXELS * 4) {
+        Ok(segment) => (capture.with_shm(segment), true),
+        Err(e) => {
+            eprintln!("glintd: no shared-memory capture: {e}");
+            (capture, false)
+        }
+    };
     let (hot, events, preview) = HotHandle::spawn(Box::new(capture), injector, compiled)?;
     let stats = Arc::new(Mutex::new(Stats::default()));
     let (commands, receiver) = mpsc::channel();
@@ -296,6 +305,7 @@ pub fn run(options: Options) -> Result<(), StartError> {
     );
     // The hot thread's priority and CPUs (§5.6), and the screen lock over D-Bus (§8, ADR 0014).
     controller.memory = memory;
+    controller.shm = shm;
     controller.schedule();
     {
         let commands = commands.clone();
