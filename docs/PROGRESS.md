@@ -23,7 +23,7 @@ listed in §13 (written as their content appears).
 
 - [x] `spike-capture`: 1,000,000 `GetImage` calls for a 3×3 patch on the root window and on an app window; record p50/p99/max with and without a compositor; repeat with MIT-SHM. *(Also measured: a raw allocation-free path, ADR 0003.)*
 - [x] Server tax: a second client times `GetInputFocus` round trips while the spike checks at 500/s, 2,000/s and max speed. *(+0.45 ms p99 at Balanced on NVIDIA; ADR 0004.)*
-- [ ] `spike-inject`: an XTest click into a test window; time from sending to arrival.
+- [ ] `spike-inject`: an XTest click into a test window; time from sending to arrival. *(Built and refuses display :0; waiting for Xvfb/Xephyr to run.)*
 - [x] `spike-ui`: Pulse's components in a new 400 px window with the hero card and the close-dialog overlay. *(Pulse's files used in place via a library path; generated view split out, ADR 0002.)*
 - **Exit:** numbers recorded in `docs/MEASUREMENTS.md`; the default speed preset and backend confirmed or changed.
 
