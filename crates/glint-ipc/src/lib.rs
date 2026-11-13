@@ -92,6 +92,9 @@ pub enum Request {
     /// Pick a color with the mouse: `pick_started`, `magnifier` frames, then `color_picked` or
     /// `pick_cancelled` (§10).
     PickColor,
+    /// Pick the game window with the mouse: `pick_started`, then `window_picked` or
+    /// `pick_cancelled` (§8).
+    PickWindow,
     CancelPick,
     /// Up to [`MAX_CLASSIFY`] colors, classified with the engine's own lookup table.
     Classify {
@@ -141,6 +144,11 @@ pub enum Event {
         oklch: [f32; 3],
     },
     PickCancelled,
+    /// The window you clicked, now the profile's target.
+    WindowPicked {
+        title: String,
+        class: String,
+    },
     Classified {
         verdicts: Vec<Class>,
     },
@@ -320,6 +328,29 @@ pub struct StateSnapshot {
     /// Why Start would be refused right now ("Pick a color to start").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cannot_start: Option<String>,
+    /// The picked game window, when the profile names one (§8; an addition to §10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<WindowStatus>,
+}
+
+/// The picked game window and how it is right now.
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+pub struct WindowStatus {
+    /// Its title, or the class it's known by while it isn't open.
+    pub title: String,
+    pub state: WindowState,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowState {
+    InFront,
+    NotInFront,
+    /// Open but unmapped (minimized to nowhere, or hidden).
+    Hidden,
+    /// Not open: Glint finds it again when it opens.
+    #[default]
+    Closed,
 }
 
 /// Live statistics (§10 `telemetry`, §17).

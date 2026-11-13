@@ -17,7 +17,8 @@ pub const SIZE: u16 = 11;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PickInput {
     Moved(i16, i16),
-    Clicked(u8, i16, i16),
+    /// Button, position, and the top-level window under the pointer.
+    Clicked(u8, i16, i16, u32),
     Key(u8),
 }
 

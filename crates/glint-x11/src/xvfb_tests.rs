@@ -461,3 +461,95 @@ fn raw_button_events_name_their_device() {
         "{got:?}"
     );
 }
+
+#[test]
+fn finding_and_describing_a_client_window() {
+    use x11rb::protocol::xproto::{AtomEnum, CreateWindowAux, PropMode, WindowClass};
+    use x11rb::wrapper::ConnectionExt as _;
+
+    use crate::windows::{self, Atoms};
+
+    let Some(x) = xvfb() else { return };
+    let c = conn::open(x.display()).unwrap();
+    let root = c.setup().roots[0].root;
+    let atoms = Atoms::intern(&c).unwrap();
+    // A window manager's frame at (100, 50) with the app's client inside, 4 px in and 20 px down.
+    let frame = c.generate_id().unwrap();
+    c.create_window(
+        0,
+        frame,
+        root,
+        100,
+        50,
+        308,
+        224,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        0,
+        &CreateWindowAux::new(),
+    )
+    .unwrap();
+    let client = c.generate_id().unwrap();
+    c.create_window(
+        0,
+        client,
+        frame,
+        4,
+        20,
+        300,
+        200,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        0,
+        &CreateWindowAux::new(),
+    )
+    .unwrap();
+    c.change_property8(
+        PropMode::REPLACE,
+        client,
+        AtomEnum::WM_CLASS,
+        AtomEnum::STRING,
+        b"sober\0org.vinegarhq.Sober\0",
+    )
+    .unwrap();
+    c.change_property8(
+        PropMode::REPLACE,
+        client,
+        atoms.net_wm_name,
+        atoms.utf8_string,
+        "Sober — Roblox".as_bytes(),
+    )
+    .unwrap();
+    c.change_property32(PropMode::REPLACE, client, atoms.net_wm_pid, AtomEnum::CARDINAL, &[4242])
+        .unwrap();
+    c.change_property32(PropMode::REPLACE, client, atoms.wm_state, atoms.wm_state, &[1, 0])
+        .unwrap();
+    c.map_window(client).unwrap();
+    c.map_window(frame).unwrap();
+    c.sync().unwrap();
+
+    assert_eq!(windows::client_of(&c, &atoms, frame), Some(client));
+    assert_eq!(windows::frame_of(&c, root, client), frame);
+    let info = windows::describe(&c, &atoms, root, client).unwrap();
+    assert_eq!(
+        (
+            info.instance.as_str(),
+            info.class.as_str(),
+            info.title.as_str(),
+            info.pid,
+            info.frame
+        ),
+        ("sober", "org.vinegarhq.Sober", "Sober — Roblox", Some(4242), frame)
+    );
+    assert_eq!(
+        windows::rect(&c, root, client).unwrap(),
+        glint_core::pattern::Rect::new(104, 70, 300, 200)
+    );
+    // No _NET_CLIENT_LIST here (no window manager): found under the root's children.
+    assert_eq!(
+        windows::find(&c, &atoms, root, "org.vinegarhq.Sober", "").map(|i| i.id),
+        Some(client)
+    );
+    assert_eq!(windows::find(&c, &atoms, root, "firefox", ""), None);
+    assert_eq!(windows::active(&c, &atoms, root), None);
+}

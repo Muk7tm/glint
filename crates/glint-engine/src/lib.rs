@@ -16,4 +16,5 @@ pub mod lock;
 pub mod pick;
 pub mod rt;
 pub mod store;
+pub mod target;
 pub mod telemetry;

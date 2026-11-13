@@ -22,7 +22,7 @@ use glint_core::validate::{self, Issue};
 use glint_core::{Lut, Rgb};
 use glint_ipc::{
     CapsInfo, ClientKind, Envelope, Event, MAX_CLASSIFY, PROTOCOL, Phase, Request, SessionInfo, StateSnapshot,
-    StopCause, TargetInfo, TargetKind, TelemetrySnapshot, Trace, monotonic_ns,
+    StopCause, TargetInfo, TargetKind, TelemetrySnapshot, Trace, WindowState, WindowStatus, monotonic_ns,
 };
 use glint_x11::caps::Caps;
 use glint_x11::env::LocalDisplay;
@@ -39,6 +39,7 @@ use crate::hot::{CompiledProfile, Control, HotHandle, HotShared, Preview, StopRe
 use crate::lifecycle::Emergency;
 use crate::pick::{self, PickInput};
 use crate::store::Store;
+use crate::target::{Change, Tracker, WinEvent};
 use crate::telemetry::{Notice, Stats, TraceNotice};
 
 /// How often the controller sends telemetry and live updates and tidies up.
@@ -209,8 +210,10 @@ pub enum Command {
     },
     /// The keyboard mapping changed: hotkeys and modifiers need resolving again.
     KeymapChanged,
-    /// The pointer or keyboard during a color pick (§10 `pick_color`).
+    /// The pointer or keyboard during a color or window pick (§10 `pick_color`, `pick_window`).
     Pick(PickInput),
+    /// Something happened to a window the tracker watches, or to the window list (§8).
+    Window(WinEvent),
 }
 
 /// The core events a pick's grab delivers.
@@ -218,15 +221,23 @@ fn pick_input(event: &x11rb::protocol::Event) -> Option<PickInput> {
     use x11rb::protocol::Event as E;
     match event {
         E::MotionNotify(e) => Some(PickInput::Moved(e.root_x, e.root_y)),
-        E::ButtonPress(e) => Some(PickInput::Clicked(e.detail, e.root_x, e.root_y)),
+        E::ButtonPress(e) => Some(PickInput::Clicked(e.detail, e.root_x, e.root_y, e.child)),
         E::KeyPress(e) => Some(PickInput::Key(e.detail)),
         _ => None,
     }
 }
 
-/// A color pick in progress.
+/// What a pick is for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PickKind {
+    Color,
+    Window,
+}
+
+/// A color or window pick in progress.
 struct Picking {
     client: ClientId,
+    kind: PickKind,
     escape: Option<u8>,
     /// Where the pointer went since the last magnifier frame.
     pending: Option<(i16, i16)>,
@@ -269,6 +280,10 @@ pub fn spawn_x_events(
                 }
             } else if let Some(input) = pick_input(&event) {
                 if commands.send(Command::Pick(input)).is_err() {
+                    break;
+                }
+            } else if let Some(w) = WinEvent::from_x(&event) {
+                if commands.send(Command::Window(w)).is_err() {
                     break;
                 }
             } else if matches!(event, x11rb::protocol::Event::MappingNotify(_)) {
@@ -400,6 +415,8 @@ pub struct Controller {
     picking: Option<Picking>,
     /// The crosshair for picking, made on first use.
     cursor: Option<u32>,
+    /// The picked game window (§8).
+    tracker: Tracker,
 }
 
 impl Controller {
@@ -426,6 +443,7 @@ impl Controller {
         root_format: PixelFormat,
         bindings: Arc<ArcSwap<Vec<Binding>>>,
     ) -> Self {
+        let tracker = Tracker::new(&conn, root);
         Self {
             display,
             caps,
@@ -457,11 +475,13 @@ impl Controller {
             quit: false,
             picking: None,
             cursor: None,
+            tracker,
         }
     }
 
     /// Runs until `quit` or a stop signal.
     pub fn run(&mut self) {
+        self.acquire_window();
         let mut last_tick = Instant::now();
         while !self.quit {
             match self.commands.recv_timeout(TICK) {
@@ -509,18 +529,14 @@ impl Controller {
         if let Some(why) = profile.start_blocker() {
             return Event::error("cannot_start", why, None);
         }
-        if profile.target.mode == TargetMode::Window {
-            return Event::error(
-                "cannot_start",
-                "Watching a window isn't available yet; use the screen center.",
-                Some("target.mode".into()),
-            );
+        if let Some(why) = self.window_blocker(&profile) {
+            return Event::error("cannot_start", why, Some("target.window".into()));
         }
         let origin = match self.origin(&profile) {
             Ok(o) => o,
             Err(issue) => return Event::error("cannot_start", issue.message, Some(issue.field)),
         };
-        self.hot.start(origin, true);
+        self.hot.start(origin, self.gate(&profile));
         self.started = true;
         self.last_stop = None;
         Event::State(self.state())
@@ -553,7 +569,7 @@ impl Controller {
                 },
                 name: match profile.target.mode {
                     TargetMode::Screen => monitor.unwrap_or_default(),
-                    TargetMode::Window => profile.target.window.class.clone(),
+                    TargetMode::Window => self.window_title(&profile),
                 },
             },
             backend: "screen".into(),
@@ -561,7 +577,11 @@ impl Controller {
             profile: profile.name.clone(),
             revision: self.revision,
             last_stop: self.last_stop.clone(),
-            cannot_start: profile.start_blocker().map(str::to_owned),
+            cannot_start: profile
+                .start_blocker()
+                .map(str::to_owned)
+                .or_else(|| self.window_blocker(&profile)),
+            window: self.window_status(&profile),
         }
     }
 
@@ -574,19 +594,30 @@ impl Controller {
 
     /// Where the capture rectangle goes for `profile` on its monitor (§5.1).
     fn origin(&self, profile: &Profile) -> Result<(i16, i16), Issue> {
-        let monitor = monitors::pick(&self.monitors, &profile.target.monitor).ok_or_else(|| {
-            Issue::new(
-                "target.monitor",
-                format!("There's no monitor named {:?}.", profile.target.monitor),
-            )
-        })?;
+        let area = match profile.target.mode {
+            TargetMode::Window => self
+                .tracker
+                .rect()
+                .ok_or_else(|| Issue::new("target.window", "The game window isn't showing."))?,
+            TargetMode::Screen => {
+                monitors::pick(&self.monitors, &profile.target.monitor)
+                    .ok_or_else(|| {
+                        Issue::new(
+                            "target.monitor",
+                            format!("There's no monitor named {:?}.", profile.target.monitor),
+                        )
+                    })?
+                    .rect
+            }
+        };
         let pattern = profile
             .pattern()
             .map_err(|e| Issue::new("sampling.pattern", e.to_string()))?;
-        let rect = validate::placement(
-            &pattern,
-            monitor.rect,
-            (profile.target.offset.x, profile.target.offset.y),
+        let rect = validate::placement(&pattern, area, (profile.target.offset.x, profile.target.offset.y)).map_err(
+            |issue| match profile.target.mode {
+                TargetMode::Window => Issue::new("target.window", "Window too small"),
+                TargetMode::Screen => issue,
+            },
         )?;
         Ok((rect.x as i16, rect.y as i16))
     }
@@ -625,12 +656,23 @@ impl Controller {
             self.store.save_settings(&self.settings, now);
         }
         self.active = profile.name.clone();
+        let window_changed = self
+            .tracker
+            .window()
+            .is_none_or(|w| !w.matches(&profile.target.window.class, &profile.target.window.title_contains));
         self.profiles.insert(profile.name.clone(), profile);
+        if window_changed {
+            self.acquire_window();
+        }
         self.emergency
             .set_keycodes(release_keycodes(self.profiles.values(), &self.keymap));
         if self.started {
-            match new_origin {
-                Ok(origin) => self.hot.restart(origin),
+            let profile = self.active_profile();
+            match self.origin(&profile).or(new_origin) {
+                Ok(origin) => {
+                    self.hot.restart(origin);
+                    self.hot.set_gate(self.gate(&profile));
+                }
                 Err(issue) => self.stop(Some(issue.message)),
             }
         }
@@ -689,6 +731,7 @@ impl Controller {
             }
             Command::Notice(n) => self.notice(n),
             Command::Pick(input) => self.pick_input(input),
+            Command::Window(event) => self.on_window(event),
             Command::Signal(_) => {
                 self.stop(None);
                 self.quit = true;
@@ -753,9 +796,9 @@ impl Controller {
     }
 
     /// The color at the watched spot right now, read on connection C (§12.9 *Sample center*).
-    /// Starts a color pick for `client`: grabs the pointer with a crosshair (§10).
-    fn pick_color(&mut self, client: ClientId) -> Event {
-        if self.started {
+    /// Starts a color or window pick for `client`: grabs the pointer with a crosshair (§8, §10).
+    fn pick(&mut self, client: ClientId, kind: PickKind) -> Event {
+        if self.started && kind == PickKind::Color {
             return Event::error("busy", "Stop watching to pick a color.", None);
         }
         if self.picking.as_ref().is_some_and(|p| p.client != client) {
@@ -773,6 +816,7 @@ impl Controller {
         }
         self.picking = Some(Picking {
             client,
+            kind,
             escape: self.keymap.keycode(ESCAPE),
             pending: pick::pointer(&self.conn, self.root),
             last_frame: None,
@@ -797,7 +841,12 @@ impl Controller {
                 p.pending = Some((x, y));
                 self.pick_frame();
             }
-            PickInput::Clicked(1, x, y) => {
+            PickInput::Clicked(1, _, _, top) if p.kind == PickKind::Window => {
+                let event = self.window_clicked(top);
+                self.end_pick(Some(event));
+                self.broadcast(Event::State(self.state()));
+            }
+            PickInput::Clicked(1, x, y, _) => {
                 let event = match pick::around(&self.conn, self.root, &self.root_format, self.screen_size(), (x, y)) {
                     Ok((_, center)) => {
                         let rgb = Rgb::from_u32(center);
@@ -819,7 +868,9 @@ impl Controller {
 
     /// Sends a magnifier frame for where the pointer went, at most every [`PICK_FRAME`].
     fn pick_frame(&mut self) {
-        let Some(p) = self.picking.as_mut() else { return };
+        let Some(p) = self.picking.as_mut().filter(|p| p.kind == PickKind::Color) else {
+            return;
+        };
         if p.last_frame.is_some_and(|t| t.elapsed() < PICK_FRAME) {
             return;
         }
@@ -833,6 +884,124 @@ impl Controller {
                 center: Rgb::from_u32(center),
             };
             self.send(client, None, frame);
+        }
+    }
+
+    /// The window a window pick's click named: it becomes the active profile's target (§8).
+    fn window_clicked(&mut self, top: u32) -> Event {
+        if top == x11rb::NONE {
+            return Event::error("pick", "That's the desktop: click the game's window.", None);
+        }
+        let Some(info) = self.tracker.describe_top(&self.conn, top) else {
+            return Event::error("pick", "That window can't be watched.", None);
+        };
+        if info.class.eq_ignore_ascii_case("glint") || info.instance.eq_ignore_ascii_case("glint") {
+            return Event::error("pick", "That's Glint's own window: click the game's.", None);
+        }
+        let class = if info.class.is_empty() {
+            info.instance.clone()
+        } else {
+            info.class.clone()
+        };
+        if class.is_empty() {
+            return Event::error("pick", "That window has no class to recognize it by.", None);
+        }
+        let mut profile = self.active_profile();
+        profile.target.window.class = class.clone();
+        profile.target.window.title_contains.clear();
+        let title = info.title.clone();
+        self.tracker.track(&self.conn, info);
+        match self.apply_profile(profile) {
+            Ok(_) => Event::WindowPicked { title, class },
+            Err(e) => e.into(),
+        }
+    }
+
+    /// Looks for the active profile's window, if it names one.
+    fn acquire_window(&mut self) {
+        let window = self.active_profile().target.window;
+        if window.class.is_empty() && window.title_contains.is_empty() {
+            self.tracker.forget();
+        } else {
+            self.tracker.acquire(&self.conn, &window.class, &window.title_contains);
+        }
+    }
+
+    /// Whether clicking is allowed now (§8): with *Only click in this window*, only while the
+    /// picked window is in front. Without a picked window, screen mode has nothing to compare.
+    fn gate(&self, profile: &Profile) -> bool {
+        !profile.guards.only_in_window
+            || (self.tracker.window().is_none() && profile.target.mode == TargetMode::Screen)
+            || self.tracker.in_front()
+    }
+
+    /// Why window mode can't start: no window, or it isn't open or showing.
+    fn window_blocker(&self, profile: &Profile) -> Option<String> {
+        if profile.target.mode != TargetMode::Window || profile.start_blocker().is_some() {
+            return None;
+        }
+        match self.tracker.window() {
+            None => Some(format!("{} isn't open.", self.window_title(profile))),
+            Some(_) if self.tracker.rect().is_none() => Some(format!("{} is hidden.", self.window_title(profile))),
+            Some(_) => None,
+        }
+    }
+
+    fn window_title(&self, profile: &Profile) -> String {
+        match self.tracker.window() {
+            Some(w) if !w.title.is_empty() => w.title.clone(),
+            _ if !profile.target.window.class.is_empty() => profile.target.window.class.clone(),
+            _ => profile.target.window.title_contains.clone(),
+        }
+    }
+
+    fn window_status(&self, profile: &Profile) -> Option<WindowStatus> {
+        let w = &profile.target.window;
+        if w.class.is_empty() && w.title_contains.is_empty() {
+            return None;
+        }
+        Some(WindowStatus {
+            title: self.window_title(profile),
+            state: self.tracker.status().unwrap_or(WindowState::Closed),
+        })
+    }
+
+    /// A window event: follow the window, and pause, restart or stop watching as it says (§8).
+    fn on_window(&mut self, event: WinEvent) {
+        let before = self.window_status(&self.active_profile());
+        let change = self.tracker.event(&self.conn, event);
+        let profile = self.active_profile();
+        let window_mode = profile.target.mode == TargetMode::Window;
+        match change {
+            Change::None => return,
+            Change::Appeared => {
+                if self.tracker.window().is_none() {
+                    self.acquire_window();
+                }
+            }
+            Change::Moved if self.started && window_mode => match self.origin(&profile) {
+                // A move can't click: the restart latches (R7).
+                Ok(origin) => self.hot.restart(origin),
+                Err(issue) => self.stop(Some(issue.message)),
+            },
+            Change::Moved => {}
+            Change::Closed if self.started && window_mode => {
+                let title = before.as_ref().map(|b| b.title.clone()).unwrap_or_default();
+                self.stop(Some(format!(
+                    "{title} closed. Glint will find it again when it reopens."
+                )));
+            }
+            Change::Status if self.started && window_mode && self.tracker.rect().is_none() => {
+                let title = self.window_title(&profile);
+                self.stop(Some(format!("{title} was hidden.")));
+            }
+            Change::Closed | Change::Status => {}
+        }
+        if self.started {
+            self.hot.set_gate(self.gate(&profile));
+        }
+        if self.window_status(&profile) != before || change == Change::Closed {
+            self.broadcast(Event::State(self.state()));
         }
     }
 
@@ -929,7 +1098,8 @@ impl Controller {
                     None => Event::error("no_profile", format!("There's no profile named {name:?}."), None),
                 }
             }
-            Request::PickColor => self.pick_color(client),
+            Request::PickColor => self.pick(client, PickKind::Color),
+            Request::PickWindow => self.pick(client, PickKind::Window),
             Request::CancelPick => {
                 if self.picking.as_ref().is_some_and(|p| p.client == client) {
                     self.end_pick(None);
