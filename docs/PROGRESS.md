@@ -66,7 +66,7 @@ listed in §13 (written as their content appears).
 
 ## Phase 4 — UI in Pulse's style (M)
 
-- [ ] Copy Pulse's theme and components into `glint-ui-view` (Pulse's repository untouched, ADR 0012).
+- [x] Copy Pulse's theme and components into `glint-ui-view` (Pulse's repository untouched, ADR 0012). *(`ui/pulse/theme.slint` and `components.slint`, copied unchanged from Pulse at commit e4ccdaa with an origin note; `glint-ui-view` holds the generated code under `deny`, `glint-ui` stays `forbid` (ADR 0002). The window renders in Pulse's style on Xvfb. `deny.toml` ignores four "unmaintained" notices deep in Slint 1.18.1's dependencies.)*
 - [ ] Hero card, COLOR, CLICKING and GAME WINDOW cards; the *Quit Glint* button.
 - [ ] Connect to or spawn the engine, handshake, subscriptions, live swatch.
 - [ ] Close dialog and policies (Ask / Keep running / Quit), engine-crash handling.

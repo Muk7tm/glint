@@ -1,0 +1,183 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// The Glint window (PLAN §12), in Pulse's style: the components come from the copy in pulse/ (ADR 0012).
+
+
+import { Theme } from "pulse/theme.slint";
+import { PButton, ButtonKind, Card, Note } from "pulse/components.slint";
+
+component HeroCard inherits Card {
+    in property <bool> started;
+    in property <string> window-name;
+    in property <string> start-key;
+    in property <string> stop-key;
+    callback start-stop();
+
+    VerticalLayout {
+        spacing: 6px;
+        PButton {
+            text: root.started ? "■  Stop" : "▶  Start";
+            big: true;
+            kind: root.started ? ButtonKind.danger : ButtonKind.primary;
+            clicked => {
+                root.start-stop();
+            }
+        }
+
+        Note {
+            width: root.width - 2 * Theme.card-padding;
+            message: root.started
+                ? "Watching the center of " + root.window-name + " · " + root.stop-key + " stops everything"
+                : "Switch to " + root.window-name + " and press " + root.start-key + " to start · " + root.stop-key + " stops everything";
+            horizontal-alignment: center;
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "Glint";
+    width: 400px;
+    height: 320px;
+    background: Theme.bg;
+    default-font-size: Theme.font-body;
+
+    in-out property <bool> started;
+    in property <string> window-name: "Sober";
+    in property <string> start-key: "F7";
+    in property <string> stop-key: "F8";
+    callback keep-running();
+    callback quit-app();
+
+    VerticalLayout {
+        padding-left: Theme.gap-l;
+        padding-right: Theme.gap-l;
+        padding-top: Theme.gap-m;
+        padding-bottom: Theme.gap-m;
+        spacing: Theme.gap-s;
+
+        HeroCard {
+            started: root.started;
+            window-name: root.window-name;
+            start-key: root.start-key;
+            stop-key: root.stop-key;
+            start-stop => {
+                root.started = !root.started;
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+        }
+
+        HorizontalLayout {
+            alignment: end;
+            PButton {
+                text: "Quit Glint";
+                clicked => {
+                    root.ask-before-closing();
+                }
+            }
+        }
+    }
+
+    close-prompt := PopupWindow {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        close-policy: PopupClosePolicy.no-auto-close;
+        Rectangle {
+            width: root.width;
+            height: root.height;
+            background: #000000A0;
+            // Blocks clicks on the dimmed window behind the dialog.
+            TouchArea { }
+
+            FocusScope {
+                width: 0px;
+                height: 0px;
+                init => {
+                    self.focus();
+                }
+                key-pressed(event) => {
+                    if (event.text == Key.Escape) {
+                        close-prompt.close();
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
+
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: 336px;
+                height: prompt.preferred-height;
+                background: Theme.elevated;
+                border-radius: Theme.radius-m;
+                border-width: 1px;
+                border-color: Theme.border-strong;
+                drop-shadow-blur: 16px;
+                drop-shadow-color: #00000080;
+                prompt := VerticalLayout {
+                    padding: Theme.gap-l;
+                    spacing: Theme.gap-s;
+                    Text {
+                        text: "Close Glint?";
+                        color: Theme.text;
+                        font-size: Theme.font-title;
+                        font-weight: 700;
+                    }
+
+                    Text {
+                        text: "Keep it running in the background so " + root.start-key + " and " + root.stop-key + " keep working, or quit it completely.";
+                        color: Theme.text-secondary;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        text: "You can open this window again from the apps menu.";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-caption;
+                        wrap: word-wrap;
+                    }
+
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: Theme.gap-s;
+                        padding-top: Theme.gap-s;
+                        PButton {
+                            text: "Cancel";
+                            kind: ButtonKind.ghost;
+                            clicked => {
+                                close-prompt.close();
+                            }
+                        }
+
+                        PButton {
+                            text: "Keep running";
+                            clicked => {
+                                close-prompt.close();
+                                root.keep-running();
+                            }
+                        }
+
+                        PButton {
+                            text: "Quit Glint";
+                            kind: ButtonKind.primary;
+                            clicked => {
+                                close-prompt.close();
+                                root.quit-app();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Called from Rust when the window manager asks to close the window, and by
+    // the footer button.
+    public function ask-before-closing() {
+        close-prompt.show();
+    }
+}

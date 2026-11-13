@@ -1,0 +1,16 @@
+[package]
+name = "glint-ui-view"
+description = "the Slint-generated view of the Glint window; its code needs allow(unsafe_code) (ADR 0002)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+slint.workspace = true
+
+[build-dependencies]
+slint-build.workspace = true
+
+[lints]
+workspace = true

@@ -8,6 +8,15 @@ targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
 [advisories]
 version = 2
 yanked = "deny"
+# "Unmaintained" notices, not vulnerabilities, deep in Slint 1.18.1's own dependencies: its
+# accessibility stack (accesskit → atspi → zbus) and spin_on. Slint is pinned to Pulse's version
+# (ADR 0001, 0012), so there is nothing to upgrade; any other advisory still fails the check.
+ignore = [
+    { id = "RUSTSEC-2026-0370", reason = "zvariant, via Slint's accessibility stack" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names, via Slint's accessibility stack" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive, via Slint's accessibility stack" },
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils, via Slint's spin_on" },
+]
 
 [licenses]
 version = 2
