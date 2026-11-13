@@ -557,7 +557,15 @@ mod tests {
         conn.drain().unwrap();
         assert_eq!(conn.events_seen(), 2);
         drop(server);
-        assert!(matches!(conn.drain(), Err(WireError::Closed)));
+        // Another test may be forking a child (Xvfb) right now, which holds a copy of the
+        // socket until it execs: the close then shows up a moment later.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut closed = false;
+        while !closed && std::time::Instant::now() < deadline {
+            closed = matches!(conn.drain(), Err(WireError::Closed));
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(closed);
     }
 
     #[test]

@@ -254,8 +254,10 @@ pub fn run(options: Options) -> Result<(), StartError> {
     if caps.xinput.is_some() {
         hotkeys::select_raw_keys(&*c, screen.root)?;
         let matcher = Matcher::new(hotkeys::xtest_devices(&*c)?, ModifierKeys::new(&keymap));
+        let desktop = crate::desktop::Watch::start(&c, screen.root, display.screen, &caps);
         spawn_x_events(
             Arc::clone(&c),
+            desktop,
             matcher,
             Arc::clone(&bindings),
             Arc::clone(hot.shared()),

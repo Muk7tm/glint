@@ -10,6 +10,7 @@
 static ALLOCATOR: assert_no_alloc::AllocDisabler = assert_no_alloc::AllocDisabler;
 
 pub mod controller;
+pub mod desktop;
 pub mod hot;
 pub mod lifecycle;
 pub mod lock;

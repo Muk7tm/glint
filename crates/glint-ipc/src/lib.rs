@@ -342,6 +342,13 @@ pub struct StateSnapshot {
     /// A Glint window covers the watched spot: the live swatch is off meanwhile (§8).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub covered: bool,
+    /// A compositor is running (§8), followed live.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub compositor: bool,
+    /// The trigger's check gap, microseconds: longer under a compositor (ADR 0007). The lab's
+    /// judge uses it.
+    #[serde(default)]
+    pub check_gap_us: u32,
 }
 
 /// The picked game window and how it is right now.

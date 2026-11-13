@@ -35,6 +35,7 @@ use x11rb::connection::Connection as _;
 use x11rb::protocol::xproto::{ConnectionExt as _, ImageFormat};
 use x11rb::rust_connection::RustConnection;
 
+use crate::desktop::{DesktopEvent, Watch};
 use crate::hot::{CompiledProfile, Control, HotHandle, HotShared, Preview, StopReason};
 use crate::lifecycle::Emergency;
 use crate::pick::{self, PickInput};
@@ -214,6 +215,8 @@ pub enum Command {
     Pick(PickInput),
     /// Something happened to a window the tracker watches, or to the window list (§8).
     Window(WinEvent),
+    /// A compositor came or went, or the screen locked or unlocked (§8).
+    Desktop(DesktopEvent),
 }
 
 /// The core events a pick's grab delivers.
@@ -256,6 +259,7 @@ const ESCAPE: u32 = 0xff1b;
 /// controller.
 pub fn spawn_x_events(
     conn: Arc<RustConnection>,
+    desktop: Watch,
     mut matcher: Matcher,
     bindings: Arc<ArcSwap<Vec<Binding>>>,
     hot: Arc<HotShared>,
@@ -284,6 +288,10 @@ pub fn spawn_x_events(
                 }
             } else if let Some(w) = WinEvent::from_x(&event) {
                 if commands.send(Command::Window(w)).is_err() {
+                    break;
+                }
+            } else if let Some(d) = desktop.event(&event) {
+                if commands.send(Command::Desktop(d)).is_err() {
                     break;
                 }
             } else if matches!(event, x11rb::protocol::Event::MappingNotify(_)) {
@@ -420,6 +428,8 @@ pub struct Controller {
     /// Where each UI's window is (`ui_geometry`), and whether one covers the watched spot.
     ui_rects: HashMap<ClientId, Rect>,
     covered: bool,
+    /// The fastest monitor's refresh rate, for the check gap under a compositor.
+    refresh_hz: Option<f64>,
 }
 
 impl Controller {
@@ -447,6 +457,7 @@ impl Controller {
         bindings: Arc<ArcSwap<Vec<Binding>>>,
     ) -> Self {
         let tracker = Tracker::new(&conn, root);
+        let refresh_hz = crate::desktop::max_refresh(&conn, root);
         Self {
             display,
             caps,
@@ -481,6 +492,7 @@ impl Controller {
             tracker,
             ui_rects: HashMap::new(),
             covered: false,
+            refresh_hz,
         }
     }
 
@@ -590,6 +602,8 @@ impl Controller {
                 .or_else(|| self.window_blocker(&profile)),
             window: self.window_status(&profile),
             covered: self.covered,
+            compositor: self.compositor,
+            check_gap_us: u32::try_from(self.check_gap(&profile).as_micros()).unwrap_or(u32::MAX),
         }
     }
 
@@ -654,6 +668,8 @@ impl Controller {
             field: None,
         })?;
         let new_origin = self.origin(&profile);
+        let mut compiled = compiled;
+        compiled.trigger.max_check_gap = self.check_gap(&profile);
         self.hot.set_profile(compiled);
         self.lut = lut;
         self.revision += 1;
@@ -743,6 +759,7 @@ impl Controller {
             Command::Notice(n) => self.notice(n),
             Command::Pick(input) => self.pick_input(input),
             Command::Window(event) => self.on_window(event),
+            Command::Desktop(event) => self.on_desktop(event),
             Command::Signal(_) => {
                 self.stop(None);
                 self.quit = true;
@@ -947,6 +964,53 @@ impl Controller {
                 message: "The Glint window covers the spot it's watching.".into(),
                 field: None,
             });
+        }
+        self.broadcast(Event::State(self.state()));
+    }
+
+    /// The trigger's check gap (ADR 0007): four check periods and at least 2 ms; under a
+    /// compositor, which shows every frame for a whole refresh, up to most of one frame.
+    fn check_gap(&self, profile: &Profile) -> Duration {
+        let base = glint_core::TriggerCfg::check_gap(profile.sampling.speed.period());
+        if !self.compositor {
+            return base;
+        }
+        let frame = Duration::from_secs_f64(1.0 / self.refresh_hz.unwrap_or(60.0).max(1.0));
+        base.max(frame.mul_f64(0.9))
+    }
+
+    /// Publishes the active profile again with what the desktop says now (the compositor, the
+    /// window), and restarts watching on it.
+    fn republish(&mut self) {
+        let profile = self.active_profile();
+        let Ok(mut compiled) = compile(
+            &profile,
+            &self.keymap,
+            Arc::clone(&self.lut),
+            watched_spot(&self.monitors, &profile),
+        ) else {
+            return;
+        };
+        compiled.trigger.max_check_gap = self.check_gap(&profile);
+        self.hot.set_profile(compiled);
+        if self.started {
+            match self.origin(&profile) {
+                Ok(origin) => self.hot.restart(origin),
+                Err(issue) => self.stop(Some(issue.message)),
+            }
+        }
+    }
+
+    fn on_desktop(&mut self, event: DesktopEvent) {
+        match event {
+            DesktopEvent::Compositor(on) if on != self.compositor => {
+                self.compositor = on;
+                self.republish();
+            }
+            DesktopEvent::Locked(true) if self.started && self.active_profile().guards.stop_when_locked => {
+                self.stop(Some("Stopped: the screen locked.".into()));
+            }
+            _ => return,
         }
         self.broadcast(Event::State(self.state()));
     }

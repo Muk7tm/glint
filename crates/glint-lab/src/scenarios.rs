@@ -284,6 +284,15 @@ impl Run {
         sleep(baseline);
         let tap = TraceTap::connect(s.host.socket())?;
         s.canvas.take_inputs();
+        let mut cfg = JudgeCfg::new(
+            Duration::from_millis(u64::from(profile.trigger.rearm_absent_ms)),
+            profile.sampling.speed.period(),
+        );
+        // The engine's own check gap, longer under a compositor (ADR 0007).
+        let gap = s.state()?.check_gap_us;
+        if gap > 0 {
+            cfg.slack = Duration::from_micros(u64::from(gap)) * 2;
+        }
         Ok(Self {
             marks: vec![Mark {
                 at: clear,
@@ -296,10 +305,7 @@ impl Run {
             inputs: Vec::new(),
             probe,
             tap,
-            cfg: JudgeCfg::new(
-                Duration::from_millis(u64::from(profile.trigger.rearm_absent_ms)),
-                profile.sampling.speed.period(),
-            ),
+            cfg,
         })
     }
 
@@ -391,6 +397,13 @@ impl Run {
             },
         );
         r.sandbox = !s.host.is_real();
+        let gap = self.cfg.slack / 2;
+        if gap > Duration::from_millis(2) {
+            r.notes.push(format!(
+                "the engine saw a compositor: check gap {:.1} ms (ADR 0007)",
+                gap.as_secs_f64() * 1e3
+            ));
+        }
         Ok(r)
     }
 }
@@ -556,13 +569,14 @@ fn fade_once(run: &mut Run, s: &Session, rng: &mut Rng) -> Result<(), LabError> 
     Ok(())
 }
 
-/// Five appearances with gaps 15 ms longer than *Gone after*, then five with gaps 15 ms shorter.
+/// Five appearances with gaps 15 ms past where a re-arm is certain (*Gone after* plus two check
+/// gaps), then five with gaps 15 ms shorter than *Gone after*.
 fn rapid_round(run: &mut Run, s: &Session, rng: &mut Rng) -> Result<(), LabError> {
     let gone = run.cfg.gone_after;
     let margin = Duration::from_millis(15);
     run.clear(s)?;
     sleep(Duration::from_millis(300));
-    for gap in [gone + margin, gone.saturating_sub(margin)] {
+    for gap in [gone + run.cfg.slack + margin, gone.saturating_sub(margin)] {
         for _ in 0..5 {
             run.show(s, GREEN)?;
             sleep(rng.ms(40, 80));
@@ -719,11 +733,9 @@ fn rapid(s: &mut Session) -> Result<Report, LabError> {
         rapid_round(&mut run, s, &mut rng)?;
     }
     let mut r = run.finish(s, title, false)?;
-    r.notes.push(format!(
-        "per round: 5 appearances {0} ms apart (5 clicks), then 5 only {1} ms apart (1 click)",
-        u64::from(profile.trigger.rearm_absent_ms) + 15,
-        u64::from(profile.trigger.rearm_absent_ms).saturating_sub(15)
-    ));
+    r.notes.push(
+        "per round: 5 appearances whose gaps clear Gone after and two check gaps (a click each), then 5 whose gaps are 15 ms short of Gone after (one click)".into(),
+    );
     Ok(r)
 }
 
