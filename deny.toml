@@ -1,0 +1,39 @@
+# cargo-deny (PLAN §16): licenses, security advisories, duplicate crates and sources of every
+# dependency. CI runs `cargo deny check`.
+
+[graph]
+# The engine and its tools are Linux-only.
+targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+# Glint is GPL-3.0-or-later, and Slint (Phase 4) is used under GPL-3.0-only (§2), so both GPL-3.0
+# licenses are allowed. Every other license here is compatible with them.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.93
+# Some of the above arrive only with Slint in Phase 4.
+unused-allowed-license = "allow"
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

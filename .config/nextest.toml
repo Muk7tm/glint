@@ -1,0 +1,23 @@
+# cargo-nextest (PLAN §16, ADR 0010).
+
+[test-groups]
+# The engine's integration tests start an Xvfb and a glintd that checks 2,000 times a second. Too
+# many at once only adds blind time, which the lab reports as possible misses.
+sandboxes = { max-threads = 2 }
+
+[[profile.default.overrides]]
+# The exhaustive lookup-table test keeps every core busy (rayon): it runs alone, so it can't starve
+# the engine tests.
+filter = "package(glint-core) & test(=color::lut::tests::every_color_matches_the_reference_math)"
+threads-required = "num-test-threads"
+
+[[profile.default.overrides]]
+# A sandbox is two busy threads: the engine's hot thread and the X server.
+filter = "package(glint-engine) & kind(test)"
+test-group = "sandboxes"
+threads-required = 2
+
+[profile.ci]
+# Show every failure, and kill a hung test after four minutes.
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 4 }

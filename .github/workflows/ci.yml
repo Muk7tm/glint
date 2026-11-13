@@ -1,0 +1,78 @@
+# CI (PLAN §16, ADR 0010): correctness only, never timing. Shared runners are far too noisy for
+# latency; that is measured on real hardware with `glint-lab --real-desktop`.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  lint:
+    name: fmt and clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    # Every unit, property and exhaustive test (glint-core is optimized even in test builds), the
+    # engine's end-to-end tests, and every lab scenario: each starts its own Xvfb and glintd.
+    name: tests and lab scenarios (Xvfb)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Xvfb, and the X11 headers one test reads keysyms from
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb x11proto-dev
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - run: cargo nextest run --workspace --locked --profile ci
+
+  composited:
+    # The lab scenarios again with picom compositing every sandbox. Optional (§16): the window-buffer
+    # backend that a compositor calls for comes in Phase 5.
+    name: lab scenarios under picom (optional)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    env:
+      GLINT_LAB_COMPOSITOR: picom
+    steps:
+      - uses: actions/checkout@v7
+      - name: Xvfb and picom
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb picom
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - run: cargo nextest run -p glint-engine --test lab --locked --profile ci
+
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
