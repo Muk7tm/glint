@@ -218,6 +218,7 @@ pub fn execute(cli: &Cli, out: &mut dyn Write) -> Result<(), CtlError> {
             client.send(Request::Subscribe {
                 telemetry_hz: 10,
                 live_hz: 0,
+                trace: false,
             })?;
             loop {
                 if let Event::Telemetry(t) = client.next_event(WAIT)?.body {

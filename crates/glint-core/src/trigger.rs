@@ -132,17 +132,20 @@ enum Phase {
     Latched(Latch),
 }
 
-/// What the trigger tracks while latched.
+/// What the trigger tracks while latched. A check read the screen at some moment between its
+/// request (`sent`) and its reply (`back`), so every time here is the bound that can't overstate
+/// a watched absence or hide a possible miss (ADR 0011).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 struct Latch {
-    /// The previous check.
+    /// The previous check's request: the earliest it can have read the screen.
     prev: Option<Instant>,
-    /// When the color was last seen (the fire, or a later Present or Enter check), or when
-    /// watching (re)started, before anything was seen.
+    /// The earliest moment the color can have been seen last (the fire, or a later Present or
+    /// Enter check), or when watching (re)started, before anything was seen.
     since: Option<Instant>,
     /// Glint was blind at least once since `since`.
     blind: bool,
-    /// The current watched run of absent checks: when it began, and how many checks.
+    /// The current watched run of absent checks: the latest its first check can have read the
+    /// screen (that check's reply), and how many checks.
     run_start: Option<Instant>,
     run_checks: u32,
 }
@@ -275,14 +278,31 @@ impl Trigger {
         !matches!(self.phase, Phase::Stopped | Phase::Paused)
     }
 
-    /// One check: `now` is when its capture completed.
+    /// One check that read the screen at `now`: [`step_between`](Self::step_between) with no
+    /// time between the request and the reply.
     pub fn step(&mut self, now: Instant, v: Verdict) -> Step {
+        self.step_between(now, now, v)
+    }
+
+    /// One check whose request went out at `sent` and whose reply came back at `back`: the
+    /// server read the screen somewhere in between. Usually the two are microseconds apart, but a
+    /// stall after the server answered (the engine descheduled or frozen) delivers an old frame
+    /// late. So every comparison takes the bound that can't stretch a watched absence or hide a
+    /// possible miss (ADR 0011):
+    ///
+    /// - two checks can have read the screen as much as `back - prev_sent` apart (blindness);
+    /// - an absence is surely watched from its first check's `back` to the current check's `sent`;
+    /// - the color can have been seen last as early as that check's `sent`.
+    pub fn step_between(&mut self, sent: Instant, back: Instant, v: Verdict) -> Step {
+        let sent = sent.min(back);
         match self.phase {
             Phase::Stopped | Phase::Paused => Step::None,
             Phase::Idle => match v {
-                Verdict::Enter if self.cfg.confirm_samples <= 1 && self.cfg.confirm_min.is_zero() => self.fire(now),
+                Verdict::Enter if self.cfg.confirm_samples <= 1 && self.cfg.confirm_min.is_zero() => {
+                    self.fire(sent, back)
+                }
                 Verdict::Enter => {
-                    self.phase = Phase::Confirming { since: now, count: 1 };
+                    self.phase = Phase::Confirming { since: back, count: 1 };
                     Step::None
                 }
                 // Present alone never starts an appearance.
@@ -294,46 +314,47 @@ impl Trigger {
                     return Step::None;
                 }
                 let count = count.saturating_add(1);
-                if count >= self.cfg.confirm_samples && now.saturating_duration_since(since) >= self.cfg.confirm_min {
-                    self.fire(now)
+                if count >= self.cfg.confirm_samples && sent.saturating_duration_since(since) >= self.cfg.confirm_min {
+                    self.fire(sent, back)
                 } else {
                     self.phase = Phase::Confirming { since, count };
                     Step::None
                 }
             }
             Phase::Latched(mut latch) => {
-                // Two checks further apart than the check gap: Glint was blind in between, and
-                // the color may have come and gone unseen (ADR 0007).
+                // Two checks that can have read the screen further apart than the check gap:
+                // Glint was blind in between, and the color may have come and gone unseen.
                 let blind = latch
                     .prev
-                    .is_some_and(|p| now.saturating_duration_since(p) > self.cfg.max_check_gap);
-                latch.prev = Some(now);
+                    .is_some_and(|p| back.saturating_duration_since(p) > self.cfg.max_check_gap);
+                latch.prev = Some(sent);
                 latch.blind |= blind;
-                let since = *latch.since.get_or_insert(now);
+                let since = *latch.since.get_or_insert(sent);
                 if v.present() {
                     // The same appearance, unless blind time hid a disappearance long enough to
                     // end it. Then this may be a new appearance: report it, but never click.
-                    let maybe_missed = latch.blind && now.saturating_duration_since(since) >= self.cfg.rearm_absent;
-                    self.phase = Phase::Latched(Latch::seen_at(now));
+                    let maybe_missed = latch.blind && back.saturating_duration_since(since) >= self.cfg.rearm_absent;
+                    self.phase = Phase::Latched(Latch::seen_at(sent));
                     return if maybe_missed { Step::MaybeMissed } else { Step::None };
                 }
                 // Only absence watched without a blind gap counts (§5.5): a gap starts the run over.
                 if blind {
                     (latch.run_start, latch.run_checks) = (None, 0);
                 }
-                let run_start = *latch.run_start.get_or_insert(now);
+                let run_start = *latch.run_start.get_or_insert(back);
                 latch.run_checks = latch.run_checks.saturating_add(1);
                 let rearmed = latch.run_checks >= self.cfg.rearm_absent_samples
-                    && now.saturating_duration_since(run_start) >= self.cfg.rearm_absent;
+                    && sent.saturating_duration_since(run_start) >= self.cfg.rearm_absent;
                 self.phase = if rearmed { Phase::Idle } else { Phase::Latched(latch) };
                 Step::None
             }
         }
     }
 
-    fn fire(&mut self, now: Instant) -> Step {
+    /// Fires for a check sent at `sent` and decided at `back`, when the press goes out.
+    fn fire(&mut self, sent: Instant, now: Instant) -> Step {
         // 1. Consume the appearance first, so nothing below can lead to a late click.
-        self.phase = Phase::Latched(Latch::seen_at(now));
+        self.phase = Phase::Latched(Latch::seen_at(sent));
         // 2. The absolute floor between clicks.
         if self
             .last_fire
@@ -567,6 +588,50 @@ mod tests {
         assert_eq!(t.step(t0 + ms(87), Verdict::Absent), Step::None); // after 45 ms blind
         absent(&mut t, t0 + ms(87), t0 + ms(94), ms(1)); // 7 ms more
         assert_eq!(t.step(t0 + ms(95), Verdict::Enter), Step::MaybeMissed);
+        assert_eq!(t.state(), TriggerState::Latched);
+    }
+
+    /// `step_between` with the reply 20 µs after the request.
+    fn quick(t: &mut Trigger, at: Instant, v: Verdict) -> Step {
+        t.step_between(at, at + Duration::from_micros(20), v)
+    }
+
+    #[test]
+    fn an_old_frame_delivered_late_still_reports_the_possible_miss() {
+        // Found by glint-lab's stall scenario (ADR 0011). A check goes out at 100 ms and the
+        // engine freezes right after the server read the screen, still green; the reply is read at
+        // 131 ms. Meanwhile the color left at 115 ms, and it is back at 165 ms: gone for 50 ms, a
+        // new appearance. The engine watched only 34 ms of that, so it can't click, but it must
+        // say so. Timing the old frame by its reply made it look seen at 131 ms, and the miss was
+        // silent.
+        let (mut t, t0) = fired(cfg());
+        let us = |n: u64| t0 + Duration::from_micros(n);
+        for k in 1..200 {
+            assert_eq!(quick(&mut t, us(k * 500), Verdict::Enter), Step::None);
+        }
+        assert_eq!(t.step_between(us(100_000), us(131_000), Verdict::Enter), Step::None);
+        for k in 263..330 {
+            assert_eq!(quick(&mut t, us(k * 500), Verdict::Absent), Step::None);
+        }
+        assert_eq!(quick(&mut t, us(165_000), Verdict::Enter), Step::MaybeMissed);
+    }
+
+    #[test]
+    fn a_late_reply_cant_stretch_a_short_absence_into_a_rearm() {
+        // Gone from 100 ms to 139.8 ms: 39.8 ms, so one appearance. The last absent check reads
+        // the screen at 139.5 ms, and its reply comes 1.4 ms late, too little to look blind.
+        // Measured from the replies the absence would last 40.9 ms, re-arm, and click a second
+        // time at 141 ms (ADR 0011). Measured from what was surely watched, it lasts 39.5 ms.
+        let (mut t, t0) = fired(cfg());
+        let us = |n: u64| t0 + Duration::from_micros(n);
+        for k in 1..200 {
+            assert_eq!(quick(&mut t, us(k * 500), Verdict::Enter), Step::None);
+        }
+        for k in 200..279 {
+            assert_eq!(quick(&mut t, us(k * 500), Verdict::Absent), Step::None);
+        }
+        assert_eq!(t.step_between(us(139_500), us(140_900), Verdict::Absent), Step::None);
+        assert_eq!(quick(&mut t, us(141_000), Verdict::Enter), Step::None);
         assert_eq!(t.state(), TriggerState::Latched);
     }
 
@@ -1011,9 +1076,12 @@ mod tests {
     mod ground_truth {
         //! The property that matters most (R1): never two clicks in one *real* appearance. A real
         //! on/off color is simulated in continuous time and sampled about 2,000 times a second,
-        //! with jitter and random stalls of up to 80 ms. Appearances come from the true signal
-        //! (gaps shorter than `rearm_absent` join), not from what the trigger saw. Every missed
-        //! appearance must have a reason, and a miss caused by blind time must be reported.
+        //! with jitter and random stalls of up to 80 ms. Each check reads the screen a few
+        //! microseconds after its request, and its reply usually returns at once, but sometimes
+        //! late: a delay too short to look blind, or a stall after the server answered, which
+        //! delivers an old frame (ADR 0011). Appearances come from the true signal (gaps shorter
+        //! than `rearm_absent` join), not from what the trigger saw. Every missed appearance must
+        //! have a reason, and a miss caused by blind time must be reported.
 
         use proptest::prelude::*;
 
@@ -1079,23 +1147,37 @@ mod tests {
                 } else {
                     400 + r % 300
                 };
-                while i < on.len() && on[i].1 <= now {
+                // The request goes out at `now`, the server reads the screen at `read`, and the
+                // reply is back at `back`: usually at once, sometimes a little late (never enough
+                // to look blind by itself), and with stalls, after an old frame waited.
+                let r = lcg(&mut seed);
+                let read = now + 10 + r % 20;
+                let back = read
+                    + match r % 1000 {
+                        x if x < stall_permille => 2_001 + (r >> 10) % 40_000,
+                        x if x < 60 => (r >> 10) % 600,
+                        _ => 5 + (r >> 10) % 20,
+                    };
+                while i < on.len() && on[i].1 <= read {
                     i += 1;
                 }
-                let present = i < on.len() && on[i].0 <= now;
+                let present = i < on.len() && on[i].0 <= read;
                 if present {
-                    out.seen.push(now);
+                    out.seen.push(read);
                 }
                 let v = if present { Verdict::Enter } else { Verdict::Absent };
-                match trigger.step(t0 + Duration::from_micros(now), v) {
-                    Step::Fire => out.fires.push(now),
-                    Step::MaybeMissed => out.maybe_missed.push(now),
+                let at = |us: u64| t0 + Duration::from_micros(us);
+                // A click or a report belongs to the moment the screen was read.
+                match trigger.step_between(at(now), at(back), v) {
+                    Step::Fire => out.fires.push(read),
+                    Step::MaybeMissed => out.maybe_missed.push(read),
                     Step::SafetyStop => {
-                        out.safety_stop = Some(now);
+                        out.safety_stop = Some(read);
                         break;
                     }
                     Step::None | Step::Suppressed => {}
                 }
+                now = back;
             }
             let mut last_end = 0;
             for &(s, e) in &on {
@@ -1131,8 +1213,9 @@ mod tests {
                         let stopped = out.safety_stop.is_some_and(|t| t < a.1);
                         let unseen = within(&out.seen, a) == 0; // it was over before Glint could look
                         let reported = within(&out.maybe_missed, a) > 0;
-                        // Gone for barely longer than "Gone after": the 2 ms check gap at both ends.
-                        let boundary = a.2 < rearm_ms * 1000 + 3_000;
+                        // Gone for barely longer than "Gone after": an absence counts only from
+                        // what was surely watched, which can fall short by a check gap at each end.
+                        let boundary = a.2 < rearm_ms * 1000 + 4_000;
                         prop_assert!(stopped || unseen || reported || boundary, "silently missed {:?}", a);
                     }
                 }

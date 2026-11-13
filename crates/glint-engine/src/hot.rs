@@ -8,7 +8,7 @@
 //! `assert_no_alloc`.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -120,6 +120,8 @@ pub struct HotShared {
     pub in_use: AtomicU64,
     /// Events dropped because the ring was full.
     pub dropped: AtomicU64,
+    /// A client wants the trace stream (`glint-lab`); the telemetry thread builds it only then.
+    pub tracing: AtomicBool,
 }
 
 /// Why the hot thread stopped watching on its own.
@@ -144,9 +146,12 @@ pub enum HotEvent {
         t_cap: Instant,
         verdict: Verdict,
     },
-    /// A click: the press was written at `t_sent`, for the capture that returned at `t_cap`.
+    /// A click: the check that fired was requested at `t_req` and came back at `t_cap`, the
+    /// trigger decided at `t_dec`, and the press was written at `t_sent`.
     Fired {
+        t_req: Instant,
         t_cap: Instant,
+        t_dec: Instant,
         t_sent: Instant,
     },
     Suppressed {
@@ -261,8 +266,9 @@ pub fn run(mut h: Hot) {
                 stop_self(&mut h, StopReason::InputFailed, &mut was_armed);
                 return Flow::Continue;
             }
-            match trigger.step(t_cap, verdict) {
+            match trigger.step_between(t_req, t_cap, verdict) {
                 Step::Fire => {
+                    let t_dec = Instant::now();
                     if h.injector.press(t_cap).is_err() {
                         stop_self(&mut h, StopReason::InputFailed, &mut was_armed);
                         return Flow::Continue;
@@ -270,7 +276,9 @@ pub fn run(mut h: Hot) {
                     push(
                         &mut h,
                         HotEvent::Fired {
+                            t_req,
                             t_cap,
+                            t_dec,
                             t_sent: Instant::now(),
                         },
                     );
@@ -386,6 +394,7 @@ impl HotHandle {
             profile: ArcSwap::from_pointee(profile),
             in_use: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
+            tracing: AtomicBool::new(false),
         });
         let (events, consumer) = rtrb::RingBuffer::new(EVENT_RING);
         let (preview, preview_out) = triple_buffer::TripleBuffer::new(&Preview::default()).split();

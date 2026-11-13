@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc cf78e9d00ff61b8c9423c81b15fc04b34127e1c376b5db46a3d57fa442ee1750 # shrinks to rearm_ms = 51, samples = 1, segments = [(54000, 2500)], seed = 5462378369445420818, stall_permille = 21
+cc 18ed564d94f0b6a9742fe54783462dd47e91c31be09e3ef7fb01877b4e771db9 # shrinks to rearm_ms = 0, samples = 1, segments = [(44410, 75488), (74968, 53937), (119463, 41801), (33880, 6777), (80923, 69066), (83433, 29937), (115062, 113042), (22339, 91801), (59080, 51353), (94042, 9860), (75614, 103720), (33205, 92350), (63565, 119006), (4000, 34053)], seed = 6584110878873251754, stall_permille = 7

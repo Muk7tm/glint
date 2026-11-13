@@ -5,12 +5,12 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 ## Status
 
-- **Active phase:** none. Phase 2 (engine MVP) is complete, and Phase 3 waits for the owner's go-ahead. The
-  real-desktop exit run passed on 2026-11-13: `glint-lab basic --real-desktop --count 100` gave 100 clicks for
-  100 appearances, 0 extra, 0 missed, p50 0.48 ms, p99 0.71 ms (MEASUREMENTS.md §8).
-- **Phase 3 needs from the owner:** `cargo-nextest` and `cargo-deny` installed
-  (`sudo pacman -S cargo-nextest cargo-deny`), and a decision on where CI runs: the repository has no GitHub
-  remote yet.
+- **Active phase:** Phase 3 (lab and CI), started 2026-11-13 after the owner's go-ahead. The lab is done: 17
+  scenarios pass under Xvfb. CI is next.
+- **Repository:** public at https://github.com/Muk7tm/glint (the owner chose GitHub, public, for CI).
+- Phase 2 is complete: the real-desktop exit run passed on 2026-11-13 (`glint-lab basic --real-desktop --count
+  100`: 100 clicks for 100 appearances, 0 extra, 0 missed, p50 0.48 ms, p99 0.71 ms; MEASUREMENTS.md §8).
+- `cargo-nextest` and `cargo-deny` are installed (2026-11-13).
 - **Owner decisions (2026-11-13):** v1.0 timing is judged with no compositor, with X-server-stall trials
   listed separately (ADR 0004); preventing extra clicks is the top priority, so only watched absence re-arms
   and possible misses are reported (ADR 0007, revised).
@@ -58,9 +58,9 @@ listed in §13 (written as their content appears).
 
 ## Phase 3 — Lab and CI (M)
 
-- [ ] `glint-lab`: test window, timing, report, every correctness scenario.
+- [x] `glint-lab`: test window, timing, report, every correctness scenario. *(17 scenarios; `move`, `focus` and `ui-overlap` wait for window mode in Phase 5. A trace stream from the engine (every click with its stage times, possible misses, blind gaps, self-stops), a stall probe, and a judge that replays the drawing through the trigger's rules with time bounds: ADR 0010. `cargo test` runs all 17 in about 35 s, and they pass with 8 CPU-burning loops alongside. The `stall` scenario found a trigger bug: a check reads the screen between its request and its reply, and timing it by the reply alone could hide a possible miss or stretch an absence (ADR 0011, fixed, with the ground-truth test now modelling replies).)*
 - [ ] GitHub Actions: fmt, clippy, nextest, exhaustive test, Xvfb integration, cargo-deny.
-- **Exit:** every scenario in §16 that doesn't need real hardware passes in CI.
+- **Exit:** every scenario in §16 that needs neither real hardware nor window mode passes in CI (`move`, `focus` and `ui-overlap` are Phase 5's exit, ADR 0010).
 
 ## Phase 4 — UI on Pulse's kit (M)
 

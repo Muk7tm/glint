@@ -169,6 +169,19 @@ impl Screen {
         }
         (press, release)
     }
+
+    /// Waits until at least `want` presses and releases have arrived, for up to 2 s, then 30 ms
+    /// more to catch any extra. A fixed window flakes on a busy machine.
+    fn wait_for(&self, want: (u32, u32)) -> (u32, u32) {
+        let (mut press, mut release) = (0, 0);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while (press < want.0 || release < want.1) && Instant::now() < deadline {
+            let (p, r) = self.presses(5);
+            (press, release) = (press + p, release + r);
+        }
+        let (p, r) = self.presses(30);
+        (press + p, release + r)
+    }
 }
 
 fn green_profile() -> Profile {
@@ -235,18 +248,19 @@ fn watching_and_clicking_through_the_socket() {
         (s.started, s.phase, s.profile.as_str()),
         (true, Phase::Watching, "Green")
     );
-    assert_eq!(screen.presses(150), (0, 0));
+    assert_eq!(screen.presses(300), (0, 0));
     for _ in 0..3 {
         screen.show(true);
-        assert_eq!(screen.presses(150), (1, 1));
+        assert_eq!(screen.wait_for((1, 1)), (1, 1));
         screen.show(false);
-        assert_eq!(screen.presses(100), (0, 0));
+        assert_eq!(screen.presses(300), (0, 0));
     }
 
     // Telemetry and the live swatch arrive once subscribed.
     c.send(Request::Subscribe {
         telemetry_hz: 10,
         live_hz: 20,
+        trace: false,
     })
     .unwrap();
     let (mut telemetry, mut live) = (None, false);
@@ -285,9 +299,9 @@ fn starting_while_present_waits_and_sigterm_exits_cleanly() {
     assert!(matches!(c.call(Request::Start, WAIT).unwrap(), Event::State(s) if s.started));
     assert_eq!(screen.presses(250), (0, 0)); // arm-while-present
     screen.show(false);
-    assert_eq!(screen.presses(100), (0, 0));
+    assert_eq!(screen.presses(300), (0, 0));
     screen.show(true);
-    assert_eq!(screen.presses(100), (1, 1));
+    assert_eq!(screen.wait_for((1, 1)), (1, 1));
 
     // A second engine on the same display is refused with exit code 3.
     let mut second = spawn(&engine.x, &engine.scratch);
@@ -358,9 +372,9 @@ fn glint_ctl_drives_the_engine() {
             .unwrap()
             .starts_with("watching · profile Green")
     );
-    assert_eq!(screen.presses(100), (0, 0));
+    assert_eq!(screen.presses(300), (0, 0));
     screen.show(true);
-    assert_eq!(screen.presses(100), (1, 1));
+    assert_eq!(screen.wait_for((1, 1)), (1, 1));
     let panicked = ctl(&sock, &display, &["panic"]).unwrap();
     assert!(
         panicked.contains("stopped") && panicked.contains("last stop: Emergency stop."),
@@ -391,11 +405,11 @@ fn release_all_works_without_an_engine() {
     let root = stuck.setup().roots[0].root;
     stuck.xtest_fake_input(4, 1, 0, root, 0, 0, 0).unwrap();
     stuck.sync().unwrap();
-    assert_eq!(screen.presses(50), (1, 0));
+    assert_eq!(screen.wait_for((1, 0)), (1, 0));
     let nowhere = std::env::temp_dir().join("glint-no-such-engine.sock");
     let out = ctl(&nowhere, &x.display().to_string(), &["release-all"]).unwrap();
     assert!(out.starts_with("No engine is running; released"), "{out}");
-    assert_eq!(screen.presses(50), (0, 1));
+    assert_eq!(screen.wait_for((0, 1)), (0, 1));
     let none = ctl(&nowhere, &x.display().to_string(), &["status"]).unwrap_err();
     assert!(matches!(none, glint_ctl::CtlError::NoEngine(_)), "{none}");
 }
@@ -535,9 +549,9 @@ fn hotkeys_start_stop_and_sample() {
     // F7 on a real keyboard starts watching; the engine clicks; F7 again stops.
     tap(&keys, keyboard, f7);
     assert!(started(&mut c));
-    assert_eq!(screen.presses(100), (0, 0));
+    assert_eq!(screen.presses(300), (0, 0));
     screen.show(true);
-    assert_eq!(screen.presses(100), (1, 1));
+    assert_eq!(screen.wait_for((1, 1)), (1, 1));
     tap(&keys, keyboard, f7);
     assert!(!started(&mut c));
 

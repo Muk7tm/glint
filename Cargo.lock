@@ -527,6 +527,7 @@ dependencies = [
  "glint-core",
  "glint-ipc",
  "glint-x11",
+ "rustix",
  "thiserror",
  "x11rb",
 ]

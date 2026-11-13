@@ -542,7 +542,7 @@ Hotkeys live in the engine, so they keep working with the UI closed, which is wh
 |---|---|---|
 | `hello` | `protocol`, `client` (`ui`, `ctl` or `lab`), `version` | `hello_ack` or `error` |
 | `get_state` | — | `state` |
-| `subscribe` | `telemetry_hz` (0–10), `live_hz` (0–20) | Streams of `telemetry` and `live` |
+| `subscribe` | `telemetry_hz` (0–10), `live_hz` (0–20), `trace` (optional, for `glint-lab`) | Streams of `telemetry`, `live` and `trace` (ADR 0010) |
 | `set_profile` | `profile` (complete object) | `profile_applied {rev}` or `error {field}` |
 | `use_profile` · `list_profiles` | `name` | `state` · `profiles` |
 | `get_profile` | `name` (optional: the active profile) | `profile {profile}` (added in Phase 2 for `glint-ctl profile show`/`export`, ADR 0009) |
@@ -566,6 +566,7 @@ Hotkeys live in the engine, so they keep working with the UI closed, which is wh
 | `telemetry` | Checks/s, capture round trip p50/p99, response p50/p99/max, clicks, suppressed, stalls, dropped events, CPU % |
 | `live` | The color at the watched spot right now and its verdict |
 | `fired` | Click count and engine-side latency (coalesced to at most 20 per second) |
+| `trace` | Only with `subscribe {trace}`, never coalesced, times in `CLOCK_MONOTONIC` ns: `fired` (check requested, pixels back, decided, press written), `maybe_missed`, `blind` (no check for longer than the check gap), `stopped` (self-stop and cause). For `glint-lab`'s report (ADR 0010) |
 | `magnifier` | Width, height, RGBA pixels (base64) and the center color |
 | `warning` · `error` | Stable `code`, human-readable message, optional `field` |
 
@@ -1037,17 +1038,17 @@ Develop the engine against Xephyr first: a bug there can't click into your real 
 | Performance | Latency distributions, X server tax, CPU use | `glint-lab` on real hardware |
 | Soak | 60 minutes of randomized scenarios | Real hardware, before every release |
 
-**How `glint-lab` measures.** It opens its own window, makes that window Glint's target through the IPC (`set_profile`, then `start`), and warps the pointer into it so clicks land there. For each trial it fills the window's center with a color, follows the drawing request with a round trip so it knows the server has executed it, and times the appearance from just before that drawing request (a click can't precede it; this overstates the response by the request's one-way trip, about 10 µs, Phase 2). It then timestamps the arrival of Glint's `ButtonPress` (or `KeyPress`) on its own window. The difference is the true response time including X delivery, and Glint's `fired` events split it into waiting, capture, decision, injection and delivery. The lab runs against the screen backend (with or without a compositor) and against the window-buffer backend. Each run starts its own Xvfb and `glintd` unless `--real-desktop` asks for the real display; there the lab's engine uses a throwaway config directory, the real lock (so it refuses to run next to another engine), and exits with the lab.
+**How `glint-lab` measures.** It opens its own window over the watched monitor, sets its profile through the IPC (`set_profile`, then `start`), and warps the pointer into the window so clicks land there. For each change it draws, it records two times: just before the drawing request, and when the request's round trip returns, by which point the server has executed it. Appearances are timed from the first (a click can't precede it; this overstates the response by the request's one-way trip, about 10 µs, Phase 2). It timestamps the arrival of Glint's `ButtonPress` (or `KeyPress`) on its window, so the difference is the true response time including X delivery. Glint's `trace` stream splits it into waiting, capture, decision, injection and delivery, and reports possible misses, blind time and self-stops. A probe client times a round trip every millisecond to catch X server stalls. Afterwards a judge replays the drawing through the trigger's rules, using the shortest and longest possible duration of each change, to decide which appearances must or may get a click; an extra click is never excused, and a missing one only for a reason the report lists (ADR 0010). The lab runs against the screen backend (with or without a compositor) and against the window-buffer backend. Each run starts its own Xvfb and `glintd` unless `--real-desktop` asks for the real display; there the lab's engine uses a throwaway config directory, the real lock (so it refuses to run next to another engine), and exits with the lab.
 
 Report format (illustrative numbers):
 
 ```text
-glint-lab basic --count 1000 --speed balanced --backend screen
+glint-lab basic --count 1000 · speed balanced · backend screen
 appearances 1000 · clicks 1000 · extra 0 · missed 0 · possible misses reported 0
-stalls      X server stalls during the run 2 · trials that coincided 0 (listed separately)
+stalls      X server stalls during the run 2 (worst 14.10 ms) · trials that coincided 0 (listed separately)
 response    p50 0.41 ms · p95 0.62 ms · p99 0.88 ms · max 1.73 ms
-split       wait 0.24 · capture 0.09 · decide 0.001 · inject 0.02 · deliver 0.06 ms
-server tax  other clients' round trips +0.04 ms at p99
+split       wait 0.240 · capture 0.090 · decide 0.001 · inject 0.020 · deliver 0.060 ms
+server tax  other clients' round trips +0.04 ms at p99 (0.61 → 0.65 ms)
 verdict     PASS  (p99 ≤ 2 ms, max ≤ 10 ms, 0 extra, 0 missed)
 ```
 
@@ -1073,6 +1074,8 @@ verdict     PASS  (p99 ≤ 2 ms, max ≤ 10 ms, 0 extra, 0 missed)
 | `action-equals-hotkey` | Configure the action key to be a hotkey | Validation rejects it |
 | `ui-overlap` | Place the UI over the watched spot | Warning shown; no clicks caused by the swatch |
 | `soak` | 60 minutes of everything above, randomized | 0 violations; flat memory |
+
+Phase 3 implements every scenario above except `move`, `focus` and `ui-overlap`, which need window mode (Phase 5). `two-engines`, `action-matrix`, `kill-mid-press` and `action-equals-hotkey` run only in the sandbox; `soak` takes `--minutes` (ADR 0010).
 
 **CI** (GitHub Actions on Ubuntu): `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo nextest run`, the exhaustive table test in release mode, the Xvfb integration suite (`xvfb-run -a -s "-screen 0 1280x720x24" cargo nextest run -p glint-lab --release --run-ignored all`), an optional job that also starts `picom --backend xrender` to cover the composited path, and `cargo deny check` (allow `GPL-3.0-only` and `GPL-3.0-or-later` in `deny.toml`, or Slint's license fails the check). CI checks correctness only and never asserts timing, because shared runners are far too noisy; latency is measured on real hardware.
 
@@ -1191,7 +1194,7 @@ Effort sizes are relative: S is a few days, M about a week or two, L longer, for
 
 - [ ] `glint-lab`: test window, timing, report, every correctness scenario.
 - [ ] GitHub Actions: fmt, clippy, nextest, exhaustive test, Xvfb integration, cargo-deny.
-- **Exit:** every scenario in §16 that doesn't need real hardware passes in CI.
+- **Exit:** every scenario in §16 that needs neither real hardware nor window mode passes in CI (`move`, `focus` and `ui-overlap` are Phase 5's exit, ADR 0010).
 
 ### Phase 4 — UI on Pulse's kit (M)
 
@@ -1269,7 +1272,7 @@ These are starting points, not drop-in code: the names follow this plan and the 
 
 ### A.1 Trigger state machine (`glint-core/src/trigger.rs`)
 
-Implemented in Phase 1; the source and its tests are the reference (ADR 0007). Its shape:
+Implemented in Phase 1; the source and its tests are the reference (ADR 0007, ADR 0011). Its shape:
 
 ```rust
 pub enum Verdict { Absent, Present, Enter }            // from the sample pattern (§5.3); Enter implies Present
@@ -1280,31 +1283,34 @@ impl Trigger {
     pub fn restart(&mut self, now: Instant); // epoch change: Latched, fresh absence count; no-op while stopped
     pub fn pause(&mut self);                 // the target window left the front; a restart resumes
     pub fn stop(&mut self);                  // only a manual Start leaves Stopped, also after a safety stop
-    pub fn step(&mut self, now: Instant, v: Verdict) -> Step;
+    // A check read the screen somewhere between its request (`sent`) and its reply (`back`).
+    pub fn step_between(&mut self, sent: Instant, back: Instant, v: Verdict) -> Step;
+    pub fn step(&mut self, now: Instant, v: Verdict) -> Step; // step_between(now, now, v)
 }
 
-// Latched: two checks further apart than the check gap mean Glint was blind in between.
-let blind = latch.prev.is_some_and(|p| now.saturating_duration_since(p) > cfg.max_check_gap);
-latch.prev = Some(now);
+// Latched. Every time is the bound that can't stretch a watched absence or hide a possible miss
+// (ADR 0011): two checks can have read the screen up to `back - prev_sent` apart.
+let blind = latch.prev.is_some_and(|p| back.saturating_duration_since(p) > cfg.max_check_gap);
+latch.prev = Some(sent);
 latch.blind |= blind;
-let since = *latch.since.get_or_insert(now); // when the color was last seen, or the (re)start
+let since = *latch.since.get_or_insert(sent); // the earliest the color can have been seen last
 if v.present() {
     // Blind time may have hidden a disappearance long enough to end the appearance: say so, never click.
-    let maybe_missed = latch.blind && now.saturating_duration_since(since) >= cfg.rearm_absent;
-    self.phase = Phase::Latched(Latch::seen_at(now));
+    let maybe_missed = latch.blind && back.saturating_duration_since(since) >= cfg.rearm_absent;
+    self.phase = Phase::Latched(Latch::seen_at(sent));
     return if maybe_missed { Step::MaybeMissed } else { Step::None };
 }
 if blind {
     (latch.run_start, latch.run_checks) = (None, 0); // only a watched run counts: start over
 }
-let run_start = *latch.run_start.get_or_insert(now);
+let run_start = *latch.run_start.get_or_insert(back); // the latest the run's first check can have looked
 latch.run_checks += 1;
-if latch.run_checks >= cfg.rearm_absent_samples && now.saturating_duration_since(run_start) >= cfg.rearm_absent {
-    self.phase = Phase::Idle;
+if latch.run_checks >= cfg.rearm_absent_samples && sent.saturating_duration_since(run_start) >= cfg.rearm_absent {
+    self.phase = Phase::Idle; // surely watched for rearm_absent: from that reply to this request
 }
 
-fn fire(&mut self, now: Instant) -> Step {
-    self.phase = Phase::Latched(Latch::seen_at(now)); // 1. consume the appearance before anything else
+fn fire(&mut self, sent: Instant, now: Instant) -> Step {
+    self.phase = Phase::Latched(Latch::seen_at(sent)); // 1. consume the appearance before anything else
     if self.last_fire.is_some_and(|t| now.saturating_duration_since(t) < self.cfg.min_fire_interval) {
         return Step::Suppressed;                     // 2. the floor, at least hold_ms + 1
     }
@@ -1368,7 +1374,7 @@ pub fn run_hot(mut h: Hot) -> ! {
         let verdict = h.profile.classify(&px); // table lookups + pixel agreement
 
         let _ = h.injector.service(t_cap); // a due release goes out before this check can fire (ADR 0007)
-        match h.trigger.step(t_cap, verdict) {
+        match h.trigger.step_between(t_req, t_cap, verdict) { // ADR 0011
             Step::Fire => {
                 let _ = h.injector.press(t_cap);
                 h.events.push_fire(t_req, t_cap, Instant::now());

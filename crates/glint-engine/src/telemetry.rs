@@ -24,6 +24,31 @@ pub enum Notice {
     MaybeMissed,
     /// The hot thread has exited.
     Exited,
+    /// For trace subscribers (`glint-lab`), built only while one is connected.
+    Trace(TraceNotice),
+}
+
+/// The trace stream's entries, before the controller turns their times into nanoseconds.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TraceNotice {
+    Fired {
+        request: Instant,
+        capture: Instant,
+        decided: Instant,
+        sent: Instant,
+    },
+    MaybeMissed {
+        at: Instant,
+    },
+    /// No check came back between `from` and `to`, longer than the check gap.
+    Blind {
+        from: Instant,
+        to: Instant,
+    },
+    Stopped {
+        at: Instant,
+        reason: StopReason,
+    },
 }
 
 /// The engine's live statistics (§17).
@@ -53,6 +78,8 @@ pub struct Collector {
     capture: VecDeque<u32>,
     decide: VecDeque<u32>,
     rate_window: VecDeque<Instant>,
+    /// When the last check came back.
+    last_cap: Option<Instant>,
 }
 
 impl Default for Collector {
@@ -68,6 +95,33 @@ impl Collector {
             capture: VecDeque::with_capacity(WINDOW),
             decide: VecDeque::with_capacity(WINDOW),
             rate_window: VecDeque::new(),
+            last_cap: None,
+        }
+    }
+
+    /// The trace entry for `event`, if it makes one. `gap` is the trigger's check gap: a longer
+    /// wait between two checks coming back is blind time (ADR 0007). Call it before
+    /// [`record`](Self::record) for the same event.
+    pub fn trace(&self, event: &HotEvent, gap: Duration) -> Option<TraceNotice> {
+        match *event {
+            HotEvent::Check { t_cap, .. } => self
+                .last_cap
+                .filter(|&from| t_cap.saturating_duration_since(from) > gap)
+                .map(|from| TraceNotice::Blind { from, to: t_cap }),
+            HotEvent::Fired {
+                t_req,
+                t_cap,
+                t_dec,
+                t_sent,
+            } => Some(TraceNotice::Fired {
+                request: t_req,
+                capture: t_cap,
+                decided: t_dec,
+                sent: t_sent,
+            }),
+            HotEvent::MaybeMissed { at } => Some(TraceNotice::MaybeMissed { at }),
+            HotEvent::Stopped { at, reason } => Some(TraceNotice::Stopped { at, reason }),
+            _ => None,
         }
     }
 
@@ -75,6 +129,7 @@ impl Collector {
     pub fn record(&mut self, event: HotEvent) -> Option<Notice> {
         match event {
             HotEvent::Check { t_req, t_cap, .. } => {
+                self.last_cap = Some(t_cap);
                 self.stats.checks += 1;
                 keep(&mut self.capture, micros(t_cap - t_req));
                 self.rate_window.push_back(t_cap);
@@ -87,7 +142,7 @@ impl Collector {
                 }
                 None
             }
-            HotEvent::Fired { t_cap, t_sent } => {
+            HotEvent::Fired { t_cap, t_sent, .. } => {
                 self.stats.clicks += 1;
                 keep(&mut self.decide, micros(t_sent - t_cap));
                 Some(Notice::Fired {
@@ -165,7 +220,12 @@ pub fn run(
     let mut last_snapshot = Instant::now();
     loop {
         let mut exited = false;
+        let tracing = shared.tracing.load(Ordering::Relaxed);
+        let gap = shared.profile.load().trigger.max_check_gap;
         while let Ok(event) = events.pop() {
+            if tracing && let Some(t) = collector.trace(&event, gap) {
+                notify(Notice::Trace(t));
+            }
             if let Some(n) = collector.record(event) {
                 exited |= n == Notice::Exited;
                 notify(n);
@@ -207,10 +267,22 @@ mod tests {
                 None
             );
         }
-        let fired = c.record(HotEvent::Fired {
+        let fire = HotEvent::Fired {
+            t_req: t0 - Duration::from_micros(20),
             t_cap: t0,
+            t_dec: t0 + Duration::from_micros(2),
             t_sent: t0 + Duration::from_micros(7),
-        });
+        };
+        assert_eq!(
+            c.trace(&fire, Duration::from_millis(2)),
+            Some(TraceNotice::Fired {
+                request: t0 - Duration::from_micros(20),
+                capture: t0,
+                decided: t0 + Duration::from_micros(2),
+                sent: t0 + Duration::from_micros(7),
+            })
+        );
+        let fired = c.record(fire);
         assert_eq!(
             fired,
             Some(Notice::Fired {
@@ -242,5 +314,40 @@ mod tests {
         );
         assert_eq!(s.decide_p50_us, 7.0);
         assert_eq!(s.checks_per_sec, 100.0); // 100 checks within the last second
+    }
+
+    #[test]
+    fn blind_gaps_in_the_trace() {
+        let mut c = Collector::new();
+        let t0 = Instant::now();
+        let gap = Duration::from_millis(2);
+        let check = |ms: u64| HotEvent::Check {
+            t_req: t0 + Duration::from_millis(ms),
+            t_cap: t0 + Duration::from_millis(ms) + Duration::from_micros(20),
+            verdict: Verdict::Absent,
+        };
+        let mut blind = Vec::new();
+        for ms in [0, 1, 2, 9, 10, 11] {
+            let e = check(ms);
+            blind.extend(c.trace(&e, gap));
+            c.record(e);
+        }
+        // Only the 7 ms wait between the checks at 2 and 9 ms is longer than the gap.
+        let at = |ms: u64| t0 + Duration::from_millis(ms) + Duration::from_micros(20);
+        assert_eq!(blind, [TraceNotice::Blind { from: at(2), to: at(9) }]);
+        assert_eq!(
+            c.trace(
+                &HotEvent::Stopped {
+                    at: t0,
+                    reason: StopReason::SafetyStop
+                },
+                gap
+            ),
+            Some(TraceNotice::Stopped {
+                at: t0,
+                reason: StopReason::SafetyStop
+            })
+        );
+        assert_eq!(c.trace(&HotEvent::Suppressed { at: t0 }, gap), None);
     }
 }

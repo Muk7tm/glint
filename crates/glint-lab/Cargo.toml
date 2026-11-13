@@ -15,6 +15,7 @@ clap.workspace = true
 glint-core.workspace = true
 glint-ipc.workspace = true
 glint-x11 = { workspace = true, features = ["sandbox"] }
+rustix = { workspace = true, features = ["process"] }
 thiserror.workspace = true
 x11rb.workspace = true
 

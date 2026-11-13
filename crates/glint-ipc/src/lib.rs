@@ -10,7 +10,8 @@
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 
 use glint_core::{Class, Profile, Rgb, Settings, Verdict};
 use serde::{Deserialize, Serialize};
@@ -58,9 +59,12 @@ pub enum Request {
     },
     GetState,
     /// Telemetry (0–10 per second) and the live swatch (0–20 per second); 0 turns a stream off.
+    /// `trace` (an addition to §10, for `glint-lab`) asks for every [`Trace`] as it happens.
     Subscribe {
         telemetry_hz: u8,
         live_hz: u8,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        trace: bool,
     },
     SetProfile {
         profile: Box<Profile>,
@@ -146,6 +150,76 @@ pub enum Event {
     },
     Pong,
     Bye,
+    /// One entry of the trace stream, only to clients that subscribed with `trace`.
+    Trace(Trace),
+}
+
+/// What the hot thread did, as it happens, for `glint-lab`'s report (§16): times are
+/// `CLOCK_MONOTONIC` nanoseconds ([`monotonic_ns`]), so the lab can line them up with its own.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Trace {
+    /// A click: the check that fired was requested, its pixels came back, the trigger decided,
+    /// and the press was written.
+    Fired {
+        request_ns: u64,
+        capture_ns: u64,
+        decided_ns: u64,
+        sent_ns: u64,
+    },
+    /// Blind time may have hidden a disappearance, so the trigger didn't click (ADR 0007).
+    MaybeMissed { at_ns: u64 },
+    /// No check came back between these two times, for longer than the check gap: anything on
+    /// screen only in between went unseen.
+    Blind { from_ns: u64, to_ns: u64 },
+    /// The hot thread stopped watching on its own.
+    Stopped { at_ns: u64, cause: StopCause },
+}
+
+/// Why the hot thread stopped watching on its own.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopCause {
+    /// Too many clicks within a second: a feedback loop (§5.5).
+    SafetyStop,
+    TargetGone,
+    CaptureFailed,
+    InputFailed,
+}
+
+/// Pairs one `Instant` with one `CLOCK_MONOTONIC` reading. `Instant` uses that clock on Linux
+/// but exposes no raw value, so times cross process boundaries through this pair.
+fn clock_base() -> (Instant, u64) {
+    static BASE: LazyLock<(Instant, u64)> = LazyLock::new(|| {
+        let now = Instant::now();
+        let ts = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
+        let ns = u64::try_from(ts.tv_sec).unwrap_or(0) * 1_000_000_000 + u64::try_from(ts.tv_nsec).unwrap_or(0);
+        (now, ns)
+    });
+    *BASE
+}
+
+fn nanos(d: Duration) -> u64 {
+    u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)
+}
+
+/// `t` as `CLOCK_MONOTONIC` nanoseconds, comparable across processes on this machine.
+pub fn monotonic_ns(t: Instant) -> u64 {
+    let (base, ns) = clock_base();
+    match t.checked_duration_since(base) {
+        Some(d) => ns.saturating_add(nanos(d)),
+        None => ns.saturating_sub(nanos(base - t)),
+    }
+}
+
+/// The `Instant` of a `CLOCK_MONOTONIC` time in nanoseconds (the inverse of [`monotonic_ns`]).
+pub fn instant_at(ns: u64) -> Instant {
+    let (base, base_ns) = clock_base();
+    if ns >= base_ns {
+        base + Duration::from_nanos(ns - base_ns)
+    } else {
+        base.checked_sub(Duration::from_nanos(base_ns - ns)).unwrap_or(base)
+    }
 }
 
 impl Event {
@@ -402,6 +476,12 @@ mod tests {
             Request::Subscribe {
                 telemetry_hz: 10,
                 live_hz: 20,
+                trace: false,
+            },
+            Request::Subscribe {
+                telemetry_hz: 0,
+                live_hz: 0,
+                trace: true,
             },
             Request::SetProfile {
                 profile: Box::new(Profile::new("x")),
@@ -442,6 +522,17 @@ mod tests {
             },
             Event::error("invalid", "Must be between 1 and 9.", Some("sampling.k_enter".into())),
             Event::Bye,
+            Event::Trace(Trace::Fired {
+                request_ns: 1,
+                capture_ns: 2,
+                decided_ns: 3,
+                sent_ns: 4,
+            }),
+            Event::Trace(Trace::Blind { from_ns: 5, to_ns: 9 }),
+            Event::Trace(Trace::Stopped {
+                at_ns: 7,
+                cause: StopCause::SafetyStop,
+            }),
         ];
         for e in events {
             let line = encode(&Envelope::new(None, e.clone()));
@@ -451,6 +542,43 @@ mod tests {
                 "{line}"
             );
         }
+    }
+
+    #[test]
+    fn the_trace_shape_and_an_old_subscribe() {
+        // A subscribe from before `trace` existed still parses, and `trace` is only sent when set.
+        let old: Envelope<Request> =
+            serde_json::from_str(r#"{"type":"subscribe","telemetry_hz":1,"live_hz":0}"#).unwrap();
+        assert_eq!(
+            old.body,
+            Request::Subscribe {
+                telemetry_hz: 1,
+                live_hz: 0,
+                trace: false
+            }
+        );
+        assert_eq!(
+            encode(&old),
+            "{\"type\":\"subscribe\",\"telemetry_hz\":1,\"live_hz\":0}\n"
+        );
+        let line = encode(&Envelope::new(None, Event::Trace(Trace::MaybeMissed { at_ns: 42 })));
+        assert_eq!(line, "{\"type\":\"trace\",\"kind\":\"maybe_missed\",\"at_ns\":42}\n");
+    }
+
+    #[test]
+    fn monotonic_times_cross_processes() {
+        let now = Instant::now();
+        let ns = monotonic_ns(now);
+        // Another process reads the same clock directly.
+        let ts = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
+        let direct = u64::try_from(ts.tv_sec).unwrap() * 1_000_000_000 + u64::try_from(ts.tv_nsec).unwrap();
+        assert!(direct >= ns && direct - ns < 50_000_000, "{direct} vs {ns}");
+        // And the conversion is its own inverse, to the nanosecond.
+        let later = now + Duration::from_micros(1234);
+        assert_eq!(monotonic_ns(later) - ns, 1_234_000);
+        assert_eq!(instant_at(monotonic_ns(later)), later);
+        let earlier = now - Duration::from_millis(3);
+        assert_eq!(instant_at(monotonic_ns(earlier)), earlier);
     }
 
     #[test]

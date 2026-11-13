@@ -1,6 +1,7 @@
 # 0007. Trigger: every restart latches, the hold sets a minimum gap, stalls aren't absence
 
-- **Status:** Accepted. Point 5 revised on 2026-11-13, after the owner made preventing extra clicks the top
+- **Status:** Accepted. Point 5 revised on 2026-11-13, and its timing made exact by ADR 0011 (a check reads the
+  screen between its request and its reply). Point 5 was revised after the owner made preventing extra clicks the top
   priority: the first version still had a hole.
 - **Date:** 2026-11-13
 - **Plan sections:** §1, §5.5, §7, Appendix A.1–A.2

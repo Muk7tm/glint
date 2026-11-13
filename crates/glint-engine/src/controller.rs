@@ -22,7 +22,7 @@ use glint_core::validate::{self, Issue};
 use glint_core::{Lut, Rgb};
 use glint_ipc::{
     CapsInfo, ClientKind, Envelope, Event, MAX_CLASSIFY, PROTOCOL, Phase, Request, SessionInfo, StateSnapshot,
-    TargetInfo, TargetKind, TelemetrySnapshot,
+    StopCause, TargetInfo, TargetKind, TelemetrySnapshot, Trace, monotonic_ns,
 };
 use glint_x11::caps::Caps;
 use glint_x11::env::LocalDisplay;
@@ -38,7 +38,7 @@ use x11rb::rust_connection::RustConnection;
 use crate::hot::{CompiledProfile, Control, HotHandle, HotShared, Preview, StopReason};
 use crate::lifecycle::Emergency;
 use crate::store::Store;
-use crate::telemetry::{Notice, Stats};
+use crate::telemetry::{Notice, Stats, TraceNotice};
 
 /// How often the controller sends telemetry and live updates and tidies up.
 const TICK: Duration = Duration::from_millis(20);
@@ -114,6 +114,39 @@ pub fn watched_spot(monitors: &[Monitor], profile: &Profile) -> (i16, i16) {
             )
         }
         None => (0, 0),
+    }
+}
+
+/// A trace entry with its times as `CLOCK_MONOTONIC` nanoseconds.
+fn trace_entry(t: TraceNotice) -> Trace {
+    match t {
+        TraceNotice::Fired {
+            request,
+            capture,
+            decided,
+            sent,
+        } => Trace::Fired {
+            request_ns: monotonic_ns(request),
+            capture_ns: monotonic_ns(capture),
+            decided_ns: monotonic_ns(decided),
+            sent_ns: monotonic_ns(sent),
+        },
+        TraceNotice::MaybeMissed { at } => Trace::MaybeMissed {
+            at_ns: monotonic_ns(at),
+        },
+        TraceNotice::Blind { from, to } => Trace::Blind {
+            from_ns: monotonic_ns(from),
+            to_ns: monotonic_ns(to),
+        },
+        TraceNotice::Stopped { at, reason } => Trace::Stopped {
+            at_ns: monotonic_ns(at),
+            cause: match reason {
+                StopReason::SafetyStop => StopCause::SafetyStop,
+                StopReason::TargetGone => StopCause::TargetGone,
+                StopReason::CaptureFailed => StopCause::CaptureFailed,
+                StopReason::InputFailed => StopCause::InputFailed,
+            },
+        },
     }
 }
 
@@ -296,6 +329,8 @@ struct Client {
     live_every: Option<Duration>,
     last_telemetry: Instant,
     last_live: Instant,
+    /// Wants every trace entry as it happens (`glint-lab`).
+    trace: bool,
 }
 
 /// Everything the controller owns.
@@ -580,6 +615,7 @@ impl Controller {
                         live_every: None,
                         last_telemetry: now,
                         last_live: now,
+                        trace: false,
                     },
                 );
             }
@@ -596,7 +632,9 @@ impl Controller {
                 self.send(client, None, Event::error("malformed", message, None));
             }
             Command::Disconnected { client } => {
-                if let Some(c) = self.clients.remove(&client) {
+                let removed = self.clients.remove(&client);
+                self.update_tracing();
+                if let Some(c) = removed {
                     // A UI that vanished without detaching: stop watching unless the policy says to
                     // keep running (§4.3). Other clients never stop the engine by leaving (L2).
                     if c.kind == Some(ClientKind::Ui)
@@ -732,12 +770,18 @@ impl Controller {
                 }
             }
             Request::GetState => Event::State(self.state()),
-            Request::Subscribe { telemetry_hz, live_hz } => {
+            Request::Subscribe {
+                telemetry_hz,
+                live_hz,
+                trace,
+            } => {
                 let every = |hz: u8, max: u8| (hz > 0).then(|| Duration::from_secs(1) / u32::from(hz.min(max)));
                 if let Some(c) = self.clients.get_mut(&client) {
                     c.telemetry_every = every(telemetry_hz, 10);
                     c.live_every = every(live_hz, 20);
+                    c.trace = trace;
                 }
+                self.update_tracing();
                 Event::State(self.state())
             }
             Request::SetProfile { profile } => match self.apply_profile(*profile) {
@@ -849,7 +893,25 @@ impl Controller {
                 }
             }
             Notice::MaybeMissed | Notice::Exited => {}
+            Notice::Trace(t) => {
+                let entry = trace_entry(t);
+                let tracers: Vec<ClientId> = self
+                    .clients
+                    .iter()
+                    .filter(|(_, c)| c.trace)
+                    .map(|(id, _)| *id)
+                    .collect();
+                for id in tracers {
+                    self.send(id, None, Event::Trace(entry));
+                }
+            }
         }
+    }
+
+    /// Tells the telemetry thread whether anyone wants the trace stream.
+    fn update_tracing(&self) {
+        let any = self.clients.values().any(|c| c.trace);
+        self.hot.shared().tracing.store(any, Ordering::Relaxed);
     }
 
     fn tick(&mut self) {
@@ -929,6 +991,7 @@ impl Controller {
             Err(_) => {
                 // Not reading, or gone: dropping the queue ends its writer and closes the socket.
                 self.clients.remove(&client);
+                self.update_tracing();
             }
         }
     }
