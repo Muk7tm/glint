@@ -30,6 +30,8 @@ pub enum FromEngine {
 
 enum Cmd {
     Send(Request),
+    /// Send this, then say it was written (or couldn't be).
+    Final(Request, Sender<bool>),
     /// Start the engine if needed and connect again.
     Restart,
     /// The reader saw the connection close.
@@ -62,6 +64,13 @@ impl Link {
         let _ = self.cmds.send(Cmd::Send(request));
     }
 
+    /// Sends `request` and waits until it has been written, at most `wait`: for the last request
+    /// before the window's process exits. False if it couldn't be sent.
+    pub fn finish(&self, request: Request, wait: Duration) -> bool {
+        let (done, written) = mpsc::channel();
+        self.cmds.send(Cmd::Final(request, done)).is_ok() && written.recv_timeout(wait).unwrap_or(false)
+    }
+
     /// Starts the engine if none runs, and connects again.
     pub fn restart(&self) {
         let _ = self.cmds.send(Cmd::Restart);
@@ -85,6 +94,9 @@ fn run(
         loop {
             match rx.recv() {
                 Ok(Cmd::Restart) => break,
+                Ok(Cmd::Final(_, done)) => {
+                    let _ = done.send(false);
+                }
                 Ok(Cmd::Send(_) | Cmd::Closed) => {}
                 Err(_) => return,
             }
@@ -169,6 +181,9 @@ fn session(
                     // The reader sees the close too and reports it.
                     let _ = writer.shutdown(std::net::Shutdown::Both);
                 }
+            }
+            Cmd::Final(request, done) => {
+                let _ = done.send(write(&mut writer, request).and_then(|()| writer.flush()).is_ok());
             }
             Cmd::Restart => {}
             Cmd::Closed => {
@@ -259,7 +274,7 @@ mod tests {
             next(),
             FromEngine::Event(Box::new(Event::State(StateSnapshot::default())))
         );
-        link.send(Request::Quit);
+        assert!(link.finish(Request::Quit, Duration::from_secs(2)));
         assert!(matches!(next(), FromEngine::Disconnected(_)));
         let seen = engine.join().unwrap();
         assert!(matches!(
@@ -274,6 +289,8 @@ mod tests {
         let _ = std::fs::remove_file(&socket);
         link.restart();
         assert_eq!(next(), FromEngine::Disconnected("Glint's engine isn't running.".into()));
+        // Nothing to write to: a final request says so instead of hanging.
+        assert!(!link.finish(Request::Detach, Duration::from_secs(2)));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

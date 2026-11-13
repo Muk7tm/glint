@@ -49,25 +49,13 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
-    // The window manager's close button and Quit Glint ask first (§12.5).
-    let weak = ui.as_weak();
-    ui.window().on_close_requested(move || {
-        if let Some(ui) = weak.upgrade() {
-            ui.invoke_ask_before_closing();
-        }
+    // The window manager's close button and Quit Glint follow the close policy (§12.5).
+    ui.window().on_close_requested(|| {
+        app::with(App::close_requested);
         slint::CloseRequestResponse::KeepWindowShown
     });
-    let weak = ui.as_weak();
-    actions.on_close_window(move || {
-        if let Some(ui) = weak.upgrade() {
-            ui.invoke_ask_before_closing();
-        }
-    });
-    ui.on_keep_running(|| {
-        let _ = slint::quit_event_loop();
-    });
-    ui.on_quit_app(|| {
-        let _ = slint::quit_event_loop();
-    });
+    actions.on_close_window(|| app::with(App::close_requested));
+    ui.on_keep_running(|| app::with(App::keep_running));
+    ui.on_quit_app(|| app::with(App::quit));
     ui.run()
 }

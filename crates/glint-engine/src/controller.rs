@@ -959,7 +959,9 @@ impl Controller {
             })
         });
         let preview = *self.preview.read();
-        let live = preview.verdict.map(|verdict| Event::Live {
+        // Only while watching: a stopped engine's last frame is stale, and sending it would wake
+        // the window for nothing.
+        let live = preview.verdict.filter(|_| self.started).map(|verdict| Event::Live {
             rgb: Rgb::from_u32(preview.rgb),
             verdict,
         });

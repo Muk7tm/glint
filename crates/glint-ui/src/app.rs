@@ -6,6 +6,7 @@
 use std::cell::RefCell;
 use std::time::Duration;
 
+use glint_core::settings::ClosePolicy;
 use glint_core::{Profile, Rgb, Settings, Verdict};
 use glint_ipc::{Event, Phase, Request, StateSnapshot};
 use glint_ui_view::{AppWindow, Form, Tone, Ui};
@@ -16,6 +17,10 @@ use crate::client::{FromEngine, Link};
 
 /// How long a message stays in the hero card's message line.
 const TOAST: Duration = Duration::from_secs(5);
+/// The live swatch's rate while the window can be seen.
+const LIVE_HZ: u8 = 10;
+/// How long the window waits for its last request to go out when it closes.
+const LAST_WORD: Duration = Duration::from_secs(1);
 
 pub struct App {
     ui: slint::Weak<AppWindow>,
@@ -31,6 +36,9 @@ pub struct App {
     state: StateSnapshot,
     shown: Fields,
     toast: slint::Timer,
+    /// While minimized the live swatch is off, and this checks once a second for the window
+    /// coming back (Slint has no event for it), so a hidden window costs about nothing.
+    hidden: slint::Timer,
 }
 
 thread_local! {
@@ -65,6 +73,7 @@ impl App {
             state: StateSnapshot::default(),
             shown: Fields::default(),
             toast: slint::Timer::default(),
+            hidden: slint::Timer::default(),
         };
         APP.with(|slot| *slot.borrow_mut() = Some(app));
         with(Self::refresh);
@@ -124,7 +133,7 @@ impl App {
                 for request in [
                     Request::Subscribe {
                         telemetry_hz: 0,
-                        live_hz: 10,
+                        live_hz: LIVE_HZ,
                         trace: false,
                     },
                     Request::GetState,
@@ -159,7 +168,13 @@ impl App {
             }
             Event::Profile { profile } => self.profile = *profile,
             Event::Settings { settings } => self.settings = *settings,
-            Event::Live { rgb, verdict } if self.watching() => self.seeing(rgb, verdict),
+            Event::Live { rgb, verdict } if self.watching() => {
+                if self.ui.upgrade().is_some_and(|ui| ui.window().is_minimized()) {
+                    self.hide_live();
+                } else {
+                    self.seeing(rgb, verdict);
+                }
+            }
             Event::Error { message, .. } => {
                 self.toast(&message, Tone::Error);
                 // What the window sent was refused: show what the engine really has.
@@ -183,6 +198,53 @@ impl App {
             Verdict::Absent => "no match",
         };
         form.set_seeing_text(format!("{rgb} · {what}").into());
+    }
+
+    /// The window is minimized: stop the live swatch until it's back.
+    fn hide_live(&mut self) {
+        if self.hidden.running() {
+            return;
+        }
+        self.link.send(live(0));
+        let (weak, link) = (self.ui.clone(), self.link.clone());
+        self.hidden
+            .start(slint::TimerMode::Repeated, Duration::from_secs(1), move || {
+                if weak.upgrade().is_some_and(|ui| !ui.window().is_minimized()) {
+                    link.send(live(LIVE_HZ));
+                    with(|app| app.hidden.stop());
+                }
+            });
+    }
+
+    /// The window manager's close button or *Quit Glint*, by the close policy (§12.5).
+    pub fn close_requested(&mut self) {
+        match self.settings.close_policy {
+            ClosePolicy::Ask if self.connected => {
+                if let Some(ui) = self.ui.upgrade() {
+                    ui.invoke_ask_before_closing();
+                }
+            }
+            ClosePolicy::Ask => self.leave(None),
+            ClosePolicy::KeepRunning => self.keep_running(),
+            ClosePolicy::Quit => self.quit(),
+        }
+    }
+
+    /// Closes the window and leaves the engine running, so the hotkeys keep working.
+    pub fn keep_running(&mut self) {
+        self.leave(Some(Request::Detach));
+    }
+
+    /// Quits the engine too: it stops, releases input, and exits.
+    pub fn quit(&mut self) {
+        self.leave(Some(Request::Quit));
+    }
+
+    fn leave(&mut self, last: Option<Request>) {
+        if let Some(request) = last.filter(|_| self.connected) {
+            self.link.finish(request, LAST_WORD);
+        }
+        let _ = slint::quit_event_loop();
     }
 
     /// The hero button: Start, Stop, or restarting a missing engine.
@@ -219,5 +281,13 @@ impl App {
             self.settings = settings;
         }
         self.refresh();
+    }
+}
+
+fn live(hz: u8) -> Request {
+    Request::Subscribe {
+        telemetry_hz: 0,
+        live_hz: hz,
+        trace: false,
     }
 }
