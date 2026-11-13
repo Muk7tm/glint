@@ -123,6 +123,13 @@ a ~16 ms animation timer plus work. Separately, **every configuration showed occ
 roughly once a minute, including runs with no Glint load at all** (baseline probe max 10.2 ms; 17.2 ms seen by
 both clients at once). No client can avoid these.
 
+**Are the big stalls periodic?** (2026-11-13, after Phase 1.) A light probe, GetInputFocus at 1,000/s for 300 s
+with no window (`spike-capture stalls --method focus --rate 1000 --secs 300`), saw two stalls above 5 ms: 11.3 ms
+at 28 s and 9.6 ms at 185 s. Smaller busy periods: 25 per second, p50 0.6 ms, p99 1.0 ms. The big ones are not on
+a timer. The Xorg log (`~/.local/share/xorg/Xorg.0.log`) shows NVIDIA output probes only at server start and once
+about 5 hours later, so a program polling the monitors (which makes the driver probe the disconnected HDMI-0) is
+not the cause. The cause is still unknown; candidates are other clients' GPU work and the driver.
+
 ## 5. Injection (`spike-inject`)
 
 Run inside Xvfb 21.1.26 (`xvfb-run -a -s "-screen 0 1280x720x24"`, display `:99`), because nothing may inject

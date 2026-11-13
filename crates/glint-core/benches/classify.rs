@@ -67,7 +67,7 @@ fn classify(c: &mut Criterion) {
     // One whole check after the capture: pixel agreement and the trigger decision.
     c.bench_function("verdict + trigger step", |b| {
         let mut trigger = Trigger::new(TriggerCfg::default());
-        trigger.start();
+        trigger.start(Instant::now());
         let mut now = Instant::now();
         let mut i = 0usize;
         b.iter(|| {

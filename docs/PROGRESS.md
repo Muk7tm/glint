@@ -5,10 +5,13 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 ## Status
 
-- **Active phase:** Phase 1 (`glint-core`) meets its exit criteria; Phase 0 is complete. Waiting for the
-  go-ahead for Phase 2.
-- **Open owner decisions:** how the v1.0 timing targets treat X server freezes and compositors (ADR 0004), and
-  whether ADR 0007's stall rule stays.
+- **Active phase:** Phase 2 (engine MVP), started 2026-11-13 after the owner's go-ahead. Phases 0 and 1 are
+  complete.
+- **Owner decisions (2026-11-13):** v1.0 timing is judged with no compositor, with X-server-stall trials
+  listed separately (ADR 0004); preventing extra clicks is the top priority, so only watched absence re-arms
+  and possible misses are reported (ADR 0007, revised).
+- **Phase 5 must:** set the check gap from the refresh rate when a compositor runs (ADR 0007), or re-arming slows
+  under picom.
 - Xvfb, Xephyr, xwininfo and xev are installed (2026-11-13).
 
 ## Scaffold

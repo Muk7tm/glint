@@ -158,7 +158,7 @@ The number that actually dominates on most desktops is the **compositor**. When 
 - **With picom:** the paced capture p99 rises to 2.7–3.2 ms because of server-side compositing and GPU syncs, so
   p99 ≤ 2 ms is not reachable there.
 - **Server stalls:** the X server stalls for 10–18 ms about once a minute whatever the load, so a check that
-  lands in one exceeds the 10 ms ceiling regardless of Glint. How v1.0 counts those is open (ADR 0004).
+  lands in one exceeds the 10 ms ceiling regardless of Glint. Decided (ADR 0004): `glint-lab` reports trials that coincide with a stall separately, and the timing targets apply to the rest, measured without a compositor.
 
 There is no "a pixel changed" event in X11, which is why the default design polls a tiny region rather than waiting for notifications. Polling a 3×3 patch is cheap and deterministic. Event-driven checking via the DAMAGE extension is added later as an optimization with self-checks, because not every driver reports every update (§5.2).
 
@@ -376,7 +376,8 @@ States: **Stopped** · **Paused** (started, but the target window isn't in front
 | Confirming | Enter | count and time reached | Latched | **FIRE** |
 | Confirming | Present or Absent | — | Idle | — |
 | Latched | Enter or Present | — | Latched (absence counter reset) | — |
-| Latched | Absent | absent for ≥ `rearm_absent_ms` **and** ≥ `rearm_absent_samples` checks, both counted from the *first observed* absent check; between two absent checks at most the check gap counts (four periods, ≥ 2 ms) | Idle | — |
+| Latched | Enter or Present | Glint was blind since it last saw the color, and that was at least `rearm_absent_ms` ago | Latched | **Possible miss** reported, no click (ADR 0007) |
+| Latched | Absent | a *watched* run of absent checks lasting ≥ `rearm_absent_ms` **and** ≥ `rearm_absent_samples` checks; two checks further apart than the check gap (four periods, ≥ 2 ms) mean Glint was blind, and the run starts over | Idle | — |
 | Any watching state or Paused | — | Epoch changed (moved, resized, profile edited, back in front) | **Latched** with a fresh absence count; `fire_if_present_on_start` doesn't apply | Release held input |
 | Any watching state | — | Target window left the front (*Only click in this window*) | Paused | Release held input |
 | Paused | any | — | Paused | — |
@@ -384,7 +385,7 @@ States: **Stopped** · **Paused** (started, but the target window isn't in front
 
 **What FIRE does, in this order.** First it sets the latch, so whatever happens next this appearance is consumed and can never produce a late click. Then two safety checks run. If the previous click was less than the minimum gap ago (`min_fire_interval_ms`, raised to `hold_ms` + 1 so a click can never come due while the previous one is held; ADR 0007), the click is *suppressed* (counted and shown in diagnostics). If this click would exceed `max_clicks_per_sec` within the last second, the **safety stop** trips: Glint stops, releases input, and shows "Stopped: 16 clicks in 1 s — looks like a loop". That catches feedback loops where the click itself makes the color blink. Otherwise the press goes out.
 
-**Why absence is counted from observed checks only.** If the engine stalls for 30 ms (a system hiccup) and the next check finds the color gone, the color may only have blinked for 1 ms. Counting from the last time it was *present* would re-arm on an absence nobody actually saw, and could double-click. Counting only observed absence is never wrong in the dangerous direction. The same goes for gaps *inside* an absence: if a stall hides the color between two short dropouts, two absent checks 45 ms apart don't prove 45 ms of absence. So between two consecutive absent checks Glint credits at most the check gap (four check periods, the stall threshold of §5.6, and at least 2 ms) toward `rearm_absent_ms`; a stall can delay re-arming, never cause it (ADR 0007).
+**Why absence is counted from observed checks only.** If the engine stalls for 30 ms (a system hiccup) and the next check finds the color gone, the color may only have blinked for 1 ms. Counting from the last time it was *present* would re-arm on an absence nobody actually saw, and could double-click. Counting only observed absence is never wrong in the dangerous direction. The same goes for gaps *inside* an absence: if a stall hides the color between two short dropouts, two absent checks 45 ms apart don't prove 45 ms of absence, and neither do 31 ms watched before a stall plus 8 ms after it. So only a run of absent checks with no blind gap counts: two checks further apart than the check gap (four check periods, the stall threshold of §5.6, and at least 2 ms) start the run over, and so does a late first check after a (re)start. Anything on screen for longer than the check gap can't slip between two watched checks, and a frame lasts 4.2 ms even at 240 Hz, so a watched run proves the color really left: a stall can delay re-arming, never cause it. When blind time *may* have hidden a long enough disappearance, Glint doesn't click and reports a possible miss, so a miss is never silent (ADR 0007).
 
 **Why confirmation is off by default.** Glint checks far faster than any screen refreshes, so two consecutive checks usually see the same frame; "confirm over 2 checks" adds delay without proving anything. Pixel agreement (§5.3) filters noise at zero cost. If you do want time-based confirmation, set `confirm_min_ms` to at least one frame (7 ms at 144 Hz) and accept that delay.
 
@@ -1040,7 +1041,8 @@ Report format (illustrative numbers):
 
 ```text
 glint-lab basic --count 1000 --speed balanced --backend screen
-appearances 1000 · clicks 1000 · extra 0 · missed 0
+appearances 1000 · clicks 1000 · extra 0 · missed 0 · possible misses reported 0
+stalls      X server stalls during the run 2 · trials that coincided 0 (listed separately)
 response    p50 0.41 ms · p95 0.62 ms · p99 0.88 ms · max 1.73 ms
 split       wait 0.24 · capture 0.09 · decide 0.001 · inject 0.02 · deliver 0.06 ms
 server tax  other clients' round trips +0.04 ms at p99
@@ -1061,7 +1063,7 @@ verdict     PASS  (p99 ≤ 2 ms, max ≤ 10 ms, 0 extra, 0 missed)
 | `move` | Move or resize the window so the color lands under the new center | 0 clicks caused by the move |
 | `focus` | Focus another window mid-appearance, then refocus with the color showing | 0 clicks into other windows; 0 on refocus |
 | `live-edit` | Change the range while running | 0 clicks caused by the edit |
-| `stall` | `SIGSTOP` the engine for 30 ms around an edge, then `SIGCONT` | No extra click; a late click is flagged, not failed |
+| `stall` | `SIGSTOP` the engine for 30 ms around an edge, then `SIGCONT` | No extra click; a late click is flagged, not failed; a miss is one the engine reported as possible |
 | `two-engines` | Launch a second `glintd` | It refuses to start (exit code 3) |
 | `feedback` | The lab toggles its color on every click it receives | Safety stop within 1 s |
 | `action-matrix` | Every mouse button and a set of keys, hold 0/10/50 ms | Exactly one press, then one release, for each |
@@ -1094,7 +1096,7 @@ verdict     PASS  (p99 ≤ 2 ms, max ≤ 10 ms, 0 extra, 0 missed)
 
 ## 17. Diagnostics and observability
 
-- **Live metrics** (shown under *More options → Engine* and by `glint-ctl status`): checks per second (actual versus target), capture round trip p50/p99/max, engine response p50/p99/max, clicks, suppressed clicks, safety stops, stalls (count and worst), dropped telemetry events, the hot thread's scheduling policy and priority, CPU % per thread, the backend in use and why it was chosen, compositor, XWayland, and the last 20 warnings.
+- **Live metrics** (shown under *More options → Engine* and by `glint-ctl status`): checks per second (actual versus target), capture round trip p50/p99/max, engine response p50/p99/max, clicks, suppressed clicks, possible misses (blind time, ADR 0007), safety stops, stalls (count and worst), dropped telemetry events, the hot thread's scheduling policy and priority, CPU % per thread, the backend in use and why it was chosen, compositor, XWayland, and the last 20 warnings.
 - **Copy diagnostics** in the UI and `glint-ctl diag` on the command line produce one text block for bug reports: versions (Glint, Slint, x11rb, kernel, X server vendor and release), capabilities, session info, the active profile, the metrics above, and recent warnings.
 - **Logs:** `~/.local/state/glint/glintd.log`, rotated daily with the last 5 kept; the level comes from settings or `RUST_LOG`. The hot thread never logs; it pushes events into the ring and the telemetry thread logs on its behalf.
 - **Privacy:** Glint never writes screen content to disk or sends it anywhere. The only colors it saves are the ones you chose; the magnifier and the live swatch exist only in memory, and there is no network code at all.
@@ -1212,7 +1214,7 @@ Effort sizes are relative: S is a few days, M about a week or two, L longer, for
 - [ ] `screen-shm` backend; `damage` backend with its self-healing fallback.
 - [ ] *More options*: Detection, Color range (shade strips, exclusions, *Record 5 s*, *Check hex*), Engine (diagnostics, latency test, profiles).
 - [ ] *Hold to start* mode; *Capture* hotkey mode.
-- **Exit:** on your hardware, `glint-lab basic --count 10000` at Balanced shows p99 ≤ 2 ms and max ≤ 10 ms, with 0 extra and 0 missed.
+- **Exit:** on your hardware, with no compositor running, `glint-lab basic --count 10000` at Balanced shows p99 ≤ 2 ms and max ≤ 10 ms over the trials that didn't coincide with an X server stall (those are listed separately), with 0 extra and 0 missed (ADR 0004).
 
 ### Phase 7 — Packaging and release (S/M)
 
@@ -1223,7 +1225,7 @@ Effort sizes are relative: S is a few days, M about a week or two, L longer, for
 - [ ] Hardware matrix + 60-minute soak.
 - **Exit:** the v1.0 definition of done below.
 
-**Definition of done for v1.0:** every lab scenario passes 10,000 trials on at least two GPU vendors; engine response p99 ≤ 2 ms at Balanced and never above 10 ms; zero extra clicks and zero missed appearances; UI idle CPU about 0% while hidden; engine CPU at Balanced measured and documented (budget ≤ 10% of one core); every stuck-input test passes (SIGTERM, SIGINT, panic, SIGKILL + restart).
+**Definition of done for v1.0:** every lab scenario passes 10,000 trials on at least two GPU vendors; engine response p99 ≤ 2 ms at Balanced and never above 10 ms, measured with no compositor and excluding trials that coincide with an X server stall, which are reported separately (ADR 0004); zero extra clicks and zero missed appearances; UI idle CPU about 0% while hidden; engine CPU at Balanced measured and documented (budget ≤ 10% of one core); every stuck-input test passes (SIGTERM, SIGINT, panic, SIGKILL + restart).
 
 ---
 
@@ -1232,7 +1234,7 @@ Effort sizes are relative: S is a few days, M about a week or two, L longer, for
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | `GetImage` is slow on some drivers (GPU readback sync on glamor or NVIDIA) | Confirmed on NVIDIA (Phase 0) | +0.45 ms p99 to other clients at Balanced | Speed presets; DAMAGE backend (fewer GetImages). SHM doesn't help at 3×3 |
-| The X server stalls 10–18 ms about once a minute (other clients, GPU syncs), whatever Glint does | High (seen in every Phase 0 run) | A check landing in a stall exceeds the 10 ms ceiling | Nothing in Glint can shorten it; `glint-lab` reports stall-coincident trials separately (ADR 0004) |
+| The X server stalls 10–18 ms about once a minute (other clients, GPU syncs), whatever Glint does | High (seen in every Phase 0 run) | A check landing in a stall exceeds the 10 ms ceiling | Nothing in Glint can shorten it; `glint-lab` reports stall-coincident trials separately and the timing targets apply to the rest (ADR 0004). A stall can't cause an extra click; a miss it causes is reported (ADR 0007) |
 | A compositor adds a frame in screen mode | High | 7–17 ms before Glint can see the color | `window-buffer` backend; tuning guide (unredirect fullscreen windows) |
 | DAMAGE misses updates on some page-flip paths | Medium | Late or missed clicks in damage mode | Safety checks + automatic fallback to polling |
 | `window-buffer` reads the wrong surface (child windows, Wine, container-based clients) | Medium | Blank reads | Self-check + fallback to `screen` |
@@ -1269,28 +1271,38 @@ Implemented in Phase 1; the source and its tests are the reference (ADR 0007). I
 
 ```rust
 pub enum Verdict { Absent, Present, Enter }            // from the sample pattern (§5.3); Enter implies Present
-pub enum Step { None, Fire, Suppressed, SafetyStop }
+pub enum Step { None, Fire, Suppressed, SafetyStop, MaybeMissed }
 
 impl Trigger {
-    pub fn start(&mut self);   // manual Start: Latched (Idle with fire_if_present_on_start); no-op while started
-    pub fn restart(&mut self); // epoch change: Latched with a fresh absence count; no-op while stopped
-    pub fn pause(&mut self);   // the target window left the front; a restart resumes
-    pub fn stop(&mut self);    // only a manual Start leaves Stopped, also after a safety stop
+    pub fn start(&mut self, now: Instant);   // manual Start: Latched (Idle with fire_if_present_on_start)
+    pub fn restart(&mut self, now: Instant); // epoch change: Latched, fresh absence count; no-op while stopped
+    pub fn pause(&mut self);                 // the target window left the front; a restart resumes
+    pub fn stop(&mut self);                  // only a manual Start leaves Stopped, also after a safety stop
     pub fn step(&mut self, now: Instant, v: Verdict) -> Step;
 }
 
-// Latched + Absent: count only absence that was actually observed.
-if let Some(last) = absence.last {
-    absence.observed += now.saturating_duration_since(last).min(cfg.max_check_gap); // a stall isn't absence
+// Latched: two checks further apart than the check gap mean Glint was blind in between.
+let blind = latch.prev.is_some_and(|p| now.saturating_duration_since(p) > cfg.max_check_gap);
+latch.prev = Some(now);
+latch.blind |= blind;
+let since = *latch.since.get_or_insert(now); // when the color was last seen, or the (re)start
+if v.present() {
+    // Blind time may have hidden a disappearance long enough to end the appearance: say so, never click.
+    let maybe_missed = latch.blind && now.saturating_duration_since(since) >= cfg.rearm_absent;
+    self.phase = Phase::Latched(Latch::seen_at(now));
+    return if maybe_missed { Step::MaybeMissed } else { Step::None };
 }
-absence.checks += 1;
-absence.last = Some(now);
-if absence.checks >= cfg.rearm_absent_samples && absence.observed >= cfg.rearm_absent {
+if blind {
+    (latch.run_start, latch.run_checks) = (None, 0); // only a watched run counts: start over
+}
+let run_start = *latch.run_start.get_or_insert(now);
+latch.run_checks += 1;
+if latch.run_checks >= cfg.rearm_absent_samples && now.saturating_duration_since(run_start) >= cfg.rearm_absent {
     self.phase = Phase::Idle;
 }
 
 fn fire(&mut self, now: Instant) -> Step {
-    self.phase = Phase::Latched(Absence::default()); // 1. consume the appearance before anything else
+    self.phase = Phase::Latched(Latch::seen_at(now)); // 1. consume the appearance before anything else
     if self.last_fire.is_some_and(|t| now.saturating_duration_since(t) < self.cfg.min_fire_interval) {
         return Step::Suppressed;                     // 2. the floor, at least hold_ms + 1
     }
@@ -1330,9 +1342,10 @@ pub fn run_hot(mut h: Hot) -> ! {
             h.trigger.set_cfg(h.profile.trigger);
             let _ = h.injector.release_now();
             // Every (re)start begins latched, so no capture is needed to decide (ADR 0007).
+            let now = Instant::now();
             match (was_armed, ctl.armed) {
-                (false, true) => h.trigger.start(),  // a manual Start
-                (true, true) => h.trigger.restart(), // moved, resized, profile swapped, back in front
+                (false, true) => h.trigger.start(now),  // a manual Start
+                (true, true) => h.trigger.restart(now), // moved, resized, profile swapped, back in front
                 (_, false) => h.trigger.stop(),
             }
             was_armed = ctl.armed;
@@ -1359,6 +1372,7 @@ pub fn run_hot(mut h: Hot) -> ! {
                 h.events.push_fire(t_req, t_cap, Instant::now());
             }
             Step::Suppressed => h.events.push_suppressed(t_cap),
+            Step::MaybeMissed => h.events.push_maybe_missed(t_cap), // shown in diagnostics, never silent
             Step::SafetyStop => {
                 let _ = h.injector.release_now();
                 h.request_stop(StopReason::SafetyStop); // clears `armed` and bumps the epoch

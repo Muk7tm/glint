@@ -1,6 +1,7 @@
 # 0007. Trigger: every restart latches, the hold sets a minimum gap, stalls aren't absence
 
-- **Status:** Accepted
+- **Status:** Accepted. Point 5 revised on 2026-11-13, after the owner made preventing extra clicks the top
+  priority: the first version still had a hole.
 - **Date:** 2026-11-13
 - **Plan sections:** §1, §5.5, §7, Appendix A.1–A.2
 
@@ -47,26 +48,55 @@ from the Step 1 report. Problem 5 is new.
   releases a due hold before acting on a check, so every FIRE finds nothing held. The timing lives in
   `glint_core::trigger::Hold`, which the injector follows. The property tests drive it the way the hot loop
   will.
-- **Absence counts only time that was watched** (fixes 5).
-  - Between two consecutive absent checks, at most `max_check_gap` is credited toward `rearm_absent_ms`:
-    four check periods (the §5.6 stall threshold), and never less than 2 ms.
-  - With no stall the result is the same as before. After a stall, re-arming waits until enough absence has
-    actually been observed.
+- **Absence counts only while Glint is watching** (fixes 5).
+  - Two checks further apart than the check gap mean Glint was blind in between. The check gap is four check
+    periods (the §5.6 stall threshold) and never less than 2 ms. A blind gap starts the absence count over: only
+    a run of absent checks with no blind gap counts toward `rearm_absent_ms`. A late first check after a
+    (re)start counts as blind too, so `start` and `restart` take the time.
+  - The first version of this rule credited a stall with 2 ms and kept the absence watched before it. That still
+    allowed a second click: 31 ms watched, then 45 ms blind (the color came back and left again unseen), then
+    7 ms watched, made 31 + 2 + 7 = 40 ms. A test now covers exactly that.
+  - **The guarantee.** Anything on screen for longer than the check gap can't slip between two watched checks,
+    and screen content lasts at least a frame (4.2 ms even at 240 Hz). So a watched run proves the color really
+    left, and the trigger can't re-arm inside one appearance.
+  - **Never silent.** When blind time *may* have hidden a disappearance long enough to end the appearance, the
+    trigger doesn't click and returns `Step::MaybeMissed`. That is the case when the color is back, at least
+    `rearm_absent_ms` has passed since it was last seen (or since the (re)start), and Glint was blind in between.
+    The engine counts and shows these, and `glint-lab` reports them.
 - **Property tests** cover the six invariants over random check streams. They include stalls, flicker, rapid
   blinking, starts, restarts, pauses and stops, and random settings: 2,000 cases per `cargo test`. A separate
   oracle checks the trace, including that an armed Enter fires on the very check it arrives (speed on the
-  rising edge).
+  rising edge) and that a possible miss is reported exactly when blind time allows one.
+- **A ground-truth property test** checks what matters most directly. A real on/off color, with every state at least
+  2.5 ms long, is sampled about 2,000 times a second, with jitter and random stalls of up to 80 ms.
+  Appearances are defined from the true signal, and the test requires:
+  - never two clicks in one real appearance;
+  - every missed appearance explained: never seen, reported as a possible miss, after a safety stop, or gone
+    for barely longer than *Gone after*;
+  - no possible-miss reports at all when nothing stalls.
+
+  It runs 1,000 scenarios per `cargo test`; one run of 50,000 also passed.
 
 ## Consequences
 
 - **The C1 cost.** An appearance that begins before `rearm_absent_ms` of observed absence after a Start counts
   as already present: no click until it leaves and returns. That matches the §1 definition of an appearance.
-- **The stall cost.** A stall during an absence delays re-arming by up to the stall's length. An appearance
-  that begins in that window merges with the previous one: a missed click, never an extra one. With the 10–18 ms
-  X server stalls measured in Phase 0, that only happens to appearances less than about 60 ms apart. `glint-lab`
-  flags stall-coincident trials (ADR 0004).
+- **The stall cost.** A stall during an absence restarts the count, so re-arming waits for `rearm_absent_ms` of
+  watched absence after the stall. An appearance that begins before that merges with the previous one: a missed
+  click, never an extra one, and the trigger reports it.
+  - With the 10–18 ms X server stalls measured in Phase 0 (about once a minute), that can only happen to an
+    appearance that starts less than about 60 ms after the previous one ended.
+  - Glint's own stalls go away with real-time priority (Phase 6).
+- **Compositors.** Under picom, gaps over 2 ms are frequent (Phase 0: about 60 late checks per second). The count
+  restarts often, and re-arming can take noticeably longer than *Gone after*.
+  - A vsync'd compositor shows each frame for at least one refresh (16.7 ms at 60 Hz), so a shorter gap can't
+    hide a frame.
+  - Phase 5 (compositor detection) will set the check gap from the refresh rate when a compositor runs. The lab's
+    `flicker` and `rapid` scenarios under picom verify it.
+  - The owner plays with the compositor off.
 - **Holds longer than `min_fire_interval_ms`** silently raise the minimum gap. The UI should say so next to
   *Min gap* (Phase 6).
 - **Engine work (Phase 2):**
   - map the control word's armed and gate bits onto `start`, `restart`, `pause` and `stop` (C3);
-  - service `Hold::due` before stepping the trigger.
+  - service `Hold::due` before stepping the trigger;
+  - turn `Step::MaybeMissed` into an event that diagnostics count and show.

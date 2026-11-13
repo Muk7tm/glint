@@ -2,10 +2,13 @@
 //! The trigger state machine (PLAN §5.5, ADR 0007).
 //!
 //! **Speed on the rising edge:** once armed, the first Enter check fires, with no waiting
-//! (unless you turn on confirmation). **Safety on the falling edge:** firing latches, and only an
-//! observed absence of at least `rearm_absent` and `rearm_absent_samples` checks re-arms. Every
-//! (re)start begins latched, so a color that was already showing can't click. The minimum gap
-//! and the safety stop sit behind the latch, so they can suppress a click but never add one.
+//! (unless you turn on confirmation). **Safety on the falling edge:** firing latches, and only a
+//! *watched* absence of at least `rearm_absent` and `rearm_absent_samples` checks re-arms: two
+//! checks further apart than the check gap mean Glint was blind in between, and the count starts
+//! over. Every (re)start begins latched, so a color that was already showing can't click. The
+//! minimum gap and the safety stop sit behind the latch, so they can suppress a click but never
+//! add one. When blind time may have hidden a real disappearance, the trigger doesn't click and
+//! says so ([`Step::MaybeMissed`]), so a possible miss is never silent.
 //!
 //! Everything here is plain data with no allocation, so the hot loop can own a [`Trigger`] and a
 //! [`Hold`] directly.
@@ -41,8 +44,8 @@ pub struct TriggerCfg {
     pub max_clicks_per_sec: u32,
     /// A manual Start may fire for a color that is already showing.
     pub fire_if_present_on_start: bool,
-    /// A gap between two absent checks counts as observed absence only up to this long. Use
-    /// [`TriggerCfg::check_gap`].
+    /// Two checks further apart than this mean Glint was blind in between: a run of absent checks
+    /// starts over (ADR 0007). Use [`TriggerCfg::check_gap`].
     pub max_check_gap: Duration,
 }
 
@@ -55,7 +58,8 @@ impl TriggerCfg {
 
     /// The longest gap between checks that still counts as watching (ADR 0007): four check
     /// periods (the stall threshold of §5.6), and never less than [`MIN_CHECK_GAP`]. `None` is
-    /// the Max preset, which doesn't pace.
+    /// the Max preset, which doesn't pace. Anything on screen for longer than this can't slip
+    /// between two watched checks.
     pub fn check_gap(period: Option<Duration>) -> Duration {
         period.map_or(MIN_CHECK_GAP, |p| p.saturating_mul(4).max(MIN_CHECK_GAP))
     }
@@ -89,12 +93,17 @@ pub enum Step {
     /// The trigger fired one click too many within a second: watching stopped (a feedback loop,
     /// §5.5). Release held input and report it.
     SafetyStop,
+    /// No click. The color is back after being gone at least `rearm_absent`, so this may be a new
+    /// appearance, but Glint was blind for part of that time (a stall) and can't tell whether the
+    /// color really stayed away. Not clicking is the only choice that can't double-click
+    /// (ADR 0007); the engine reports it so a possible miss is never silent.
+    MaybeMissed,
 }
 
 impl Step {
     /// The trigger fired on this check, whether or not it clicked.
     pub fn is_fire_attempt(self) -> bool {
-        self != Self::None
+        matches!(self, Self::Fire | Self::Suppressed | Self::SafetyStop)
     }
 }
 
@@ -120,16 +129,37 @@ enum Phase {
     Paused,
     Idle,
     Confirming { since: Instant, count: u32 },
-    Latched(Absence),
+    Latched(Latch),
 }
 
-/// The current run of absent checks while latched.
+/// What the trigger tracks while latched.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-struct Absence {
-    checks: u32,
-    /// Absence time actually observed in this run.
-    observed: Duration,
-    last: Option<Instant>,
+struct Latch {
+    /// The previous check.
+    prev: Option<Instant>,
+    /// When the color was last seen (the fire, or a later Present or Enter check), or when
+    /// watching (re)started, before anything was seen.
+    since: Option<Instant>,
+    /// Glint was blind at least once since `since`.
+    blind: bool,
+    /// The current watched run of absent checks: when it began, and how many checks.
+    run_start: Option<Instant>,
+    run_checks: u32,
+}
+
+impl Latch {
+    /// Watching (re)started at `t`: the time until the first check counts as blind if it's long.
+    fn began(t: Instant) -> Self {
+        Self {
+            prev: Some(t),
+            since: Some(t),
+            ..Self::default()
+        }
+    }
+
+    fn seen_at(t: Instant) -> Self {
+        Self::began(t)
+    }
 }
 
 /// The times of the last clicks, for the safety stop. Fixed size: never allocates.
@@ -193,26 +223,27 @@ impl Trigger {
         self.cfg = cfg;
     }
 
-    /// A manual Start: the Start button, the hotkey, a `start` request or `--start-on-launch`.
-    /// Watching begins latched, so the color has to be seen absent before anything can fire (R7,
-    /// ADR 0007), unless `fire_if_present_on_start` is on. Does nothing while already started.
-    pub fn start(&mut self) {
+    /// A manual Start at `now`: the Start button, the hotkey, a `start` request or
+    /// `--start-on-launch`. Watching begins latched, so the color has to be seen absent before
+    /// anything can fire (R7, ADR 0007), unless `fire_if_present_on_start` is on. Does nothing
+    /// while already started.
+    pub fn start(&mut self, now: Instant) {
         if self.phase == Phase::Stopped {
             self.phase = if self.cfg.fire_if_present_on_start {
                 Phase::Idle
             } else {
-                Phase::Latched(Absence::default())
+                Phase::Latched(Latch::began(now))
             };
         }
     }
 
-    /// Watching restarts cleanly: the target moved or was resized, the monitors changed, the
-    /// profile was swapped, or the target window came back to the front. It begins latched with a
-    /// fresh absence count whatever the color is doing. Does nothing while stopped, so only a
+    /// Watching restarts cleanly at `now`: the target moved or was resized, the monitors changed,
+    /// the profile was swapped, or the target window came back to the front. It begins latched with
+    /// a fresh absence count whatever the color is doing. Does nothing while stopped, so only a
     /// manual Start ever starts watching, including after a safety stop (ADR 0007).
-    pub fn restart(&mut self) {
+    pub fn restart(&mut self, now: Instant) {
         if self.phase != Phase::Stopped {
-            self.phase = Phase::Latched(Absence::default());
+            self.phase = Phase::Latched(Latch::began(now));
         }
     }
 
@@ -270,24 +301,31 @@ impl Trigger {
                     Step::None
                 }
             }
-            Phase::Latched(mut absence) => {
+            Phase::Latched(mut latch) => {
+                // Two checks further apart than the check gap: Glint was blind in between, and
+                // the color may have come and gone unseen (ADR 0007).
+                let blind = latch
+                    .prev
+                    .is_some_and(|p| now.saturating_duration_since(p) > self.cfg.max_check_gap);
+                latch.prev = Some(now);
+                latch.blind |= blind;
+                let since = *latch.since.get_or_insert(now);
                 if v.present() {
-                    self.phase = Phase::Latched(Absence::default());
-                    return Step::None;
+                    // The same appearance, unless blind time hid a disappearance long enough to
+                    // end it. Then this may be a new appearance: report it, but never click.
+                    let maybe_missed = latch.blind && now.saturating_duration_since(since) >= self.cfg.rearm_absent;
+                    self.phase = Phase::Latched(Latch::seen_at(now));
+                    return if maybe_missed { Step::MaybeMissed } else { Step::None };
                 }
-                // Count only absence that was actually observed (§5.5): time between two absent
-                // checks counts only up to the check gap, so a stall can't stand in for watching.
-                if let Some(last) = absence.last {
-                    absence.observed += now.saturating_duration_since(last).min(self.cfg.max_check_gap);
+                // Only absence watched without a blind gap counts (§5.5): a gap starts the run over.
+                if blind {
+                    (latch.run_start, latch.run_checks) = (None, 0);
                 }
-                absence.checks = absence.checks.saturating_add(1);
-                absence.last = Some(now);
-                self.phase =
-                    if absence.checks >= self.cfg.rearm_absent_samples && absence.observed >= self.cfg.rearm_absent {
-                        Phase::Idle
-                    } else {
-                        Phase::Latched(absence)
-                    };
+                let run_start = *latch.run_start.get_or_insert(now);
+                latch.run_checks = latch.run_checks.saturating_add(1);
+                let rearmed = latch.run_checks >= self.cfg.rearm_absent_samples
+                    && now.saturating_duration_since(run_start) >= self.cfg.rearm_absent;
+                self.phase = if rearmed { Phase::Idle } else { Phase::Latched(latch) };
                 Step::None
             }
         }
@@ -295,7 +333,7 @@ impl Trigger {
 
     fn fire(&mut self, now: Instant) -> Step {
         // 1. Consume the appearance first, so nothing below can lead to a late click.
-        self.phase = Phase::Latched(Absence::default());
+        self.phase = Phase::Latched(Latch::seen_at(now));
         // 2. The absolute floor between clicks.
         if self
             .last_fire
@@ -370,22 +408,24 @@ mod tests {
             ..cfg
         });
         let t0 = Instant::now();
-        t.start();
+        t.start(t0);
         assert_eq!(t.step(t0, Verdict::Enter), Step::Fire);
         t.set_cfg(cfg);
         (t, t0)
     }
 
-    /// Absent checks every `every` from `from` (exclusive) through `to` (inclusive).
-    fn absent(t: &mut Trigger, from: Instant, to: Instant, every: Duration) -> Step {
+    /// Checks with the same verdict every `every` from `from` (exclusive) through `to`
+    /// (inclusive), none of which may do anything.
+    fn steady(t: &mut Trigger, from: Instant, to: Instant, every: Duration, v: Verdict) {
         let mut now = from;
-        let mut last = Step::None;
         while now + every <= to {
             now += every;
-            last = t.step(now, Verdict::Absent);
-            assert_eq!(last, Step::None);
+            assert_eq!(t.step(now, v), Step::None, "{v:?} at {:?}", now - from);
         }
-        last
+    }
+
+    fn absent(t: &mut Trigger, from: Instant, to: Instant, every: Duration) {
+        steady(t, from, to, every, Verdict::Absent);
     }
 
     #[test]
@@ -440,7 +480,7 @@ mod tests {
     fn starting_while_present_waits_for_the_color_to_leave() {
         let mut t = Trigger::new(cfg());
         let t0 = Instant::now();
-        t.start();
+        t.start(t0);
         assert_eq!(t.step(t0, Verdict::Enter), Step::None);
         assert_eq!(t.step(t0 + ms(1), Verdict::Absent), Step::None);
         absent(&mut t, t0 + ms(1), t0 + ms(41), ms(1)); // 40 ms observed: re-armed
@@ -452,7 +492,7 @@ mod tests {
         // C1 (ADR 0007): one absent check right after Start is not an observed absence.
         let mut t = Trigger::new(cfg());
         let t0 = Instant::now();
-        t.start();
+        t.start(t0);
         assert_eq!(t.state(), TriggerState::Latched);
         assert_eq!(t.step(t0, Verdict::Absent), Step::None);
         assert_eq!(t.step(t0 + ms(1), Verdict::Enter), Step::None);
@@ -463,7 +503,7 @@ mod tests {
         // The color stays on screen while the window moves; the first capture after the move
         // happens to read a stale frame without it.
         let (mut t, t0) = fired(cfg());
-        t.restart();
+        t.restart(t0 + ms(4));
         assert_eq!(t.step(t0 + ms(5), Verdict::Absent), Step::None);
         assert_eq!(t.step(t0 + ms(6), Verdict::Enter), Step::None);
         assert_eq!(t.state(), TriggerState::Latched);
@@ -478,26 +518,26 @@ mod tests {
         };
         let mut t = Trigger::new(c);
         let t0 = Instant::now();
-        t.start();
+        t.start(t0);
         assert_eq!(t.step(t0, Verdict::Enter), Step::Fire);
         absent(&mut t, t0, t0 + ms(60), ms(1));
-        t.restart(); // the window came back to the front with the color showing
+        t.restart(t0 + ms(60)); // the window came back to the front with the color showing
         assert_eq!(t.step(t0 + ms(61), Verdict::Enter), Step::None);
         // A second Start while started changes nothing.
-        t.start();
+        t.start(t0 + ms(61));
         assert_eq!(t.step(t0 + ms(62), Verdict::Enter), Step::None);
     }
 
     #[test]
-    fn a_stall_is_not_observed_absence() {
-        // ADR 0007: the engine stalls for 50 ms between two absent checks.
+    fn a_stall_starts_the_absence_count_over() {
+        // ADR 0007: the engine stalls for 50 ms between two absent checks. Those 50 ms weren't
+        // watched, so the count starts again after the stall.
         let (mut t, t0) = fired(cfg());
         assert_eq!(t.step(t0 + ms(1), Verdict::Absent), Step::None);
-        assert_eq!(t.step(t0 + ms(51), Verdict::Absent), Step::None); // 2 ms credited, not 50
+        assert_eq!(t.step(t0 + ms(51), Verdict::Absent), Step::None); // blind for 50 ms: start over
+        absent(&mut t, t0 + ms(51), t0 + ms(90), ms(1)); // 39 ms watched
         assert_eq!(t.state(), TriggerState::Latched);
-        absent(&mut t, t0 + ms(51), t0 + ms(88), ms(1)); // 39 ms observed
-        assert_eq!(t.state(), TriggerState::Latched);
-        assert_eq!(t.step(t0 + ms(89), Verdict::Absent), Step::None); // 40 ms
+        assert_eq!(t.step(t0 + ms(91), Verdict::Absent), Step::None); // 40 ms
         assert_eq!(t.state(), TriggerState::Idle);
     }
 
@@ -505,12 +545,40 @@ mod tests {
     fn a_stall_between_two_dropouts_cant_fake_a_disappearance() {
         // The color is present except for two short dropouts. A 45 ms stall hides the presence
         // between them, so the trigger sees "absent ... absent" 45 ms apart. Counting the stall
-        // as absence (the plan's original sketch) would re-arm and click again.
+        // as absence (the plan's original sketch) would re-arm and click again. The trigger
+        // can't know, so it doesn't click and reports a possible miss.
         let (mut t, t0) = fired(cfg());
+        steady(&mut t, t0, t0 + ms(99), ms(1), Verdict::Enter);
         assert_eq!(t.step(t0 + ms(100), Verdict::Absent), Step::None); // first dropout
-        assert_eq!(t.step(t0 + ms(145), Verdict::Absent), Step::None); // second dropout after the stall
-        assert_eq!(t.step(t0 + ms(146), Verdict::Enter), Step::None);
+        assert_eq!(t.step(t0 + ms(145), Verdict::Absent), Step::None); // second dropout, after the stall
+        assert_eq!(t.step(t0 + ms(146), Verdict::Enter), Step::MaybeMissed);
         assert_eq!(t.state(), TriggerState::Latched);
+    }
+
+    #[test]
+    fn absence_watched_before_a_stall_doesnt_count_either() {
+        // Gone for 31 ms, blind for 45 ms (the color came back and left again unseen), then gone
+        // for 7 ms more. This rule's first version credited a stall with 2 ms and kept what was
+        // watched before it: 31 + 2 + 7 = 40 ms, which re-armed and clicked a second time within
+        // one appearance. Only a run with no blind gap counts now.
+        let (mut t, t0) = fired(cfg());
+        steady(&mut t, t0, t0 + ms(10), ms(1), Verdict::Enter);
+        absent(&mut t, t0 + ms(10), t0 + ms(42), ms(1)); // 11..=42: 31 ms gone
+        assert_eq!(t.step(t0 + ms(87), Verdict::Absent), Step::None); // after 45 ms blind
+        absent(&mut t, t0 + ms(87), t0 + ms(94), ms(1)); // 7 ms more
+        assert_eq!(t.step(t0 + ms(95), Verdict::Enter), Step::MaybeMissed);
+        assert_eq!(t.state(), TriggerState::Latched);
+    }
+
+    #[test]
+    fn a_blind_gap_long_enough_to_hide_a_whole_disappearance_is_reported() {
+        let (mut t, t0) = fired(cfg());
+        assert_eq!(t.step(t0 + ms(1), Verdict::Enter), Step::None);
+        // Blind for 20 ms: too short to hide a 40 ms absence, so nothing can have been missed.
+        assert_eq!(t.step(t0 + ms(21), Verdict::Enter), Step::None);
+        // Blind for 49 ms: the color could have left for 40 ms and come back unseen.
+        assert_eq!(t.step(t0 + ms(70), Verdict::Enter), Step::MaybeMissed);
+        assert_eq!(t.step(t0 + ms(71), Verdict::Enter), Step::None);
     }
 
     #[test]
@@ -521,9 +589,9 @@ mod tests {
             ..cfg()
         };
         let (mut t, t0) = fired(c);
-        assert_eq!(t.step(t0 + ms(5), Verdict::Absent), Step::None); // re-armed at once
-        assert_eq!(t.step(t0 + ms(10), Verdict::Enter), Step::Suppressed); // 10 ms < 25 ms
-        assert_eq!(t.step(t0 + ms(30), Verdict::Enter), Step::None); // still the same appearance
+        assert_eq!(t.step(t0 + ms(1), Verdict::Absent), Step::None); // re-armed at once
+        assert_eq!(t.step(t0 + ms(2), Verdict::Enter), Step::Suppressed); // 2 ms < 25 ms
+        assert_eq!(t.step(t0 + ms(3), Verdict::Enter), Step::None); // still the same appearance
         assert_eq!(t.step(t0 + ms(31), Verdict::Absent), Step::None);
         assert_eq!(t.step(t0 + ms(32), Verdict::Enter), Step::Fire);
     }
@@ -553,10 +621,10 @@ mod tests {
         assert_eq!(t.step(t0 + ms(450), Verdict::Enter), Step::SafetyStop); // 15 clicks in the last second
         assert_eq!(t.state(), TriggerState::Stopped);
         // Invariant 5: restarts and pauses don't resume watching; only a manual Start does.
-        t.restart();
+        t.restart(t0 + ms(1999));
         t.pause();
         assert_eq!(t.step(t0 + ms(2000), Verdict::Enter), Step::None);
-        t.start();
+        t.start(t0 + ms(2000));
         assert_eq!(t.step(t0 + ms(2001), Verdict::Absent), Step::None);
         assert_eq!(t.step(t0 + ms(2002), Verdict::Enter), Step::Fire);
     }
@@ -569,7 +637,7 @@ mod tests {
             ..cfg()
         });
         let t0 = Instant::now();
-        t.start();
+        t.start(t0);
         assert_eq!(t.step(t0, Verdict::Enter), Step::None);
         assert_eq!(t.state(), TriggerState::Confirming);
         assert_eq!(t.step(t0 + ms(1), Verdict::Enter), Step::None);
@@ -584,7 +652,7 @@ mod tests {
             fire_if_present_on_start: true,
             ..cfg()
         });
-        t.start();
+        t.start(t0);
         assert_eq!(t.step(t0, Verdict::Enter), Step::None);
         assert_eq!(t.step(t0 + ms(6), Verdict::Enter), Step::None);
         assert_eq!(t.step(t0 + ms(7), Verdict::Enter), Step::Fire);
@@ -597,16 +665,16 @@ mod tests {
             ..cfg()
         });
         let t0 = Instant::now();
-        t.start();
+        t.start(t0);
         t.pause();
         assert_eq!(t.state(), TriggerState::Paused);
         assert!(!t.is_watching());
         assert_eq!(t.step(t0, Verdict::Enter), Step::None);
-        t.restart(); // back in front
+        t.restart(t0); // back in front
         assert_eq!(t.state(), TriggerState::Latched);
         assert_eq!(t.step(t0 + ms(1), Verdict::Enter), Step::None);
         t.stop();
-        t.restart();
+        t.restart(t0 + ms(2));
         assert_eq!(t.state(), TriggerState::Stopped);
     }
 
@@ -653,8 +721,8 @@ mod tests {
                 v: Verdict,
                 step: Step,
             },
-            Start,
-            Restart,
+            Start(Instant),
+            Restart(Instant),
             Pause,
             Stop,
             Press,
@@ -746,17 +814,17 @@ mod tests {
                                 trace.push(Rec::Press);
                             }
                             Step::SafetyStop => release(&mut held, &mut trace),
-                            Step::None | Step::Suppressed => {}
+                            Step::None | Step::Suppressed | Step::MaybeMissed => {}
                         }
                     }
                     Ev::Start => {
-                        trigger.start();
-                        trace.push(Rec::Start);
+                        trigger.start(now);
+                        trace.push(Rec::Start(now));
                     }
                     Ev::Restart => {
                         release(&mut held, &mut trace);
-                        trigger.restart();
-                        trace.push(Rec::Restart);
+                        trigger.restart(now);
+                        trace.push(Rec::Restart(now));
                     }
                     Ev::Pause => {
                         release(&mut held, &mut trace);
@@ -775,32 +843,38 @@ mod tests {
             trace
         }
 
-        /// Checks the trace against the invariants, with its own model of "observed absence".
+        /// Checks the trace against the invariants, with its own model of watched absence.
         fn check(cfg: &TriggerCfg, trace: &[Rec]) -> Result<(), TestCaseError> {
             let confirm_off = cfg.confirm_samples <= 1 && cfg.confirm_min.is_zero();
             let mut started = false; // between a manual Start and a stop
             let mut paused = false;
-            let mut armed = false; // a qualifying observed absence since the last (re)start or fire
+            let mut armed = false; // a watched absence since the last (re)start or fire
             let mut free = false; // a manual Start with fire_if_present_on_start: no absence needed yet
-            let mut run: Option<(u32, Duration, Instant)> = None; // absent checks, observed time, last
+            // While latched: the previous check, when the color was last seen, whether Glint was
+            // blind since then, and the watched absence run (its first check and length).
+            let mut prev: Option<Instant> = None;
+            let mut seen: Option<Instant> = None;
+            let mut blind = false;
+            let mut run: Option<(Instant, u32)> = None;
             let mut last_fire: Option<Instant> = None;
             let mut held = false;
             for rec in trace {
                 match *rec {
-                    Rec::Start => {
+                    Rec::Start(t) => {
                         if !started {
-                            (started, paused, armed, run) = (true, false, false, None);
-                            free = cfg.fire_if_present_on_start;
+                            (started, paused, armed, free) = (true, false, false, cfg.fire_if_present_on_start);
+                            (prev, seen, blind, run) = (Some(t), Some(t), false, None);
                         }
                     }
-                    Rec::Restart => {
+                    Rec::Restart(t) => {
                         if started {
-                            (paused, armed, free, run) = (false, false, false, None);
+                            (paused, armed, free) = (false, false, false);
+                            (prev, seen, blind, run) = (Some(t), Some(t), false, None);
                         }
                     }
                     Rec::Pause => {
                         if started {
-                            (paused, run) = (true, None);
+                            paused = true;
                         }
                     }
                     Rec::Stop => started = false,
@@ -820,13 +894,13 @@ mod tests {
                     Rec::Check { t, v, step } => {
                         if !started || paused {
                             // Invariant 5 among others: nothing fires unless started and in front.
-                            prop_assert_eq!(step, Step::None, "fired while stopped or paused");
+                            prop_assert_eq!(step, Step::None, "acted while stopped or paused");
                             continue;
                         }
                         if step.is_fire_attempt() {
                             prop_assert_eq!(v, Verdict::Enter, "invariant 1: fired on {:?}", v);
-                            // Invariants 2 and 4 (ADR 0007: every (re)start needs an observed absence).
-                            prop_assert!(armed || free, "invariant 2/4: fired without an observed absence");
+                            // Invariants 2 and 4 (ADR 0007: every (re)start needs a watched absence).
+                            prop_assert!(armed || free, "invariant 2/4: fired without a watched absence");
                             if step == Step::Fire {
                                 if let Some(prev) = last_fire {
                                     prop_assert!(
@@ -837,27 +911,42 @@ mod tests {
                                 }
                                 last_fire = Some(t);
                             }
-                            (armed, free, run) = (false, false, None);
+                            (armed, free) = (false, false);
+                            (prev, seen, blind, run) = (Some(t), Some(t), false, None);
                             if step == Step::SafetyStop {
                                 started = false;
                             }
                             continue;
                         }
-                        // Speed on the rising edge: armed, no confirmation, an Enter fires at once.
-                        if (armed || free) && confirm_off {
-                            prop_assert!(v != Verdict::Enter, "an armed Enter didn't fire");
+                        if armed || free {
+                            // Speed on the rising edge: armed, no confirmation, an Enter fires at once.
+                            if confirm_off {
+                                prop_assert!(v != Verdict::Enter, "an armed Enter didn't fire");
+                            }
+                            prop_assert_eq!(step, Step::None, "reported a possible miss while armed");
+                            continue;
                         }
+                        // Latched: two checks further apart than the check gap mean Glint was blind.
+                        let gap_blind = prev.is_some_and(|p| t - p > cfg.max_check_gap);
+                        prev = Some(t);
+                        blind |= gap_blind;
+                        let since = *seen.get_or_insert(t);
                         if v == Verdict::Absent {
-                            let (n, observed) = match run {
-                                Some((n, observed, last)) => (n + 1, observed + (t - last).min(cfg.max_check_gap)),
-                                None => (1, Duration::ZERO),
-                            };
-                            run = Some((n, observed, t));
-                            if n >= cfg.rearm_absent_samples && observed >= cfg.rearm_absent {
+                            prop_assert_eq!(step, Step::None);
+                            if gap_blind {
+                                run = None;
+                            }
+                            let (start, n) = run.map_or((t, 1), |(start, n)| (start, n + 1));
+                            run = Some((start, n));
+                            if n >= cfg.rearm_absent_samples && t - start >= cfg.rearm_absent {
                                 armed = true;
                             }
                         } else {
-                            run = None;
+                            // A possible miss is reported exactly when blind time may have hidden
+                            // a long enough disappearance.
+                            let expected = blind && t - since >= cfg.rearm_absent;
+                            prop_assert_eq!(step == Step::MaybeMissed, expected, "possible miss at {:?}", t);
+                            (seen, blind, run) = (Some(t), false, None);
                         }
                     }
                 }
@@ -882,10 +971,10 @@ mod tests {
         }
 
         #[test]
-        fn the_generator_produces_clicks_and_suppressions_and_safety_stops() {
+        fn the_generator_produces_every_kind_of_step() {
             // Guards the property test against streams in which nothing ever fires.
             let mut runner = proptest::test_runner::TestRunner::deterministic();
-            let (mut fires, mut suppressed, mut stops) = (0, 0, 0);
+            let (mut fires, mut suppressed, mut stops, mut maybe) = (0, 0, 0, 0);
             for _ in 0..300 {
                 let (cfg, hold) = config().new_tree(&mut runner).unwrap().current();
                 let segments = prop::collection::vec(segment(), 1..60)
@@ -903,15 +992,156 @@ mod tests {
                         Rec::Check {
                             step: Step::SafetyStop, ..
                         } => stops += 1,
+                        Rec::Check {
+                            step: Step::MaybeMissed,
+                            ..
+                        } => maybe += 1,
                         _ => {}
                     }
                 }
             }
-            // 1641, 340 and 104 with the deterministic seed.
+            // 1215, 305, 72 and 7008 with the deterministic seed.
             assert!(
-                fires > 1000 && suppressed > 100 && stops > 30,
-                "fires {fires}, suppressed {suppressed}, stops {stops}"
+                fires > 800 && suppressed > 100 && stops > 30 && maybe > 1000,
+                "fires {fires}, suppressed {suppressed}, stops {stops}, possible misses {maybe}"
             );
+        }
+    }
+
+    mod ground_truth {
+        //! The property that matters most (R1): never two clicks in one *real* appearance. A real
+        //! on/off color is simulated in continuous time and sampled about 2,000 times a second,
+        //! with jitter and random stalls of up to 80 ms. Appearances come from the true signal
+        //! (gaps shorter than `rearm_absent` join), not from what the trigger saw. Every missed
+        //! appearance must have a reason, and a miss caused by blind time must be reported.
+
+        use proptest::prelude::*;
+
+        use super::*;
+
+        /// Every on-screen state lasts at least this long, longer than the 2 ms check gap: screen
+        /// content changes at most once per frame, and a frame lasts 4.2 ms even at 240 Hz.
+        const MIN_STATE_US: u64 = 2_500;
+
+        fn lcg(state: &mut u64) -> u64 {
+            *state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            *state >> 33
+        }
+
+        /// A true appearance: first on, last off, and how long the color was off before it (µs).
+        type Appearance = (u64, u64, u64);
+
+        struct Outcome {
+            appearances: Vec<Appearance>,
+            fires: Vec<u64>,
+            maybe_missed: Vec<u64>,
+            /// Checks that saw the color.
+            seen: Vec<u64>,
+            safety_stop: Option<u64>,
+        }
+
+        fn simulate(rearm_ms: u64, samples: u32, segments: &[(u64, u64)], seed: u64, stall_permille: u64) -> Outcome {
+            // The true signal: off, then on, again and again (µs from Start).
+            let mut on = Vec::new();
+            let mut t = 0;
+            for &(off, dur) in segments {
+                t += off;
+                on.push((t, t + dur));
+                t += dur;
+            }
+            let cfg = TriggerCfg {
+                confirm_samples: 1,
+                confirm_min: Duration::ZERO,
+                rearm_absent: Duration::from_millis(rearm_ms),
+                rearm_absent_samples: samples,
+                min_fire_interval: TriggerCfg::min_gap(Duration::ZERO, Duration::ZERO),
+                max_clicks_per_sec: MAX_CLICKS_PER_SEC_LIMIT,
+                fire_if_present_on_start: false,
+                max_check_gap: TriggerCfg::check_gap(Some(Duration::from_micros(500))),
+            };
+            let t0 = Instant::now();
+            let mut trigger = Trigger::new(cfg);
+            trigger.start(t0);
+            let mut out = Outcome {
+                appearances: Vec::new(),
+                fires: Vec::new(),
+                maybe_missed: Vec::new(),
+                seen: Vec::new(),
+                safety_stop: None,
+            };
+            let (end, mut now, mut seed, mut i) = (t + 100_000, 0u64, seed, 0usize);
+            while now < end {
+                let r = lcg(&mut seed);
+                now += if r % 1000 < stall_permille {
+                    2_001 + r % 78_000
+                } else {
+                    400 + r % 300
+                };
+                while i < on.len() && on[i].1 <= now {
+                    i += 1;
+                }
+                let present = i < on.len() && on[i].0 <= now;
+                if present {
+                    out.seen.push(now);
+                }
+                let v = if present { Verdict::Enter } else { Verdict::Absent };
+                match trigger.step(t0 + Duration::from_micros(now), v) {
+                    Step::Fire => out.fires.push(now),
+                    Step::MaybeMissed => out.maybe_missed.push(now),
+                    Step::SafetyStop => {
+                        out.safety_stop = Some(now);
+                        break;
+                    }
+                    Step::None | Step::Suppressed => {}
+                }
+            }
+            let mut last_end = 0;
+            for &(s, e) in &on {
+                match out.appearances.last_mut() {
+                    Some(a) if s - a.1 < rearm_ms * 1000 => a.1 = e,
+                    _ => out.appearances.push((s, e, s - last_end)),
+                }
+                last_end = e;
+            }
+            out
+        }
+
+        fn within(times: &[u64], (start, end, _): Appearance) -> usize {
+            times.iter().filter(|&&t| start <= t && t < end).count()
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(1000))]
+
+            #[test]
+            fn never_two_clicks_in_one_real_appearance(
+                rearm_ms in 0u64..=60,
+                samples in 1u32..=3,
+                segments in prop::collection::vec((MIN_STATE_US..120_000, MIN_STATE_US..120_000), 1..25),
+                seed in any::<u64>(),
+                stall_permille in prop_oneof![Just(0u64), 1u64..=40],
+            ) {
+                let out = simulate(rearm_ms, samples, &segments, seed, stall_permille);
+                for &a in &out.appearances {
+                    let clicks = within(&out.fires, a);
+                    prop_assert!(clicks <= 1, "{} clicks in the appearance {:?}", clicks, a);
+                    if clicks == 0 {
+                        let stopped = out.safety_stop.is_some_and(|t| t < a.1);
+                        let unseen = within(&out.seen, a) == 0; // it was over before Glint could look
+                        let reported = within(&out.maybe_missed, a) > 0;
+                        // Gone for barely longer than "Gone after": the 2 ms check gap at both ends.
+                        let boundary = a.2 < rearm_ms * 1000 + 3_000;
+                        prop_assert!(stopped || unseen || reported || boundary, "silently missed {:?}", a);
+                    }
+                }
+                prop_assert!(out.fires.iter().all(|&f| out.appearances.iter().any(|&(s, e, _)| s <= f && f < e)));
+                // Never blind, never unsure: with no stalls there is nothing to report.
+                if stall_permille == 0 {
+                    prop_assert!(out.maybe_missed.is_empty());
+                }
+            }
         }
     }
 }

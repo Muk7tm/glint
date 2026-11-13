@@ -1,9 +1,9 @@
 # 0004. Phase 0: defaults confirmed, latency and server-tax expectations corrected
 
-- **Status:** Accepted (defaults and recorded numbers). How the v1.0 targets treat compositors and X server
-  stalls is an open question for the project owner.
+- **Status:** Accepted. Decision 3 (how the v1.0 targets treat compositors and X server stalls) was made by
+  the project owner on 2026-11-13.
 - **Date:** 2026-11-13
-- **Plan sections:** §3, §5.6, §20
+- **Plan sections:** §3, §5.6, §16, §19, §20
 
 ## Context
 
@@ -26,7 +26,16 @@ measured the reference machine (NVIDIA 620.70.06, Xorg 21.1.26, LXQt; `docs/MEAS
 1. **Defaults confirmed:** Balanced (2,000 checks/s) and the `screen` backend; the backend auto rule is unchanged.
    - Paced response is dominated by server busy time, not by the pacing interval, so Max buys almost nothing.
    - Eco would add up to 1.5 ms of waiting to save about 0.2 ms of server tax.
-2. §3, §5.6 and §20 record the measured numbers. The targets stay as written for now.
+2. §3, §5.6 and §20 record the measured numbers.
+3. **How the v1.0 targets are judged** (owner's choice, option A; the owner plays with the compositor off):
+   - **Timing** (p99 ≤ 2 ms, never above 10 ms) is judged with no compositor running.
+   - `glint-lab` runs a probe client alongside every timing run. Trials that coincide with an X server stall (the
+     probe sees the server stop answering) are listed separately with the stall, and the timing targets apply to
+     the rest.
+   - **Correctness** (zero extra clicks, zero missed appearances) applies to every trial, stalls included. The only
+     miss a stall can cause is one the engine itself reports as possible (ADR 0007); the lab lists those
+     separately too.
+   - Runs with a compositor are measured and documented in TUNING, not pass/fail.
 
 ## Consequences
 
@@ -34,8 +43,8 @@ measured the reference machine (NVIDIA 620.70.06, Xorg 21.1.26, LXQt; `docs/MEAS
   p99 ≈ 1.6 ms, which meets the target.
 - With a compositor, p99 ≤ 2 ms is not reachable on this machine: the extra time is server-side compositing
   and GPU syncs, which Glint cannot shorten.
-- A check that lands in a 10–18 ms server stall exceeds the 10 ms ceiling whatever Glint does. Proposed for the
-  owner to decide: `glint-lab` runs a concurrent probe client and reports trials that coincided with a server
-  stall separately, and the v1.0 ceiling applies to Glint-attributable time.
+- A check that lands in a 10–18 ms server stall exceeds the 10 ms ceiling whatever Glint does; decision 3 keeps
+  those trials visible without failing the timing targets for them. §16 (the lab report), §19 (Phase 6 exit and
+  the definition of done) and §20 say so.
 - The DAMAGE backend (Phase 6) is the main lever for the server tax, because it cuts the number of GetImages.
   That measurement decides §21.6.
