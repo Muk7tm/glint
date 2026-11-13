@@ -41,6 +41,14 @@ fn main() -> Result<(), slint::PlatformError> {
     let actions = ui.global::<Actions>();
     actions.on_main_button(|| app::with(App::main_button));
     actions.on_form_changed(|| app::with(App::form_changed));
+    actions.on_check_hex(|text| app::with(|a| a.check_hex(&text)));
+    actions.on_add_also(|| app::with(App::add_also));
+    actions.on_add_never(|| app::with(App::add_never));
+    actions.on_remove_also(|i| app::with(|a| a.remove_also(i)));
+    actions.on_remove_never(|i| app::with(|a| a.remove_never(i)));
+    actions.on_record(|| app::with(App::record));
+    actions.on_choose_recorded(|i| app::with(|a| a.choose_recorded(i)));
+    actions.on_sample_for_check(|| app::with(App::sample_for_check));
     actions.on_key_captured(|text| app::with(|a| a.key_captured(&text)));
     actions.on_key_chosen(|name| app::with(|a| a.key_chosen(&name)));
     actions.on_hotkey_captured(|text| app::with(|a| a.hotkey_captured(&text)));

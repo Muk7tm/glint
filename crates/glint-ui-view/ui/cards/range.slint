@@ -1,0 +1,191 @@
+// SPDX-License-Identifier: MIT
+// More options → COLOR RANGE (PLAN §5.4, §12.4, §12.9): the model and the main color's
+// tolerances, the shade and hue strips the engine classifies, the other colors that count or never
+// count, and a color to check: typed, recorded, or sampled at the watched spot.
+
+import { Theme } from "../pulse/theme.slint";
+import { Card, Segmented, FieldRow, NumberField, PButton, ButtonKind, Note, Tone } from "../pulse/components.slint";
+import { Strip, ChipRow, SwatchRow, ColorField } from "../widgets.slint";
+import { Form, Actions } from "../state.slint";
+
+component Unit inherits Text {
+    color: Theme.text-muted;
+    font-size: Theme.font-caption;
+    vertical-alignment: center;
+    overflow: elide;
+}
+
+export component RangeCard inherits Card {
+    title: "COLOR RANGE";
+    FieldRow {
+        label: "Model";
+        Segmented {
+            width: 180px;
+            options: ["OKLCh", "HSV", "RGB"];
+            current <=> Form.model-index;
+            enabled: Form.editable && Form.has-color;
+            changed => {
+                Actions.form-changed();
+            }
+        }
+    }
+
+    FieldRow {
+        label: Form.tol-a-label;
+        NumberField {
+            value <=> Form.tol-a;
+            minimum: 0;
+            maximum: Form.tol-a-max;
+            enabled: Form.editable && Form.has-color;
+            edited => {
+                Actions.form-changed();
+            }
+        }
+
+        Unit {
+            text: Form.tol-a-unit;
+        }
+    }
+
+    if Form.tol-b-shown: FieldRow {
+        label: Form.tol-b-label;
+        NumberField {
+            value <=> Form.tol-b;
+            minimum: 0;
+            maximum: Form.tol-b-max;
+            enabled: Form.editable && Form.has-color;
+            edited => {
+                Actions.form-changed();
+            }
+        }
+    }
+
+    if Form.tol-b-shown: FieldRow {
+        label: Form.tol-c-label;
+        NumberField {
+            value <=> Form.tol-c;
+            minimum: 0;
+            maximum: Form.tol-c-max;
+            enabled: Form.editable && Form.has-color;
+            edited => {
+                Actions.form-changed();
+            }
+        }
+
+        Unit {
+            text: Form.tol-c-unit;
+        }
+    }
+
+    if Form.has-color: FieldRow {
+        label: "Shade strip";
+        Strip {
+            cells: Form.shade-strip;
+        }
+    }
+
+    if Form.has-color: FieldRow {
+        label: "Hue strip";
+        Strip {
+            cells: Form.hue-strip;
+        }
+    }
+
+    if Form.also-match.length > 0: FieldRow {
+        label: "Also match";
+        ChipRow {
+            chips: Form.also-match;
+            enabled: Form.editable;
+            remove(i) => {
+                Actions.remove-also(i);
+            }
+        }
+    }
+
+    FieldRow {
+        label: "Never match";
+        if Form.never-match.length == 0: Unit {
+            text: "nothing yet";
+        }
+        ChipRow {
+            chips: Form.never-match;
+            enabled: Form.editable;
+            remove(i) => {
+                Actions.remove-never(i);
+            }
+        }
+    }
+
+    FieldRow {
+        label: "Check hex";
+        ColorField {
+            width: 140px;
+            empty: !Form.check-known;
+            value: Form.check-color;
+            hex <=> Form.check-hex;
+            enabled: Form.editable;
+            entered(text) => {
+                Actions.check-hex(text);
+            }
+        }
+    }
+
+    if Form.check-text != "": HorizontalLayout {
+        padding-left: Theme.label-width + Theme.gap-s;
+        Note {
+            message: Form.check-text;
+            tone: Form.check-tone;
+        }
+    }
+
+    if Form.check-known: HorizontalLayout {
+        padding-left: Theme.label-width + Theme.gap-s;
+        spacing: Theme.gap-s;
+        alignment: start;
+        PButton {
+            text: "Also match";
+            enabled: Form.editable && Form.has-color;
+            clicked => {
+                Actions.add-also();
+            }
+        }
+
+        PButton {
+            text: "Never match";
+            enabled: Form.editable;
+            clicked => {
+                Actions.add-never();
+            }
+        }
+    }
+
+    if Form.recorded.length > 0: FieldRow {
+        label: "Recorded";
+        SwatchRow {
+            chips: Form.recorded;
+            chosen(i) => {
+                Actions.choose-recorded(i);
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: Theme.gap-s;
+        alignment: start;
+        PButton {
+            text: Form.recording ? "Recording…" : "Record 5 s";
+            enabled: Form.editable && !Form.recording;
+            clicked => {
+                Actions.record();
+            }
+        }
+
+        PButton {
+            text: "Sample center (" + Form.sample-key + ")";
+            enabled: Form.editable;
+            clicked => {
+                Actions.sample-for-check();
+            }
+        }
+    }
+}

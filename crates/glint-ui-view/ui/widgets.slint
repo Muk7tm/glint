@@ -89,3 +89,96 @@ export component Magnifier inherits Rectangle {
         border-color: #FFFFFF;
     }
 }
+
+// One cell of a shade or hue strip (§12.4): its color, and what the engine counts it as:
+// 2 starts an appearance, 1 keeps one going, 0 neither.
+export struct Cell {
+    color: color,
+    level: int,
+}
+
+// A shade or hue strip: 16 cells; matching cells at full color, the rest dimmed to 25% (§12.6).
+export component Strip inherits HorizontalLayout {
+    in property <[Cell]> cells;
+    spacing: 2px;
+    for cell in root.cells: Rectangle {
+        width: 13px;
+        height: 16px;
+        border-radius: 2px;
+        background: cell.color;
+        opacity: cell.level == 2 ? 1.0 : cell.level == 1 ? 0.55 : 0.25;
+    }
+}
+
+// A color in a list: its swatch and hex, and an × to remove it.
+export struct Chip {
+    color: color,
+    hex: string,
+}
+
+export component ChipRow inherits HorizontalLayout {
+    in property <[Chip]> chips;
+    in property <bool> enabled: true;
+    callback remove(int);
+    spacing: Theme.gap-s;
+    alignment: start;
+    for chip[i] in root.chips: Rectangle {
+        height: 22px;
+        width: row.preferred-width + 8px;
+        border-radius: Theme.radius-s;
+        background: Theme.elevated;
+        border-width: 1px;
+        border-color: Theme.border;
+        row := HorizontalLayout {
+            x: 4px;
+            spacing: 4px;
+            alignment: start;
+            Swatch {
+                y: 3px;
+                value: chip.color;
+            }
+
+            Text {
+                text: chip.hex;
+                color: Theme.text;
+                font-size: Theme.font-caption;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: "×";
+                color: x-touch.has-hover ? Theme.text : Theme.text-muted;
+                vertical-alignment: center;
+                x-touch := TouchArea {
+                    enabled: root.enabled;
+                    clicked => {
+                        root.remove(i);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Recorded colors (§12.9): swatches to click, most frequent first.
+export component SwatchRow inherits HorizontalLayout {
+    in property <[Chip]> chips;
+    callback chosen(int);
+    spacing: 4px;
+    alignment: start;
+    for chip[i] in root.chips: Rectangle {
+        width: 18px;
+        height: 18px;
+        border-radius: 3px;
+        border-width: 1px;
+        border-color: touch.has-hover ? Theme.text : Theme.border-strong;
+        background: chip.color;
+        accessible-role: AccessibleRole.button;
+        accessible-label: chip.hex;
+        touch := TouchArea {
+            clicked => {
+                root.chosen(i);
+            }
+        }
+    }
+}

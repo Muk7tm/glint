@@ -13,6 +13,7 @@ import { ColorCard } from "cards/color.slint";
 import { ClickingCard } from "cards/clicking.slint";
 import { WindowCard } from "cards/window.slint";
 import { DetectionCard } from "cards/detection.slint";
+import { RangeCard } from "cards/range.slint";
 import { EngineCard } from "cards/engine.slint";
 
 export { Ui, Form, Actions, Tone }
@@ -67,6 +68,8 @@ export component AppWindow inherits Window {
                 }
 
                 if Ui.more-open: DetectionCard { }
+
+                if Ui.more-open: RangeCard { }
 
                 if Ui.more-open: EngineCard { }
             }

@@ -4,7 +4,7 @@
 //! make ([`edited`]). Plain data, tested without a window; [`apply`] copies it into the Slint
 //! globals.
 
-use glint_core::color::ShadePreset;
+use glint_core::color::{ColorModel, ShadePreset, Tolerances};
 use glint_core::pattern::PatternKind;
 use glint_core::profile::{ActionKind, Backend, MouseButton, Speed, TargetMode};
 use glint_core::settings::{ClosePolicy, HotkeyMode, Settings};
@@ -46,6 +46,85 @@ const BACKENDS: [Backend; 5] = [
     Backend::WindowBuffer,
     Backend::Damage,
 ];
+
+/// *Model* (§5.4).
+const MODELS: [ColorModel; 3] = [ColorModel::Oklch, ColorModel::Hsv, ColorModel::Rgb];
+
+/// More options → COLOR RANGE (§12.4): the model, and the main color's tolerances as the window
+/// shows them: OKLCh lightness ×100, chroma ×100, hue in degrees; HSV hue in degrees, saturation
+/// ×100, value ×100; RGB one value per channel.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub struct Range {
+    pub model: i32,
+    pub a: i32,
+    pub b: i32,
+    pub c: i32,
+}
+
+fn range(profile: &Profile) -> Range {
+    let model = profile.color.model;
+    let pct = |v: f64| (v * 100.0).round() as i32;
+    let (a, b, c) =
+        profile
+            .color
+            .include
+            .first()
+            .map_or((0, 0, 0), |e| match e.tolerances(model, ShadePreset::Normal) {
+                Tolerances::Oklch { l, c, h } => (pct(l), pct(c), h.round() as i32),
+                Tolerances::Hsv { h, s, v } => (h.round() as i32, pct(s), pct(v)),
+                Tolerances::Rgb { t } => (t.round() as i32, 0, 0),
+            });
+    Range {
+        model: index_of(&MODELS, &model).max(0),
+        a,
+        b,
+        c,
+    }
+}
+
+/// The profile with the window's COLOR RANGE edits: a new model, or the main color's changed
+/// tolerances (only those that changed, so the others keep their exact values).
+fn edit_range(p: &mut Profile, r: &Range, before: &Range) {
+    if r.model != before.model {
+        if let Some(model) = pick(&MODELS, r.model) {
+            p.color.model = model;
+        }
+        return;
+    }
+    let model = p.color.model;
+    let Some(e) = p.color.include.first_mut() else { return };
+    let (a, b, c) = (r.a != before.a, r.b != before.b, r.c != before.c);
+    let pct = |v: i32| f64::from(v.max(0)) / 100.0;
+    match model {
+        ColorModel::Oklch => {
+            if a {
+                e.tol_l = Some(pct(r.a));
+            }
+            if b {
+                e.tol_c = Some(pct(r.b));
+            }
+            if c {
+                e.tol_h = Some(f64::from(r.c.max(0)));
+            }
+        }
+        ColorModel::Hsv => {
+            if a {
+                e.tol_h = Some(f64::from(r.a.max(0)));
+            }
+            if b {
+                e.tol_s = Some(pct(r.b));
+            }
+            if c {
+                e.tol_v = Some(pct(r.c));
+            }
+        }
+        ColorModel::Rgb => {
+            if a {
+                e.tol_rgb = u8::try_from(r.a.clamp(0, 255)).ok();
+            }
+        }
+    }
+}
 
 /// More options → DETECTION (§12.4).
 #[derive(Clone, PartialEq, Debug, Default)]
@@ -171,6 +250,7 @@ pub struct Fields {
     /// Ask, keep running, quit.
     pub closing: i32,
     pub detection: Detection,
+    pub range: Range,
 }
 
 /// The hero card (§12.3, §12.7).
@@ -228,6 +308,7 @@ pub fn fields(profile: &Profile, settings: &Settings) -> Fields {
         only_in_window: profile.guards.only_in_window,
         closing: index_of(&CLOSING, &settings.close_policy).max(0),
         detection: detection(profile),
+        range: range(profile),
     }
 }
 
@@ -259,6 +340,7 @@ pub fn edited(profile: &Profile, settings: &Settings, f: &Fields) -> (Profile, S
     }
     p.action.hold_ms = f.hold_ms.clamp(0, 200) as u32;
     edit_detection(&mut p, &f.detection, &before.detection);
+    edit_range(&mut p, &f.range, &before.range);
     p.guards.only_in_window = f.only_in_window;
     s.hotkeys.mode = if f.mode == 1 {
         HotkeyMode::Hold
@@ -364,6 +446,35 @@ pub fn apply(ui: &AppWindow, f: &Fields, hero: &Hero) {
     form.set_backend_index(d.backend);
     form.set_offset_x(d.offset_x);
     form.set_offset_y(d.offset_y);
+    let r = &f.range;
+    form.set_model_index(r.model);
+    form.set_tol_a(r.a);
+    form.set_tol_b(r.b);
+    form.set_tol_c(r.c);
+    let (labels, units, max, shown_b) = match pick(&MODELS, r.model).unwrap_or_default() {
+        ColorModel::Oklch => (
+            ["Lightness ±", "Colorfulness ±", "Hue ±"],
+            ["", "degrees"],
+            [100, 50, 180],
+            true,
+        ),
+        ColorModel::Hsv => (
+            ["Hue ±", "Saturation ±", "Value ±"],
+            ["degrees", ""],
+            [180, 100, 100],
+            true,
+        ),
+        ColorModel::Rgb => (["Each channel ±", "", ""], ["of 255", ""], [255, 0, 0], false),
+    };
+    form.set_tol_a_label(labels[0].into());
+    form.set_tol_b_label(labels[1].into());
+    form.set_tol_c_label(labels[2].into());
+    form.set_tol_a_unit(units[0].into());
+    form.set_tol_c_unit(units[1].into());
+    form.set_tol_a_max(max[0]);
+    form.set_tol_b_max(max[1]);
+    form.set_tol_c_max(max[2]);
+    form.set_tol_b_shown(shown_b);
 
     let ui_state = ui.global::<Ui>();
     ui_state.set_button_text(hero.button.as_str().into());
@@ -396,6 +507,12 @@ pub fn read(ui: &AppWindow, shown: &Fields) -> Fields {
             offset_x: form.get_offset_x(),
             offset_y: form.get_offset_y(),
             ..shown.detection.clone()
+        },
+        range: Range {
+            model: form.get_model_index(),
+            a: form.get_tol_a(),
+            b: form.get_tol_b(),
+            c: form.get_tol_c(),
         },
         ..shown.clone()
     }
@@ -451,7 +568,17 @@ mod tests {
         f.only_in_window = false;
         f.closing = 2;
         let (p2, s2) = edited(&p, &s, &f);
-        assert_eq!(fields(&p2, &s2), f);
+        // Loose shades show Loose's tolerances in COLOR RANGE.
+        let want = Fields {
+            range: Range {
+                model: 0,
+                a: 16,
+                b: 8,
+                c: 12,
+            },
+            ..f.clone()
+        };
+        assert_eq!(fields(&p2, &s2), want);
         assert_eq!(
             p2.color.include[0],
             ShadePreset::Loose.entry(ColorModel::Oklch, Rgb::from_u32(0x3B_D1_6F))
@@ -503,6 +630,27 @@ mod tests {
         assert_eq!(p3.trigger.min_fire_interval_ms, p.trigger.min_fire_interval_ms);
         assert_eq!(thousands(500), "500");
         assert_eq!(thousands(10_000), "10,000");
+    }
+
+    #[test]
+    fn color_range_edits_one_tolerance_at_a_time() {
+        let s = Settings::default();
+        let mut p = green();
+        p.color.include[0].tol_l = Some(0.165);
+        let mut f = fields(&p, &s);
+        assert_eq!((f.range.a, f.range.b, f.range.c), (17, 5, 7));
+        // Hue only: lightness keeps its exact 0.165.
+        f.range.c = 20;
+        let (p2, _) = edited(&p, &s, &f);
+        let e = &p2.color.include[0];
+        assert_eq!((e.tol_l, e.tol_h), (Some(0.165), Some(20.0)));
+        assert_eq!(fields(&p2, &s).shades, -1);
+        // Another model shows its own tolerances (the entry keeps every model's fields).
+        let mut f = fields(&p2, &s);
+        f.range.model = 2;
+        let (p3, _) = edited(&p2, &s, &f);
+        assert_eq!(p3.color.model, ColorModel::Rgb);
+        assert_eq!(fields(&p3, &s).range.a, 12);
     }
 
     #[test]

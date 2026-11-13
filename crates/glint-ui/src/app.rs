@@ -15,6 +15,8 @@ use slint::ComponentHandle;
 use glint_core::profile::{ActionKind, KeySpec};
 
 use crate::bind::{self, Fields};
+
+mod range;
 use crate::client::{FromEngine, Link};
 use crate::keys::{self, Resolver};
 
@@ -50,6 +52,8 @@ pub struct App {
     /// Tells the engine where this window is, once a second when it moved (§8 `ui_geometry`).
     geometry: slint::Timer,
     last_geometry: Option<(i32, i32, u32, u32)>,
+    /// More options → COLOR RANGE.
+    range: range::RangeState,
 }
 
 thread_local! {
@@ -90,6 +94,7 @@ impl App {
             hidden: slint::Timer::default(),
             geometry: slint::Timer::default(),
             last_geometry: None,
+            range: range::RangeState::default(),
         };
         APP.with(|slot| *slot.borrow_mut() = Some(app));
         with(|app| {
@@ -147,6 +152,7 @@ impl App {
             format!("now: {}", self.state.backend)
         };
         form.set_backend_now(now.into());
+        self.show_range();
         let banner = if self.xwayland {
             "This is XWayland: only X11 apps can be watched and clicked."
         } else {
@@ -243,7 +249,12 @@ impl App {
                 }
                 self.state = s;
             }
-            Event::Profile { profile } => self.profile = *profile,
+            Event::Profile { profile } => {
+                self.profile = *profile;
+                self.classify_range();
+            }
+            Event::Classified { verdicts } => self.classified(&verdicts),
+            Event::Palette { entries } => self.recorded(&entries),
             Event::Settings { settings } => self.settings = *settings,
             Event::Live { rgb, verdict } if self.watching() => {
                 if self.ui.upgrade().is_some_and(|ui| ui.window().is_minimized()) {
@@ -254,6 +265,8 @@ impl App {
             }
             Event::Error { message, .. } => {
                 self.set_picking(false);
+                self.set_recording(false);
+                self.range.sample_to_check = false;
                 self.toast(&message, Tone::Error);
                 // What the window sent was refused: show what the engine really has.
                 self.link.send(Request::GetProfile { name: None });
@@ -274,6 +287,10 @@ impl App {
             Event::WindowPicked { title, .. } => {
                 self.set_picking(false);
                 self.toast(&format!("Watching for {title} from now on."), Tone::Neutral);
+            }
+            Event::ColorSampled { rgb, .. } if self.range.sample_to_check => {
+                self.range.sample_to_check = false;
+                self.set_check(rgb);
             }
             Event::ColorSampled { rgb, .. } => {
                 self.set_color(rgb);
@@ -396,6 +413,7 @@ impl App {
                 profile: Box::new(profile.clone()),
             });
             self.profile = profile;
+            self.classify_range();
         }
         if settings != self.settings {
             self.link.send(Request::SetSettings {
@@ -428,11 +446,7 @@ impl App {
             name: name.to_owned(),
         });
         self.choosing_key = false;
-        self.link.send(Request::SetProfile {
-            profile: Box::new(profile.clone()),
-        });
-        self.profile = profile;
-        self.refresh();
+        self.send_profile(profile);
     }
 
     /// A key pressed in the *Start/stop key* picker.
@@ -523,11 +537,7 @@ impl App {
             Some(first) => *first = entry,
             None => profile.color.include.push(entry),
         }
-        self.link.send(Request::SetProfile {
-            profile: Box::new(profile.clone()),
-        });
-        self.profile = profile;
-        self.refresh();
+        self.send_profile(profile);
     }
 }
 

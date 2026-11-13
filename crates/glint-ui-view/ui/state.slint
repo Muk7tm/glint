@@ -3,6 +3,7 @@
 // the .slint side only shows these values and reports what the user did.
 
 import { Tone } from "pulse/components.slint";
+import { Cell, Chip } from "widgets.slint";
 
 export global Ui {
     in property <string> version;
@@ -85,6 +86,34 @@ export global Form {
     in-out property <int> offset-x;
     in-out property <int> offset-y;
 
+    // More options → COLOR RANGE: the model, the main color's three tolerances (labels and
+    // limits per model; RGB has one), the strips, the lists, the color to check, and recording.
+    in-out property <int> model-index;
+    in-out property <int> tol-a;
+    in-out property <int> tol-b;
+    in-out property <int> tol-c;
+    in property <string> tol-a-label: "Lightness ±";
+    in property <string> tol-b-label: "Colorfulness ±";
+    in property <string> tol-c-label: "Hue ±";
+    in property <string> tol-a-unit;
+    in property <string> tol-c-unit: "degrees";
+    in property <int> tol-a-max: 100;
+    in property <int> tol-b-max: 50;
+    in property <int> tol-c-max: 180;
+    in property <bool> tol-b-shown: true;
+    in property <[Cell]> shade-strip;
+    in property <[Cell]> hue-strip;
+    in property <[Chip]> also-match;
+    in property <[Chip]> never-match;
+    in-out property <string> check-hex;
+    in property <bool> check-known;
+    in property <color> check-color;
+    in property <string> check-text;
+    in property <Tone> check-tone: Tone.neutral;
+    in property <bool> recording;
+    in property <[Chip]> recorded;
+    in property <string> sample-key: "F6";
+
     // More options → ENGINE
     in-out property <int> closing-index;
 }
@@ -102,4 +131,13 @@ export global Actions {
     callback pick-window();
     callback more-toggled();
     callback close-window();
+    // COLOR RANGE
+    callback check-hex(string);
+    callback add-also();
+    callback add-never();
+    callback remove-also(int);
+    callback remove-never(int);
+    callback record();
+    callback choose-recorded(int);
+    callback sample-for-check();
 }
