@@ -210,7 +210,7 @@ The hot thread talks to the rest of the engine through three lock-free channels:
 **Engine startup (`glintd`)**
 
 1. Parse arguments; refuse to start without `DISPLAY`.
-2. Take the single-instance lock `$XDG_RUNTIME_DIR/glint/glintd-<display>.lock` with a non-blocking `flock`. If it's taken, exit with code 3 ("already running"); the UI then connects to the running engine.
+2. Take the single-instance lock `$XDG_RUNTIME_DIR/glint/glintd-<display>.lock` with a non-blocking `flock`, keyed by the display number so `:0`, `:0.0` and `unix:0` share one lock (ADR 0009). If it's taken, exit with code 3 ("already running"); the UI then connects to the running engine.
 3. Open X connections A–D and probe extensions and versions into a capability set. Missing XTest is fatal with a clear message; everything else degrades gracefully.
 4. **Defensive release:** send XTest releases for mouse buttons 1, 2, 3, 8, 9, every modifier key, and the key of every profile (ADR 0009). A release for something not held is a harmless no-op, and this un-sticks anything a killed previous engine left pressed.
 5. Load settings and the active profile (migrating older schemas), and compile the color lookup table.

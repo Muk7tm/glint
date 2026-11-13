@@ -399,3 +399,62 @@ fn release_all_works_without_an_engine() {
     let none = ctl(&nowhere, &x.display().to_string(), &["status"]).unwrap_err();
     assert!(matches!(none, glint_ctl::CtlError::NoEngine(_)), "{none}");
 }
+
+#[test]
+fn profiles_and_settings_survive_a_restart() {
+    let Some(mut engine) = Engine::start() else { return };
+    let mut c = engine.client();
+    let mut p = green_profile();
+    p.name = "Sober — green flash".into();
+    p.action.hold_ms = 25;
+    assert!(matches!(
+        c.call(
+            Request::SetProfile {
+                profile: Box::new(p.clone())
+            },
+            WAIT
+        )
+        .unwrap(),
+        Event::ProfileApplied { .. }
+    ));
+    let settings = glint_core::Settings {
+        close_policy: glint_core::settings::ClosePolicy::KeepRunning,
+        ..glint_core::Settings::default()
+    };
+    assert!(matches!(
+        c.call(
+            Request::SetSettings {
+                settings: Box::new(settings)
+            },
+            WAIT
+        )
+        .unwrap(),
+        Event::SettingsApplied
+    ));
+    assert!(matches!(c.call(Request::Quit, WAIT).unwrap(), Event::Bye));
+    assert!(engine.wait().success());
+
+    let config = engine.scratch.0.join("config/glint");
+    assert!(config.join("profiles/sober-green-flash.toml").exists());
+    let saved = std::fs::read_to_string(config.join("settings.toml")).unwrap();
+    assert!(
+        saved.contains("active_profile = \"Sober — green flash\"") && saved.contains("keep-running"),
+        "{saved}"
+    );
+
+    engine.child = spawn(&engine.x, &engine.scratch);
+    let deadline = Instant::now() + WAIT;
+    while !engine.socket.exists() {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let mut c = engine.client();
+    let Event::State(s) = c.call(Request::GetState, WAIT).unwrap() else {
+        panic!()
+    };
+    assert_eq!(s.profile, "Sober — green flash");
+    let Event::Profile { profile } = c.call(Request::GetProfile { name: None }, WAIT).unwrap() else {
+        panic!()
+    };
+    assert_eq!(*profile, p);
+}

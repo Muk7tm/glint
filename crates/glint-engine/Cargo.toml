@@ -20,7 +20,7 @@ glint-ipc.workspace = true
 glint-x11.workspace = true
 rayon.workspace = true
 rtrb.workspace = true
-rustix = { workspace = true, features = ["net", "process"] }
+rustix = { workspace = true, features = ["fs", "net", "process"] }
 serde_json.workspace = true
 signal-hook.workspace = true
 thiserror.workspace = true

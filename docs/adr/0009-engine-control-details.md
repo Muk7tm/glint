@@ -1,8 +1,8 @@
-# 0009. Engine control: armed and gate bits, monitor fallback, releasing everything, UI disconnects
+# 0009. Engine control: armed and gate bits, the display lock, monitor fallback, releasing everything, UI disconnects
 
 - **Status:** Accepted
 - **Date:** 2026-11-13
-- **Plan sections:** §4.2, §4.3, §5.1, §10
+- **Plan sections:** §4.2, §4.3, §4.4, §5.1, §10
 
 ## Context
 
@@ -64,5 +64,6 @@ gap in the protocol.
     - `glint-ctl` against it;
     - `release-all` with no engine, releasing a button another process left pressed;
   - `glint-x11`: the injector's releases.
-- The single-instance flock keyed by the canonical display (C6) comes with the settings store (Phase 2, next
-  item). Until then a live socket refuses a second engine (exit code 3).
+- **C6, the single-instance lock.** A non-blocking `flock` on `glintd-<N>.lock` in the socket directory, held for
+  the engine's lifetime and keyed by the canonical display number. So `:0`, `:0.0` and `unix:0` share one lock
+  (`lock.rs`, tested with every spelling), and a second engine exits with code 3.

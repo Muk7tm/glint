@@ -105,13 +105,15 @@ pub enum StartError {
     Io(#[from] std::io::Error),
     #[error("the socket directory {0} belongs to someone else")]
     ForeignSocketDir(String),
+    #[error(transparent)]
+    Lock(#[from] crate::lock::LockError),
 }
 
 impl StartError {
     /// `glintd`'s exit code: 3 means "already running" (§4.3), 2 a missing or remote display.
     pub fn exit_code(&self) -> u8 {
         match self {
-            Self::AlreadyRunning(_) => 3,
+            Self::AlreadyRunning(_) | Self::Lock(crate::lock::LockError::Held(_)) => 3,
             Self::Display(_) => 2,
             _ => 1,
         }
@@ -135,14 +137,17 @@ pub fn run(options: Options) -> Result<(), StartError> {
     use glint_x11::wire::RawConn;
     use glint_x11::{caps, monitors};
 
-    use crate::controller::{Command, Controller, compile, release_keycodes, spawn_listener};
+    use crate::controller::{Command, Controller, compile, release_keycodes, spawn_listener, watched_spot};
     use crate::hot::HotHandle;
+    use crate::lock::InstanceLock;
+    use crate::store::{self, Store};
     use crate::telemetry::{self, Stats};
 
     // 1. The display; remote displays are refused.
     let display = LocalDisplay::from_env()?;
-    // 2. One engine per display. The socket check below stands in until the lock (item 6).
+    // 2. One engine per display: the lock is held until the process ends (C6, §4.4).
     let socket = prepare_socket(display)?;
+    let _lock = InstanceLock::acquire(&glint_ipc::socket_dir(), display)?;
 
     // 3. X connections A–D and the capability probe; missing XTEST is fatal.
     let c = conn::open(display)?;
@@ -154,10 +159,15 @@ pub fn run(options: Options) -> Result<(), StartError> {
     let monitors = monitors::list(&c, screen.root, (screen.width, screen.height), caps.randr)?;
     let compositor = compositor_running(&c, display.screen);
 
-    // 5. Settings and profiles (the store comes with item 6).
-    let settings = Settings::default();
+    // 5. Settings and profiles from disk, migrating older schemas (§11).
+    let mut store = Store::new(store::config_dir());
+    let loaded = store.load();
+    for problem in &loaded.problems {
+        eprintln!("glintd: {problem}");
+    }
+    let settings: Settings = loaded.settings;
     let active = settings.active_profile.clone();
-    let profiles = BTreeMap::from([(active.clone(), Profile::new(active.clone()))]);
+    let mut profiles: BTreeMap<String, Profile> = loaded.profiles;
 
     // 4. The defensive release: anything a killed engine left pressed (C10).
     let keycodes = release_keycodes(profiles.values(), &keymap);
@@ -178,9 +188,22 @@ pub fn run(options: Options) -> Result<(), StartError> {
         .thread_name(|i| format!("glintd-lut-{i}"))
         .build()
         .map_err(|e| std::io::Error::other(e.to_string()))?;
-    let profile = &profiles[&active];
-    let lut = Arc::new(pool.install(|| Lut::build(&profile.rules())));
-    let compiled = compile(profile, &keymap, Arc::clone(&lut), (0, 0))?;
+    let profile = profiles
+        .get(&active)
+        .cloned()
+        .unwrap_or_else(|| Profile::new(active.clone()));
+    let mut lut = Arc::new(pool.install(|| Lut::build(&profile.rules())));
+    let compiled = match compile(&profile, &keymap, Arc::clone(&lut), watched_spot(&monitors, &profile)) {
+        Ok(c) => c,
+        Err(e) => {
+            // A profile that can't run here (a modifier this keyboard lacks): start without it.
+            eprintln!("glintd: profile {active:?}: {e}; starting without it");
+            let blank = Profile::new(active.clone());
+            profiles.insert(active.clone(), blank.clone());
+            lut = Arc::new(pool.install(|| Lut::build(&blank.rules())));
+            compile(&blank, &keymap, Arc::clone(&lut), (0, 0))?
+        }
+    };
 
     // 6. The socket, then the hot, telemetry, signal and IPC threads.
     let listener = std::os::unix::net::UnixListener::bind(&socket)?;
@@ -209,7 +232,7 @@ pub fn run(options: Options) -> Result<(), StartError> {
 
     let mut controller = Controller::new(
         display, caps, compositor, keymap, monitors, hot, preview, stats, emergency, settings, profiles, active, lut,
-        receiver, pool,
+        receiver, pool, store,
     );
     // 8. Ready and stopped; watching starts only when asked.
     if options.start_on_launch

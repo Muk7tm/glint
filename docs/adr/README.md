@@ -13,7 +13,7 @@ plan also updates the affected plan section in the same commit.
 | [0006](0006-sample-pattern-details.md) | Sample patterns: k_stay = ⌈k_enter / 2⌉, plus and custom fields, the anchor pixel | Accepted | §5.1, §5.3, Appendix B |
 | [0007](0007-trigger-restarts-gaps-and-observed-absence.md) | Trigger: every restart latches, the hold sets a minimum gap, only watched absence counts, possible misses are reported | Accepted (point 5 revised) | §1, §5.5, §7, §16, §17, A.1–A.2 |
 | [0008](0008-profile-and-settings-format.md) | Profile and settings files: defaults, strictness, limits and hotkey syntax | Accepted | §11, Appendix B |
-| [0009](0009-engine-control-details.md) | Engine control: armed and gate bits, monitor fallback, releasing everything, UI disconnects | Accepted | §4.2, §4.3, §5.1, §10 |
+| [0009](0009-engine-control-details.md) | Engine control: armed and gate bits, the display lock, monitor fallback, releasing everything, UI disconnects | Accepted | §4.2, §4.3, §4.4, §5.1, §10 |
 
 ## Template
 

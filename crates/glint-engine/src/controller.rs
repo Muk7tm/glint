@@ -30,6 +30,7 @@ use glint_x11::monitors::{self, Monitor};
 
 use crate::hot::{CompiledProfile, HotHandle, Preview, StopReason};
 use crate::lifecycle::Emergency;
+use crate::store::Store;
 use crate::telemetry::{Notice, Stats};
 
 /// How often the controller sends telemetry and live updates and tidies up.
@@ -92,6 +93,21 @@ pub fn compile(
         action,
         period: profile.sampling.speed.period(),
     })
+}
+
+/// The watched spot in root coordinates (the monitor's anchor pixel plus the offset), where
+/// *Click at: Watched spot* moves the pointer.
+pub fn watched_spot(monitors: &[Monitor], profile: &Profile) -> (i16, i16) {
+    match monitors::pick(monitors, &profile.target.monitor) {
+        Some(m) => {
+            let (x, y) = m.rect.anchor();
+            (
+                (x + profile.target.offset.x) as i16,
+                (y + profile.target.offset.y) as i16,
+            )
+        }
+        None => (0, 0),
+    }
 }
 
 /// Every keycode the given profiles' actions could hold, plus every modifier key, for the
@@ -239,6 +255,7 @@ pub struct Controller {
     pub lut: Arc<Lut>,
     pub commands: Receiver<Command>,
     pub pool: rayon::ThreadPool,
+    pub store: Store,
     revision: u64,
     started: bool,
     last_stop: Option<String>,
@@ -267,6 +284,7 @@ impl Controller {
         lut: Arc<Lut>,
         commands: Receiver<Command>,
         pool: rayon::ThreadPool,
+        store: Store,
     ) -> Self {
         Self {
             display,
@@ -284,6 +302,7 @@ impl Controller {
             lut,
             commands,
             pool,
+            store,
             revision: 1,
             started: false,
             last_stop: None,
@@ -311,6 +330,9 @@ impl Controller {
         }
         self.broadcast(Event::Bye);
         self.clients.clear();
+        for problem in self.store.flush_all() {
+            eprintln!("glintd: saving {problem}");
+        }
     }
 
     /// Starts watching with the active profile, if it can (§4.3 "never on its own": callers are
@@ -412,20 +434,6 @@ impl Controller {
         Ok((rect.x as i16, rect.y as i16))
     }
 
-    /// The watched spot in root coordinates, for *Click at: Watched spot*.
-    fn watched_spot(&self, profile: &Profile) -> (i16, i16) {
-        match monitors::pick(&self.monitors, &profile.target.monitor) {
-            Some(m) => {
-                let (x, y) = m.rect.anchor();
-                (
-                    (x + profile.target.offset.x) as i16,
-                    (y + profile.target.offset.y) as i16,
-                )
-            }
-            None => (0, 0),
-        }
-    }
-
     /// Validates, compiles and publishes a profile; the hot thread restarts watching with it,
     /// so a live edit can't click (§7 #8).
     pub fn apply_profile(&mut self, profile: Profile) -> Result<u64, Rejected> {
@@ -439,15 +447,26 @@ impl Controller {
         }
         let rules = profile.rules();
         let lut = Arc::new(self.pool.install(|| Lut::build(&rules)));
-        let compiled =
-            compile(&profile, &self.keymap, Arc::clone(&lut), self.watched_spot(&profile)).map_err(|e| Rejected {
-                message: e.to_string(),
-                field: None,
-            })?;
+        let compiled = compile(
+            &profile,
+            &self.keymap,
+            Arc::clone(&lut),
+            watched_spot(&self.monitors, &profile),
+        )
+        .map_err(|e| Rejected {
+            message: e.to_string(),
+            field: None,
+        })?;
         let new_origin = self.origin(&profile);
         self.hot.set_profile(compiled);
         self.lut = lut;
         self.revision += 1;
+        let now = Instant::now();
+        self.store.save_profile(&profile, now);
+        if self.settings.active_profile != profile.name {
+            self.settings.active_profile = profile.name.clone();
+            self.store.save_settings(&self.settings, now);
+        }
         self.active = profile.name.clone();
         self.profiles.insert(profile.name.clone(), profile);
         self.emergency
@@ -585,7 +604,11 @@ impl Controller {
                 match report.errors.into_iter().chain(keys.errors).next() {
                     Some(issue) => Event::error("invalid", issue.message, Some(issue.field)),
                     None => {
-                        self.settings = *settings;
+                        let mut settings = *settings;
+                        // The active profile follows use_profile and set_profile, not this request.
+                        settings.active_profile = self.active.clone();
+                        self.store.save_settings(&settings, Instant::now());
+                        self.settings = settings;
                         Event::SettingsApplied
                     }
                 }
@@ -680,6 +703,9 @@ impl Controller {
     fn tick(&mut self) {
         self.hot.free_retired();
         let now = Instant::now();
+        for problem in self.store.flush_due(now) {
+            eprintln!("glintd: saving {problem}");
+        }
         if let Some((count, latency_us)) = self.fired
             && now.duration_since(self.last_fired) >= FIRED_EVERY
         {
