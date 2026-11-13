@@ -88,3 +88,47 @@ fn get_image_reads_a_window_through_the_root() {
     let seq = a.send(&wire::get_image(root, 110, 60, 1, 1)).unwrap();
     assert_eq!(a.wait_reply(seq, &mut data).unwrap(), 4);
 }
+
+#[test]
+fn the_screen_backend_sees_a_color_appear_at_the_monitor_center() {
+    use glint_core::color::{ColorModel, ColorRules, CompiledRules, Lut, ShadePreset};
+    use glint_core::pattern::{PatternKind, SamplePattern};
+    use glint_core::{Rgb, Verdict};
+
+    use crate::capture::Capture;
+    use crate::capture::getimage::GetImageCapture;
+    use crate::monitors;
+
+    let Some(x) = xvfb() else { return };
+    let c = conn::open(x.display()).unwrap();
+    let root = c.setup().roots[0].root;
+    let caps = caps::probe(&c).unwrap();
+    let list = monitors::list(&c, root, (1280, 720), caps.randr).unwrap();
+    let monitor = monitors::pick(&list, "primary").unwrap();
+    assert_eq!(
+        monitor.rect,
+        glint_core::pattern::Rect::new(0, 0, 1280, 720),
+        "{list:?}"
+    );
+
+    let pattern = SamplePattern::from_profile(PatternKind::Square3, None, &[], None, None).unwrap();
+    let rect = pattern.place(monitor.rect, (0, 0)).unwrap().rect;
+    let rules = ColorRules {
+        include: vec![ShadePreset::Normal.entry(ColorModel::Oklch, Rgb::new(0x3B, 0xD1, 0x6F))],
+        ..ColorRules::default()
+    };
+    let lut = Lut::build(&CompiledRules::new(&rules));
+    let (a, setup) = RawConn::connect(x.display()).unwrap();
+    let mut capture = GetImageCapture::new(a, root, PixelFormat::root(&setup, 0).unwrap());
+    let mut px = [0u32; 9];
+
+    capture.grab(rect, &mut px).unwrap();
+    assert_eq!(pattern.verdict(&lut, &px), Verdict::Absent);
+    let win = colored_window(&c, root, 600, 330, 80, 60, 0x3B_D1_6F); // covers (640, 360)
+    capture.grab(rect, &mut px).unwrap();
+    assert_eq!(pattern.verdict(&lut, &px), Verdict::Enter);
+    c.unmap_window(win).unwrap();
+    c.sync().unwrap();
+    capture.grab(rect, &mut px).unwrap();
+    assert_eq!(pattern.verdict(&lut, &px), Verdict::Absent);
+}
