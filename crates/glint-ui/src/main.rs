@@ -9,7 +9,7 @@ mod client;
 mod keys;
 mod spawn;
 
-use glint_ui_view::{Actions, AppWindow, Tone};
+use glint_ui_view::{Actions, AppWindow};
 use slint::ComponentHandle;
 
 use crate::app::App;
@@ -47,14 +47,7 @@ fn main() -> Result<(), slint::PlatformError> {
     actions.on_pick_color(|| app::with(App::pick_color));
     actions.on_cancel_pick(|| app::with(App::cancel_pick));
     actions.on_hex_entered(|text| app::with(|a| a.hex_entered(&text)));
-    actions.on_pick_window(|| {
-        app::with(|a| {
-            a.toast(
-                "Picking a window comes with window mode, in a later version.",
-                Tone::Neutral,
-            )
-        });
-    });
+    actions.on_pick_window(|| app::with(App::pick_window));
 
     // The window manager's close button and Quit Glint follow the close policy (§12.5).
     ui.window().on_close_requested(|| {

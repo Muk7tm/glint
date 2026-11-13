@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use glint_core::settings::ClosePolicy;
 use glint_core::{Profile, Rgb, Settings, Verdict};
-use glint_ipc::{Event, Phase, Request, StateSnapshot};
+use glint_ipc::{Event, Phase, Request, StateSnapshot, WindowState};
 use glint_ui_view::{AppWindow, Form, Tone, Ui};
 use slint::ComponentHandle;
 
@@ -94,6 +94,10 @@ impl App {
         if self.choosing_key {
             self.shown.click = bind::KEYBOARD_KEY;
         }
+        // The engine knows the picked window's title and whether it's open.
+        if let Some(w) = &self.state.window {
+            self.shown.window_name.clone_from(&w.title);
+        }
         let mut hero = bind::hero(&self.shown, self.state.started, self.state.cannot_start.as_deref());
         if !self.connected {
             // Without an engine, the hero button starts one (§4.3).
@@ -111,6 +115,16 @@ impl App {
             ""
         };
         ui.global::<Form>().set_key_hint(hint.into());
+        let (text, tone) = match self.state.window.as_ref().map(|w| w.state) {
+            None => ("", Tone::Neutral),
+            Some(WindowState::InFront) => ("In front", Tone::Success),
+            Some(WindowState::NotInFront) => ("Not in front", Tone::Neutral),
+            Some(WindowState::Hidden) => ("Hidden", Tone::Warning),
+            Some(WindowState::Closed) => ("Closed — waiting for it to open", Tone::Warning),
+        };
+        let form = ui.global::<Form>();
+        form.set_window_state(text.into());
+        form.set_window_tone(tone);
         ui.global::<Form>().set_editable(self.connected);
         ui.global::<Ui>().set_connected(self.connected);
         if !self.watching() {
@@ -200,13 +214,21 @@ impl App {
                 self.link.send(Request::GetSettings);
             }
             Event::Warning { message, .. } => self.toast(&message, Tone::Warning),
-            Event::PickStarted => self.set_picking(true),
+            Event::PickStarted => {
+                if self.ui.upgrade().is_some_and(|ui| !ui.global::<Form>().get_picking()) {
+                    self.set_picking(true);
+                }
+            }
             Event::Magnifier { size, pixels, .. } => self.magnifier(size, &pixels),
             Event::ColorPicked { rgb, .. } => {
                 self.set_picking(false);
                 self.set_color(rgb);
             }
             Event::PickCancelled => self.set_picking(false),
+            Event::WindowPicked { title, .. } => {
+                self.set_picking(false);
+                self.toast(&format!("Watching for {title} from now on."), Tone::Neutral);
+            }
             Event::ColorSampled { rgb, .. } => {
                 self.set_color(rgb);
                 self.toast(&format!("Sampled {rgb} at the watched spot."), Tone::Neutral);
@@ -393,11 +415,21 @@ impl App {
     fn set_picking(&self, on: bool) {
         if let Some(ui) = self.ui.upgrade() {
             let form = ui.global::<Form>();
-            form.set_picking_color(on);
-            if !on {
-                form.set_magnifier_ready(false);
+            if on {
+                return form.set_picking_color(true);
             }
+            form.set_picking_color(false);
+            form.set_picking(false);
+            form.set_magnifier_ready(false);
         }
+    }
+
+    /// *Pick window*: the engine grabs the pointer; the next click names the game window (§8).
+    pub fn pick_window(&mut self) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.global::<Form>().set_picking(true);
+        }
+        self.link.send(Request::PickWindow);
     }
 
     fn magnifier(&self, size: u16, pixels: &[Rgb]) {

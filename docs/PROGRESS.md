@@ -5,8 +5,7 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 ## Status
 
-- **Active phase:** none. Phase 4 (UI in Pulse's style) is complete, and Phase 5 waits for the owner's
-  go-ahead. Glint copies Pulse's Slint files and never changes Pulse (ADR 0012). Open question for the owner:
+- **Active phase:** Phase 5 (window mode and guards), started 2026-11-13. Phase 4 is complete. Glint copies Pulse's Slint files and never changes Pulse (ADR 0012). Open question for the owner:
   keep GPL-3.0-or-later, or switch to MIT under Slint's royalty-free license (AboutSlint + a badge).
   All 17 lab scenarios pass in CI (https://github.com/Muk7tm/glint/actions/runs/43426780742) and at full count
   locally (MEASUREMENTS.md §9).
@@ -76,7 +75,7 @@ listed in §13 (written as their content appears).
 
 ## Phase 5 — Window mode and guards (M)
 
-- [ ] Pick window, client lookup, identity by `WM_CLASS`, automatic re-acquiring.
+- [x] Pick window, client lookup, identity by `WM_CLASS`, automatic re-acquiring. *(glint-x11 `windows.rs`: the client carrying `WM_STATE`, its frame, class, title, PID, rectangle, the window list and the active window, tested on Xvfb. The engine's `Tracker` (`target.rs`) follows the picked window; `pick_window` uses the crosshair and refuses the desktop and Glint's own window. Checked on Xvfb with Openbox: picked, in front, closed ("waiting for it to open"), and re-acquired on reopening without starting.)*
 - [ ] Tracking through `StructureNotify`; epoch bump on move and resize.
 - [ ] *Only click in this window* (EWMH + fallback) with "In front" / "Not in front".
 - [ ] `window-buffer` backend + self-check; compositor detection; XWayland banner; stop on screen lock; UI-overlap warning.
