@@ -3,9 +3,15 @@
 //!
 //! A [`Canvas`] window covers the monitor, shows colors in a patch at its center, and records the
 //! clicks the engine sends into it. Each scenario drives a running engine through its socket and
-//! checks one click per appearance against what the canvas actually showed. Response time is from
-//! the moment the X server has drawn the color (a round trip after the drawing request) to the
-//! moment the engine's `ButtonPress` arrives on the canvas.
+//! checks one click per appearance against what the canvas actually showed.
+//!
+//! Response time runs from just before the drawing request is sent to the moment the engine's
+//! `ButtonPress` arrives on the canvas. The lab still follows each drawing request with a round
+//! trip, so it knows the server has drawn the color, but doesn't timestamp that moment: the engine
+//! answers in a few hundred microseconds, and its click sometimes reached the lab's event thread
+//! before the round trip's reply woke the drawing thread. Timing from the request can't put a
+//! click before its appearance; it overstates the response by the request's one-way trip to the
+//! server, about 10 µs.
 //!
 //! Phase 2 has `basic`, `near-miss` and `arm-while-present`; Phase 3 adds the rest of §16.
 #![forbid(unsafe_code)]
@@ -132,16 +138,18 @@ impl Canvas {
         })
     }
 
-    /// Fills the patch with `color` and returns when the server had drawn it.
+    /// Fills the patch with `color`, waits until the server has drawn it, and returns the moment
+    /// just before the drawing request went out.
     pub fn show(&self, color: u32) -> Result<Instant, LabError> {
         self.conn
             .change_gc(self.gc, &ChangeGCAux::new().foreground(color))
             .map_err(x)?;
+        let sent = Instant::now();
         self.conn
             .poly_fill_rectangle(self.win, self.gc, &[self.patch])
             .map_err(x)?;
         self.conn.sync().map_err(x)?;
-        Ok(Instant::now())
+        Ok(sent)
     }
 
     pub fn clear(&self) -> Result<Instant, LabError> {

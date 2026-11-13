@@ -239,8 +239,6 @@ fn accept(stream: UnixStream, client: ClientId, commands: &Sender<Command>) {
     let (Ok(mut writer), Ok(closer)) = (stream.try_clone(), stream.try_clone()) else {
         return;
     };
-    // A client that stops reading can hold a write up for at most this long, also at shutdown.
-    let _ = writer.set_write_timeout(Some(Duration::from_secs(1)));
     let (outbox, lines) = mpsc::sync_channel::<String>(OUTBOX);
     let writer = std::thread::Builder::new()
         .name("glintd-client-w".into())
@@ -405,11 +403,15 @@ impl Controller {
             }
         }
         self.broadcast(Event::Bye);
-        // Close every queue, then wait for its writer to deliver what's left.
-        for (_, client) in self.clients.drain() {
-            let Client { outbox, writer, .. } = client;
-            drop(outbox);
-            if let Some(w) = writer {
+        // Close every queue, then give the writers up to a second to deliver what's left (the
+        // final `bye`). A client that stopped reading can't hold the exit up longer than that.
+        let writers: Vec<_> = self.clients.drain().filter_map(|(_, c)| c.writer).collect();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        for w in writers {
+            while !w.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if w.is_finished() {
                 let _ = w.join();
             }
         }
@@ -861,7 +863,16 @@ impl Controller {
         {
             self.fired = None;
             self.last_fired = now;
-            self.broadcast(Event::Fired { count, latency_us });
+            // Only to clients that subscribed: one that never reads must not fill up with these.
+            let subscribed: Vec<ClientId> = self
+                .clients
+                .iter()
+                .filter(|(_, c)| c.telemetry_every.is_some() || c.live_every.is_some())
+                .map(|(id, _)| *id)
+                .collect();
+            for id in subscribed {
+                self.send(id, None, Event::Fired { count, latency_us });
+            }
         }
         let wants_telemetry = self
             .clients
