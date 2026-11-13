@@ -1743,7 +1743,10 @@ name = "glint-ui"
 version = "0.1.0"
 dependencies = [
  "glint-core",
+ "glint-ipc",
  "glint-ui-view",
+ "glint-x11",
+ "serde_json",
  "slint",
 ]
 

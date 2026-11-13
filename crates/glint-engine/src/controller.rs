@@ -797,6 +797,9 @@ impl Controller {
                     None => Event::error("no_profile", format!("There's no profile named {name:?}."), None),
                 }
             }
+            Request::GetSettings => Event::Settings {
+                settings: Box::new(self.settings.clone()),
+            },
             Request::UseProfile { name } => match self.profiles.get(&name).cloned() {
                 Some(p) => match self.apply_profile(p) {
                     Ok(_) => Event::State(self.state()),

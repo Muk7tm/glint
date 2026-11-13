@@ -93,10 +93,6 @@ pub fn fields(profile: &Profile, settings: &Settings) -> Fields {
     }
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "sends edits to the engine from Phase 4's item 3")
-)]
 /// `profile` and `settings` with the window's edits in `f`. A choice the window can't express
 /// (a range set by hand, an unchanged field) keeps what the profile had.
 pub fn edited(profile: &Profile, settings: &Settings, f: &Fields) -> (Profile, Settings) {

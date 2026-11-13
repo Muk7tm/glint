@@ -1,0 +1,223 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! The window's logic (PLAN §12). It keeps the engine's profile, settings and state, shows them,
+//! and turns what the user does into requests. All of it runs on the window's event loop; the
+//! engine's messages arrive there through [`deliver`].
+
+use std::cell::RefCell;
+use std::time::Duration;
+
+use glint_core::{Profile, Rgb, Settings, Verdict};
+use glint_ipc::{Event, Phase, Request, StateSnapshot};
+use glint_ui_view::{AppWindow, Form, Tone, Ui};
+use slint::ComponentHandle;
+
+use crate::bind::{self, Fields};
+use crate::client::{FromEngine, Link};
+
+/// How long a message stays in the hero card's message line.
+const TOAST: Duration = Duration::from_secs(5);
+
+pub struct App {
+    ui: slint::Weak<AppWindow>,
+    link: Link,
+    connected: bool,
+    /// The link is starting or reaching the engine.
+    starting: bool,
+    /// Why there's no engine, while there isn't one.
+    offline: String,
+    /// The active profile and the settings, as the engine has them (defaults until it says).
+    profile: Profile,
+    settings: Settings,
+    state: StateSnapshot,
+    shown: Fields,
+    toast: slint::Timer,
+}
+
+thread_local! {
+    static APP: RefCell<Option<App>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` on the app, if it has been installed on this thread.
+pub fn with(f: impl FnOnce(&mut App)) {
+    APP.with(|app| {
+        if let Some(app) = app.borrow_mut().as_mut() {
+            f(app);
+        }
+    });
+}
+
+/// Hands a message from the link's threads to the window's event loop.
+pub fn deliver(message: FromEngine) {
+    let _ = slint::invoke_from_event_loop(move || with(|app| app.on_engine(message)));
+}
+
+impl App {
+    /// Installs the app for `ui` on this (the event loop's) thread.
+    pub fn install(ui: &AppWindow, link: Link) {
+        let app = Self {
+            ui: ui.as_weak(),
+            link,
+            connected: false,
+            starting: true,
+            offline: "Starting Glint's engine…".into(),
+            profile: Profile::default(),
+            settings: Settings::default(),
+            state: StateSnapshot::default(),
+            shown: Fields::default(),
+            toast: slint::Timer::default(),
+        };
+        APP.with(|slot| *slot.borrow_mut() = Some(app));
+        with(Self::refresh);
+    }
+
+    /// Shows the profile, settings and state.
+    fn refresh(&mut self) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        self.shown = bind::fields(&self.profile, &self.settings);
+        let mut hero = bind::hero(&self.shown, self.state.started, self.state.cannot_start.as_deref());
+        if !self.connected {
+            // Without an engine, the hero button starts one (§4.3).
+            hero = bind::Hero {
+                button: "↻  Restart engine".into(),
+                enabled: !self.starting,
+                danger: false,
+                hint: self.offline.clone(),
+            };
+        }
+        bind::apply(&ui, &self.shown, &hero);
+        ui.global::<Form>().set_editable(self.connected);
+        ui.global::<Ui>().set_connected(self.connected);
+        if !self.watching() {
+            self.not_seeing(&ui);
+        }
+    }
+
+    fn watching(&self) -> bool {
+        self.connected && self.state.started && self.state.phase == Phase::Watching
+    }
+
+    fn not_seeing(&self, ui: &AppWindow) {
+        let form = ui.global::<Form>();
+        form.set_seeing_known(false);
+        form.set_seeing_text("Not watching".into());
+    }
+
+    /// Shows `text` in the hero card's message line for a few seconds.
+    pub fn toast(&mut self, text: &str, tone: Tone) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let state = ui.global::<Ui>();
+        state.set_toast(text.into());
+        state.set_toast_tone(tone);
+        let weak = self.ui.clone();
+        self.toast.start(slint::TimerMode::SingleShot, TOAST, move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.global::<Ui>().set_toast("".into());
+            }
+        });
+    }
+
+    fn on_engine(&mut self, message: FromEngine) {
+        match message {
+            FromEngine::Connected { .. } => {
+                self.connected = true;
+                self.starting = false;
+                for request in [
+                    Request::Subscribe {
+                        telemetry_hz: 0,
+                        live_hz: 10,
+                        trace: false,
+                    },
+                    Request::GetState,
+                    Request::GetProfile { name: None },
+                    Request::GetSettings,
+                ] {
+                    self.link.send(request);
+                }
+            }
+            FromEngine::Disconnected(why) => {
+                self.connected = false;
+                self.starting = false;
+                self.offline = why;
+                self.state = StateSnapshot::default();
+            }
+            FromEngine::Event(event) => self.on_event(*event),
+        }
+        self.refresh();
+    }
+
+    fn on_event(&mut self, event: Event) {
+        match event {
+            Event::State(s) => {
+                if s.last_stop.is_some() && s.last_stop != self.state.last_stop && !s.started {
+                    let why = s.last_stop.clone().unwrap_or_default();
+                    self.toast(&why, Tone::Warning);
+                }
+                if s.profile != self.state.profile && !s.profile.is_empty() {
+                    self.link.send(Request::GetProfile { name: None });
+                }
+                self.state = s;
+            }
+            Event::Profile { profile } => self.profile = *profile,
+            Event::Settings { settings } => self.settings = *settings,
+            Event::Live { rgb, verdict } if self.watching() => self.seeing(rgb, verdict),
+            Event::Error { message, .. } => {
+                self.toast(&message, Tone::Error);
+                // What the window sent was refused: show what the engine really has.
+                self.link.send(Request::GetProfile { name: None });
+                self.link.send(Request::GetSettings);
+            }
+            Event::Warning { message, .. } => self.toast(&message, Tone::Warning),
+            _ => {}
+        }
+    }
+
+    /// The *Seeing* row: the color at the watched spot right now and what it counts as.
+    fn seeing(&self, rgb: Rgb, verdict: Verdict) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let form = ui.global::<Form>();
+        form.set_seeing_known(true);
+        form.set_seeing_color(slint::Color::from_rgb_u8(rgb.r(), rgb.g(), rgb.b()));
+        let what = match verdict {
+            Verdict::Enter => "match",
+            Verdict::Present => "close match",
+            Verdict::Absent => "no match",
+        };
+        form.set_seeing_text(format!("{rgb} · {what}").into());
+    }
+
+    /// The hero button: Start, Stop, or restarting a missing engine.
+    pub fn main_button(&mut self) {
+        if !self.connected {
+            self.starting = true;
+            self.offline = "Starting Glint's engine…".into();
+            self.link.restart();
+            self.refresh();
+            return;
+        }
+        self.link.send(if self.state.started {
+            Request::Stop
+        } else {
+            Request::Start
+        });
+    }
+
+    /// The user changed a setting: send what changed.
+    pub fn form_changed(&mut self) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let edits = bind::read(&ui, &self.shown);
+        let (profile, settings) = bind::edited(&self.profile, &self.settings, &edits);
+        if profile != self.profile {
+            self.link.send(Request::SetProfile {
+                profile: Box::new(profile.clone()),
+            });
+            self.profile = profile;
+        }
+        if settings != self.settings {
+            self.link.send(Request::SetSettings {
+                settings: Box::new(settings.clone()),
+            });
+            self.settings = settings;
+        }
+        self.refresh();
+    }
+}

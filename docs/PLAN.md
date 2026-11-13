@@ -547,6 +547,7 @@ Hotkeys live in the engine, so they keep working with the UI closed, which is wh
 | `use_profile` · `list_profiles` | `name` | `state` · `profiles` |
 | `get_profile` | `name` (optional: the active profile) | `profile {profile}` (added in Phase 2 for `glint-ctl profile show`/`export`, ADR 0009) |
 | `set_settings` | `settings` (close policy, hotkeys, engine options) | `settings_applied` |
+| `get_settings` | — | `settings {settings}` (added in Phase 4 for the UI's hotkey and close-policy rows) |
 | `start` · `stop` · `toggle` · `emergency_stop` · `release_all` | — | `state` |
 | `pick_window` | — | `pick_started`, then `window_picked` or `pick_cancelled` |
 | `pick_color` | — | `pick_started`, `magnifier` frames, then `color_picked` or `pick_cancelled` |

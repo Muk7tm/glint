@@ -81,6 +81,8 @@ pub enum Request {
     SetSettings {
         settings: Box<Settings>,
     },
+    /// The engine's settings (an addition to §10, for the UI's hotkey and close-policy rows).
+    GetSettings,
     Start,
     Stop,
     Toggle,
@@ -134,6 +136,9 @@ pub enum Event {
     },
     ProfileApplied {
         rev: u64,
+    },
+    Settings {
+        settings: Box<Settings>,
     },
     SettingsApplied,
     Warning {
@@ -491,6 +496,7 @@ mod tests {
             },
             Request::UseProfile { name: "Sober".into() },
             Request::EmergencyStop,
+            Request::GetSettings,
             Request::Classify {
                 colors: vec![Rgb::new(1, 2, 3)],
             },
