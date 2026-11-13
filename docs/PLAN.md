@@ -863,7 +863,7 @@ glint/
 ├── crates/
 │   ├── glint-core/               pure logic, no I/O, #![forbid(unsafe_code)]
 │   │   ├── src/color/            oklab.rs · hsv.rs · rule.rs · lut.rs
-│   │   ├── src/                  pattern.rs · trigger.rs · profile.rs · settings.rs · validate.rs
+│   │   ├── src/                  pattern.rs · trigger.rs · profile.rs · settings.rs · validate.rs · schema.rs
 │   │   └── benches/classify.rs
 │   ├── glint-x11/                X11 backends; unsafe only in capture/shm.rs, with SAFETY comments
 │   │   └── src/                  conn.rs · wire.rs (raw hot-path protocol, ADR 0003) · caps.rs · format.rs
