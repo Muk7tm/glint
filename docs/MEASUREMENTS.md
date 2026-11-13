@@ -369,6 +369,44 @@ The run took 98 min 43 s.
     window receiving it. On Xvfb that took 21–33 µs (§9).
   - It isn't in the capture: 19 µs here, 11–21 µs on Xvfb.
 
+## 12. Phase 7: the engine's and the window's CPU
+
+Measured 2026-11-14 on the owner's machine with release builds, while the owner's game used about 2.4 cores.
+Each engine read a hidden Xvfb display (1280×720). Thread times come from `/proc/<pid>/task/*/stat`.
+
+**The engine** (5 s each, the profile's color at the center, nothing showing it):
+
+| Pacing | Stopped | Watching at Balanced |
+| --- | --- | --- |
+| Spin the last 60 µs before each check (until ADR 0024) | 0.0% | 13.0% of one core, all in `glintd-hot` |
+| Sleep to the deadline, normal priority | 0.0% | 1.6% |
+| Sleep to the deadline, rtkit (SCHED_RR 10) | 0.0% | 1.8% |
+
+ADR 0024 has the pacing benchmark behind the change. Without the spin, a real-time check is 3.5 µs late at the
+median and 31 µs at worst, against an average wait of 250 µs for the next check.
+
+**In the lab, with the new pacing:**
+
+| Run | Appearances | Clicks | Extra / missed | p50 / p99 | Whole engine | Checking thread |
+| --- | --- | --- | --- | --- | --- | --- |
+| `basic --count 200` | 200 | 200 | 0 / 0 | 0.31 / 0.56 ms | 1.9% | 1.7% |
+| `soak --minutes 0.5` | 58 | 58 | 0 / 0 | 0.26 / 0.56 ms | 66% | 1.7% |
+
+The soak's whole-engine figure comes from the color tables that its profile edits rebuild on every core,
+about 1.3 CPU-seconds per edit. Watching itself is the checking thread's 1.7%.
+
+**The window** (release build, Openbox on Xvfb, 30 s each):
+
+| Window | Engine | CPU |
+| --- | --- | --- |
+| shown | stopped | 0.00% of one core |
+| minimized | stopped | 0.00% |
+| minimized | watching | 0.03% |
+| shown | watching | 0.00% |
+
+Both meet the v1.0 definition of done: the engine at Balanced is within the 10% budget, and the window's idle
+CPU is about 0% while hidden. The owner's 60-minute soak repeats the engine measurement on the real desktop.
+
 ## Conclusions for the defaults (Phase 0 exit)
 
 - **Speed preset: Balanced (2,000/s) confirmed.** Paced response is dominated by the server's own busy periods

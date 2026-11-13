@@ -6,7 +6,8 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 ## Status
 
 - **Active phase:** Phase 7 (packaging and release), started 2026-11-13. v1.0 is checked on the owner's
-  machine, nothing is published, and `install.sh` installs Glint (owner decisions, ADR 0021).
+  machine, nothing is published, and `install.sh` installs Glint (owner decisions, ADR 0021). Items 1–4
+  are done. Left: the owner's 60-minute soak on the real desktop, and the 10,000-trial runs.
 - Phase 6 is complete: the exit run passed on 2026-11-13 (`glint-lab basic --count 10000 --real-desktop`:
   10,000 clicks for 10,000 appearances, 0 extra, 0 missed, p50 0.44 ms, p99 0.72 ms, max 1.05 ms, no X server
   stall; MEASUREMENTS.md §11). Phases 4 and 5 are complete.
@@ -103,7 +104,19 @@ listed in §13 (written as their content appears).
 
 ## Phase 7 — Packaging and release (S/M)
 
-- [ ] Static musl engine, baseline-glibc UI, AppImage, a PKGBUILD, `.deb` and `.rpm`, never uploaded (ADR 0021, ADR 0022).
+- [x] Static musl engine, baseline-glibc UI, AppImage, a PKGBUILD, `.deb` and `.rpm`, never uploaded (ADR 0021, ADR 0022).
+  *(`packaging/build.sh` builds into `dist/`:
+  - `glintd`, `glint-ctl` and `glint-lab` fully static (musl, no `NEEDED` entries). In the lab, the static engine
+    passed `basic` and `kill-mid-press` and got rtkit (rr 10).
+  - The window, built apart from the engine so the engine's x11rb keeps no libxcb loading (§14).
+  - The AppImage (11.9 MB). Its window starts a copy of the engine in `~/.local/share/glint/<version>/`; on
+    Xvfb the copy kept running and answering after its window closed.
+  - The `.deb` (8.0 MB) and the `.rpm` (8.3 MB), naming the X11 libraries the window loads.
+
+  CI's `packages.yml` builds them all in Ubuntu 22.04, since Debian 11 has reached its end of life. Run
+  43520863629 passed its checks: the window needs `GLIBC_2.35`, every package holds its files, and every
+  program in the AppImage runs. The PKGBUILD built `0.1.0.r64.gd6c78cd` with `makepkg`. makepkg warns that the
+  window contains build paths, which come from generated OpenGL bindings and are harmless.)*
 - [x] `.desktop` file, icon, optional autostart; `install.sh` (owner request, ADR 0021). *(`assets/glint.svg`: a
   white sparkle on a dark tile, readable at 16 px, also the window's icon (`_NET_WM_ICON` 64×64).
   `assets/glint.desktop` passes `desktop-file-validate`. More options → ENGINE has *Start the engine when I
@@ -126,7 +139,11 @@ listed in §13 (written as their content appears).
   - terminal messages, and where Glint keeps its files.
 
   Every label, message and default quoted was checked against the code.)*
-- [ ] `LICENSE` in every package and the AppImage; license line and source URL in `--version` and diagnostics.
+- [x] `LICENSE` in every package and the AppImage; license line and source URL in `--version` and diagnostics.
+  *(The AppImage, the `.rpm` and the PKGBUILD install `/usr/share/licenses/glint/LICENSE`, and the AppImage also
+  has it at its root. The `.deb` has `/usr/share/doc/glint/copyright`. `glint`, `glintd`, `glint-ctl` and
+  `glint-lab` print "0.1.0 · MIT · source: https://github.com/Muk7tm/glint", and so does the first line of
+  the diagnostics. `glint --version` no longer opens a window.)*
 - [ ] 60-minute soak on the owner's machine (ADR 0021).
 - [x] Owner request: *Click if it's already there when I start* (ADR 0023). *(A switch in CLICKING for the
   profile's `fire_if_present_on_start`, which the trigger and engine already had (ADR 0007): a start you make
@@ -141,3 +158,14 @@ listed in §13 (written as their content appears).
 engine response p99 ≤ 2 ms at Balanced and never above 10 ms; zero extra clicks and zero missed appearances; UI
 idle CPU about 0% while hidden; engine CPU at Balanced measured and documented (budget ≤ 10% of one core); every
 stuck-input test passes (SIGTERM, SIGINT, panic, SIGKILL + restart).
+
+**Where the definition of done stands (2026-11-14):**
+
+| Check | State |
+| --- | --- |
+| Response p99 ≤ 2 ms and max ≤ 10 ms, no compositor | Met in Phase 6's run: p99 0.72 ms, max 1.05 ms (MEASUREMENTS.md §11). The pacing has changed since (ADR 0024), so the soak measures it again. |
+| 0 extra and 0 missed | 0 in every run so far. The soak and the 10,000-trial runs settle it. |
+| The window's CPU about 0% while hidden | Met: 0.00–0.03% (MEASUREMENTS.md §12). |
+| The engine's CPU at Balanced, measured (≤ 10%) | 1.8% of one core on Xvfb (MEASUREMENTS.md §12). The soak measures it on the real desktop. |
+| Stuck-input tests | Met in every test run: `signals_stop_gracefully` (SIGTERM, SIGINT, SIGHUP), `panic_releases_input`, `starting_while_present_waits_and_sigterm_exits_cleanly`, `release_all_works_without_an_engine`, and the lab's `kill-mid-press` (SIGKILL, then a restart). |
+| Every lab scenario at 10,000 trials | Not run yet. |
