@@ -329,7 +329,7 @@ TrueColor). Release build. The owner's profile: purple `#8604A0` with *Loose* sh
 
 ## 11. Phase 6: the v1.0 timing run on the real desktop
 
-`glint-lab basic --count 10000 --real-desktop` (release build of 96a96a1), run by the owner on 2026-11-13 in their
+`glint-lab basic --count 10000 --real-desktop` (release build of b649b19), run by the owner on 2026-11-13 in their
 normal session, with the environment above:
 
 - No compositor: picom was stopped, and the report notes any compositor the engine sees.
@@ -512,7 +512,7 @@ recording: **48 presses, 40 blocked and 8 wasted.**
 
 ## 14. Phase 7: the 10,000-trial runs, side by side at idle priority
 
-Started 2026-11-14 at 02:47 with the 8fdb09f build, on the owner's machine (12 threads); the last run ended at 08:12:
+Started 2026-11-14 at 02:47 with the c3d3ce5 build, on the owner's machine (12 threads); the last run ended at 08:12:
 
 - twenty scenarios at once, 10,000 trials each (`action-matrix`: 345 rounds of its 29 cases);
 - each scenario with its own Xvfb (1280×720) and its own engine, without real-time priority, as in every
@@ -545,15 +545,15 @@ core.
 
 | Scenario | What happened | Fix |
 | --- | --- | --- |
-| `live-edit` | The engine let the lab's trace reader go when it fell behind, and the judge took the cut-off trace for a whole one: 51 "misses" in the run's last four minutes. | Commit f3098e2 |
-| `fire-on-start` | Its trace reader fell behind the same way, and the run was stopped. | Commit f3098e2 |
-| `kill-mid-press` | A restarted engine took more than 5 s to listen at idle priority. | Commit c9c6982 (30 s) |
+| `live-edit` | The engine let the lab's trace reader go when it fell behind, and the judge took the cut-off trace for a whole one: 51 "misses" in the run's last four minutes. | Commit 47321fe |
+| `fire-on-start` | Its trace reader fell behind the same way, and the run was stopped. | Commit 47321fe |
+| `kill-mid-press` | A restarted engine took more than 5 s to listen at idle priority. | Commit 78aaa8d (30 s) |
 | `fade` | 19 appearances in 24 seconds (03:50:20–03:50:44) got no click and no report. That minute a normal-priority lab test and a window ran next to the newly idle runs. The engine's ring can drop records when its telemetry thread is starved, and nothing said so. | The hot thread marks dropped records |
 | `focus`, `ui-overlap` | "engine: unexpected end of file" after 3.1 and 4.7 hours. The engine let the lab's control connection go: the lab read it only while waiting for a reply, and each focus change or overlap adds a broadcast. | The lab reads it on a thread of its own |
 | `action-matrix` | 105 of 10,005 trials got no press. Starved, the engine reported possible misses, which this scenario didn't look at. | Per-trial scenarios read the trace |
 | `feedback` | 105 of 10,000 rounds ended without a safety stop. Starved, the engine reported possible misses instead of clicking, so one click too many never came due within a second. | Such a round is noted, not failed |
 
-**Reruns with c9c6982, from 04:43:**
+**Reruns with 78aaa8d, from 04:43:**
 
 | Scenario | Appearances | Clicks | Reported | Verdict |
 | --- | --- | --- | --- | --- |
@@ -564,7 +564,7 @@ core.
 The `kill-mid-press` rerun passed every stuck-input check: each of its 9,996 kills left the input held, and
 the restarted engine released it.
 
-**Reruns with 5fec163 (ADR 0026), the six failed scenarios at once at idle priority, from 08:22:**
+**Reruns with 3912c27 (ADR 0026), the six failed scenarios at once at idle priority, from 08:22:**
 
 | Scenario | Appearances | Clicks | Reported | Response p50 / p99 / max | Hours | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -583,8 +583,8 @@ the restarted engine released it.
   click (151 ms at the median). No round needed ending after 5 s.
 - `action-matrix`: for holds of 0, 10 and 50 ms the server saw 0–2, 8–13 and 49–53 ms between press and release.
 
-Before these, a 600-round `focus` run compared the two builds on the same machine: c9c6982 lost its control
-connection after 663 s ("engine: unexpected end of file"), and 5fec163 passed in 665 s (1,200 appearances,
+Before these, a 600-round `focus` run compared the two builds on the same machine: 78aaa8d lost its control
+connection after 663 s ("engine: unexpected end of file"), and 3912c27 passed in 665 s (1,200 appearances,
 979 clicks, 221 reported).
 
 These rates of reported possible misses (up to 37%) come from the starvation. On the owner's desktop, with
@@ -593,7 +593,7 @@ real-time priority, Phase 6's run clicked 10,000 of 10,000 (§11).
 ## 15. Phase 7: the 60-minute soak on the real desktop
 
 `glint-lab soak --real-desktop` (60 minutes), run by the owner on 2026-11-14 in their normal session, with the
-environment above and the installed release build (the engine's source is unchanged since 5fec163):
+environment above and the installed release build (the engine's source is unchanged since 3912c27):
 
 - No compositor: the report notes any compositor the engine sees, and noted none.
 - Balanced, the `screen` backend, a 3×3 pattern.

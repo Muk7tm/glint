@@ -15,7 +15,7 @@ No run sent an extra click. Eight runs failed, and each failure was a gap in the
 decision by the engine:
 
 1. **`live-edit`:** its trace connection fell a full outbox behind, and the engine let it go. The judge took
-   the cut-off trace for a whole one. This was fixed the same night (commit f3098e2); the rerun passed.
+   the cut-off trace for a whole one. This was fixed the same night (commit 47321fe); the rerun passed.
 2. **`fade`:** 19 appearances got neither a click nor a reported possible miss. They all came between
    03:50:20 and 03:50:44, while the engine's trace showed it checking. This was the minute a normal-priority
    lab test and a window ran next to the runs, just after they were moved to idle priority.
@@ -43,7 +43,7 @@ decision by the engine:
 6. **`fire-on-start` and the first `kill-mid-press`:** these were the lab's own trouble:
    - `fire-on-start`'s trace reader starved, and the run was stopped.
    - `kill-mid-press` gave a restarted engine 5 seconds to listen. Building the color table at idle priority
-     took longer. The wait is now 30 seconds (commit c9c6982).
+     took longer. The wait is now 30 seconds (commit 78aaa8d).
 
 ## Decision
 
@@ -79,7 +79,7 @@ decision by the engine:
 - A run can still fail under heavy load, but only for a stated reason: a wrong click, an unexplained miss, or
   incomplete evidence. It never passes on incomplete evidence, and never fails on a properly reported miss.
 - The overnight results stand where they passed. The failed scenarios run again with this build. They did,
-  with 5fec163, and all six passed 10,000 trials (MEASUREMENTS.md §14).
+  with 3912c27, and all six passed 10,000 trials (MEASUREMENTS.md §14).
 - Side by side at idle priority is a fair test of correctness, but not of how often Glint clicks.
   `arm-while-present` reported 37% of its appearances as possible misses there. On the owner's desktop, with
   real-time priority, Phase 6's run clicked 10,000 of 10,000.

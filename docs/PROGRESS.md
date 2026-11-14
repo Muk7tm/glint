@@ -26,7 +26,7 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
   its copy, and fetched the profile again only when its name changed. So its next edit put back the old
   settings after `glint-ctl profile import` under the same name, and the old game window after a window pick.
   It now follows the profile's revision (PLAN §10). Tests in the window and the engine, and both cases checked
-  in Xvfb with the old and the fixed window (commit 0fa84ea).
+  in Xvfb with the old and the fixed window (commit 9cd3e14).
 - Glint copies Pulse's Slint files and never changes Pulse (ADR 0012).
 - Glint is MIT since 2026-11-13 (owner decision; the About dialog shows AboutSlint, ADR 0016).
   All 17 lab scenarios pass in CI (https://github.com/Muk7tm/glint/actions/runs/43426780742) and at full count
@@ -122,7 +122,7 @@ listed in §13 (written as their content appears).
 
   CI's `packages.yml` builds them all in Ubuntu 22.04, since Debian 11 has reached its end of life. Run
   43520863629 passed its checks: the window needs `GLIBC_2.35`, every package holds its files, and every
-  program in the AppImage runs. The PKGBUILD built `0.1.0.r64.gd6c78cd` with `makepkg`. makepkg warns that the
+  program in the AppImage runs. The PKGBUILD built `0.1.0.r64.gd86aaea` with `makepkg`. makepkg warns that the
   window contains build paths, which come from generated OpenGL bindings and are harmless.)*
 - [x] `.desktop` file, icon, optional autostart; `install.sh` (owner request, ADR 0021). *(`assets/glint.svg`: a
   white sparkle on a dark tile, readable at 16 px, also the window's icon (`_NET_WM_ICON` 64×64).
@@ -194,7 +194,7 @@ stuck-input test passes (SIGTERM, SIGINT, panic, SIGKILL + restart).
 | The window's CPU about 0% while hidden | Met: 0.00–0.03% (MEASUREMENTS.md §12). |
 | The engine's CPU at Balanced, measured (≤ 10%) | Met: the checking thread used 1.1% of one core in the soak on the real desktop (MEASUREMENTS.md §15), and the whole engine 1.8% while watching on Xvfb (§12). |
 | Stuck-input tests | Met in every test run: `signals_stop_gracefully` (SIGTERM, SIGINT, SIGHUP), `panic_releases_input`, `starting_while_present_waits_and_sigterm_exits_cleanly`, `release_all_works_without_an_engine`, and the lab's `kill-mid-press` (SIGKILL, then a restart: at 10,000 trials, the restarted engine released the held input after every kill). |
-| Every lab scenario at 10,000 trials | Met (MEASUREMENTS.md §14): all 20 scenarios passed, and no run sent an extra click. 12 passed overnight on 2026-11-14, and `live-edit` and `fire-on-start` on rerun. The other six failed for gaps in the lab's evidence, not wrong clicks; with the gaps closed (ADR 0026), `fade`, `focus`, `ui-overlap`, `action-matrix`, `kill-mid-press` and `feedback` passed with 5fec163. |
+| Every lab scenario at 10,000 trials | Met (MEASUREMENTS.md §14): all 20 scenarios passed, and no run sent an extra click. 12 passed overnight on 2026-11-14, and `live-edit` and `fire-on-start` on rerun. The other six failed for gaps in the lab's evidence, not wrong clicks; with the gaps closed (ADR 0026), `fade`, `focus`, `ui-overlap`, `action-matrix`, `kill-mid-press` and `feedback` passed with 3912c27. |
 
 ## After v1.0 — owner requests
 
