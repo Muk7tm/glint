@@ -401,7 +401,8 @@ impl Run {
                 marks: &self.marks,
                 end,
                 inputs: &self.inputs,
-                trace: &trace,
+                trace: &trace.entries,
+                trace_lost: trace.lost,
                 probe: Some(&probe),
             },
         );

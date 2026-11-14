@@ -12,7 +12,9 @@
 //! - a click more than the rules allow always fails the run;
 //! - a missing click fails it, unless the engine reported a possible miss (ADR 0007), or was
 //!   blind for the whole time the color was surely showing, or the color was never surely on
-//!   screen long enough to be seen (an X server stall can squeeze an appearance out).
+//!   screen long enough to be seen (an X server stall can squeeze an appearance out);
+//! - a trace cut off before the run's end fails it when a missing click comes after the cut,
+//!   because its report may be what went missing.
 //!
 //! Clicks are the canvas's button presses: every judged run clicks with the mouse.
 
@@ -112,6 +114,8 @@ pub struct Evidence<'a> {
     pub end: Instant,
     pub inputs: &'a [Input],
     pub trace: &'a [Trace],
+    /// The trace was cut off before the run's end (the engine let a slow reader go).
+    pub trace_lost: bool,
     pub probe: Option<&'a ProbeResult>,
 }
 
@@ -144,6 +148,8 @@ pub struct Report {
     pub unseen: u32,
     /// Missing clicks once the engine had stopped itself.
     pub after_stop: u32,
+    /// Missing clicks after the trace was cut off: a report may have been lost with it.
+    pub untraced: u32,
     /// Responses of the clicked appearances that no X server stall touched.
     pub latencies: Vec<Duration>,
     /// Responses of the clicked appearances an X server stall touched, with the stall's length.
@@ -342,11 +348,11 @@ impl Report {
             line("note", n.clone());
         }
         let conditions = if self.timing {
-            "p99 ≤ 2 ms, max ≤ 10 ms, 0 extra, 0 missed"
+            "passing needs p99 ≤ 2 ms, max ≤ 10 ms, 0 extra and 0 missed"
         } else if self.sandbox {
-            "0 extra, 0 missed; timing isn't judged under Xvfb"
+            "passing needs 0 extra and 0 missed; timing isn't judged under Xvfb"
         } else {
-            "0 extra, 0 missed; timing isn't judged in this scenario"
+            "passing needs 0 extra and 0 missed; timing isn't judged in this scenario"
         };
         let verdict = if self.passed() { "PASS" } else { "FAIL" };
         line("verdict", format!("{verdict}  ({conditions})"));
@@ -466,6 +472,15 @@ fn episodes(marks: &[Mark], end: Instant, cfg: &JudgeCfg) -> Vec<Episode> {
     out
 }
 
+/// The latest moment a trace entry speaks for.
+fn entry_ns(t: &Trace) -> u64 {
+    match *t {
+        Trace::Fired { sent_ns, .. } => sent_ns,
+        Trace::MaybeMissed { at_ns } | Trace::Stopped { at_ns, .. } => at_ns,
+        Trace::Blind { to_ns, .. } => to_ns,
+    }
+}
+
 /// `t` relative to `t0`, in ms.
 fn at(t: Instant, t0: Instant) -> String {
     match t.checked_duration_since(t0) {
@@ -539,6 +554,11 @@ pub fn judge(title: String, cfg: &JudgeCfg, ev: &Evidence) -> Report {
     let marks = with_stops(ev.marks, &r.self_stops);
     let episodes = episodes(&marks, ev.end, cfg);
     let t0 = marks.first().map_or(ev.end, |m| m.at.sent);
+    // A cut-off trace is whole only up to its last entry: the engine let the reader go when the
+    // next one didn't fit.
+    let traced_until = ev
+        .trace_lost
+        .then(|| ev.trace.iter().map(entry_ns).max().map_or(t0, instant_at));
     let stalls = ev.probe.map_or(&[][..], |p| &p.stalls[..]);
     r.server_stalls = stalls.iter().map(|&(s, e)| e - s).collect();
     if let Some(p) = ev.probe
@@ -581,6 +601,8 @@ pub fn judge(title: String, cfg: &JudgeCfg, ev: &Evidence) -> Report {
                     r.after_stop += 1;
                 } else if maybe.iter().any(|&t| t >= ep.present_from && t < window_end) {
                     r.reported += 1;
+                } else if traced_until.is_some_and(|t| window_end > t) {
+                    r.untraced += 1;
                 } else if ve.saturating_duration_since(vs) < MIN_VISIBLE
                     || blind.iter().any(|&(f, t)| f <= vs && ve <= t)
                 {
@@ -620,6 +642,21 @@ pub fn judge(title: String, cfg: &JudgeCfg, ev: &Evidence) -> Report {
             for (stage, d) in stages.iter_mut().zip(parts) {
                 stage.push(d);
             }
+        }
+    }
+    if let Some(t) = traced_until {
+        let cut = format!(
+            "the engine's trace stops at {} ms: the lab fell behind reading it, and the engine let it go",
+            at(t, t0)
+        );
+        if r.untraced > 0 {
+            r.problems.push(format!(
+                "{cut}. {} appearances after that got no click, and whether the engine reported them as possible misses is unknown. Run it again on a quieter machine",
+                r.untraced
+            ));
+        } else {
+            r.notes
+                .push(format!("{cut}, but every later appearance is accounted for"));
         }
     }
     let median = |v: &mut Vec<Duration>| {
@@ -694,6 +731,7 @@ mod tests {
                 end,
                 inputs: &inputs,
                 trace,
+                trace_lost: false,
                 probe: None,
             },
         )
@@ -831,6 +869,7 @@ mod tests {
                     end: t0 + Duration::from_millis(700),
                     inputs: &inputs,
                     trace,
+                    trace_lost: false,
                     probe: None,
                 },
             )
@@ -887,6 +926,7 @@ mod tests {
                     end: t0 + Duration::from_millis(700),
                     inputs: &inputs,
                     trace,
+                    trace_lost: false,
                     probe: None,
                 },
             )
@@ -897,6 +937,69 @@ mod tests {
         // A report from while the screen was still clear explains nothing.
         let r = judge_with(&[Trace::MaybeMissed { at_ns: ns(300) }]);
         assert_eq!((r.missed, r.reported), (1, 0), "{}", r.summary());
+    }
+
+    #[test]
+    fn a_trace_cut_off_before_the_end_leaves_later_misses_unjudged() {
+        // On a busy machine the lab can fall behind reading the trace, and the engine lets it
+        // go. A missing click after the cut may have been reported in what never arrived.
+        let t0 = Instant::now();
+        let spec = [
+            (0, Absent, Restart),
+            (100, Tight, Draw),
+            (200, Absent, Draw),
+            (400, Tight, Draw),
+            (500, Absent, Draw),
+        ];
+        let ns = |ms: u64| glint_ipc::monotonic_ns(t0 + Duration::from_millis(ms));
+        let m = marks(t0, &spec);
+        let judge_with = |presses: &[u64], trace: &[Trace], trace_lost: bool| {
+            let inputs: Vec<Input> = presses.iter().map(|&p| press(t0, p)).collect();
+            judge(
+                "test".into(),
+                &JudgeCfg::new(G, None),
+                &Evidence {
+                    marks: &m,
+                    end: t0 + Duration::from_millis(700),
+                    inputs: &inputs,
+                    trace,
+                    trace_lost,
+                    probe: None,
+                },
+            )
+        };
+        let fired = Trace::Fired {
+            request_ns: ns(100),
+            capture_ns: ns(100),
+            decided_ns: ns(100),
+            sent_ns: ns(101),
+        };
+        // A whole trace with no report: a real miss.
+        let r = judge_with(&[100], &[fired], false);
+        assert_eq!((r.missed, r.untraced), (1, 0), "{}", r.summary());
+        // Cut off after the first click: the second appearance can't be judged, and the run
+        // fails for that reason, not for a miss.
+        let r = judge_with(&[100], &[fired], true);
+        assert_eq!((r.missed, r.untraced), (0, 1), "{}", r.summary());
+        assert!(!r.passed());
+        let s = r.summary();
+        assert!(s.contains("the engine's trace stops at +101.0 ms"), "{s}");
+        assert!(s.contains("1 appearances after that got no click"), "{s}");
+        assert!(
+            s.contains("verdict     FAIL  (passing needs 0 extra and 0 missed"),
+            "{s}"
+        );
+        // A report that arrived before the cut still explains its appearance.
+        let r = judge_with(&[100], &[fired, Trace::MaybeMissed { at_ns: ns(405) }], true);
+        assert_eq!((r.missed, r.untraced, r.reported), (0, 0, 1), "{}", r.summary());
+        assert!(r.passed(), "{}", r.summary());
+        // Every appearance clicked: the cut cost nothing, and the report says so.
+        let r = judge_with(&[100, 400], &[fired], true);
+        assert!(r.passed(), "{}", r.summary());
+        assert!(r.summary().contains("but every later appearance is accounted for"));
+        // Nothing traced at all: the cut counts from the run's start.
+        let r = judge_with(&[100], &[], true);
+        assert_eq!(r.untraced, 1, "{}", r.summary());
     }
 
     #[test]
@@ -919,6 +1022,7 @@ mod tests {
                 end: t0 + Duration::from_millis(400),
                 inputs: &inputs,
                 trace: &trace,
+                trace_lost: false,
                 probe: Some(&ProbeResult::default()),
             },
         );
