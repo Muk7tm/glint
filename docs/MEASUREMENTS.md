@@ -421,6 +421,11 @@ The game highlights the targeted character in purple. A press shows a shield, an
 BLOCK button's 1.1 s cooldown early, so the button's brightness gives every press and its outcome. Over the
 recording: **48 presses, 40 blocked and 8 wasted.**
 
+- The shield lasts about 0.75 s: 0.69 s and 0.79 s on the wasted presses at 68.4 and 86.5 s.
+- A wasted press locks the button for its whole 1.1 s; the game ignores presses in that time.
+- The shield and the button show a press 100–120 ms after the highlight at the earliest, so the game shows a
+  press about 0.1 s after the key, probably waiting for its server.
+
 **Glint's settings in the recording** (its window, at 5–13 s):
 
 - color `#8300AA`, Loose+ (OKLCh ±0.22 L, ±0.08 C, ±12° h), 3×3, *Must match* 5;
@@ -439,12 +444,13 @@ recording: **48 presses, 40 blocked and 8 wasted.**
 
 1. **The color was off by 14° of hue.**
    - The head's highlight is `#800080`: L 0.42, C 0.194, h 328°. `#8300AA` has h 315°, beyond Loose+'s 12°.
-   - With `#8300AA`, only 53 frames had 5 tight pixels at the spot; with `#800080`, 2,021 did.
-   - Glint therefore pressed only when something tinted the head into range: late, or not at all.
-2. **Each double click was a flash after a successful block.**
-   - After the shield had replaced the purple for 67–317 ms, the purple came back for 1–3 frames (17–50 ms).
-   - Five wasted presses came 85–117 ms after the end of a successful block, at 68.38, 86.50, 105.80, 122.07
-     and 125.00 s.
+   - With `#8300AA`, only 53 frames had 5 tight pixels at the spot; with `#800080`, 2,021 did. With that color,
+     Glint could hardly ever see the highlight.
+2. **Each double click followed a flash just before the hit.**
+   - While the shield was up (67–317 ms after it replaced the purple), the purple came back for 1–3 frames
+     (17–50 ms), right before the ball hit.
+   - Five wasted presses show 85–117 ms after a successful block's hit, at 68.38, 86.50, 105.80, 122.07 and
+     125.00 s: what a press on the flash looks like with the game's 0.1 s delay.
    - Purple runs at the spot lasted, in frames: 1: 18, 2: 20, 3: 2, 4: 1, 5: 1, 6: 8, 7: 4, 8 or more: 50.
      Flashes are 1–3 frames; real appearances are 4 or more.
 3. **A 3×3 spot on a moving character makes doubles and misses.**
@@ -463,12 +469,39 @@ recording: **48 presses, 40 blocked and 8 wasted.**
 
    With the color required for 4 frames, each press came 50 ms after the purple appeared.
 5. **When to block.**
-   - The ball arrived 217 ms to 3.35 s after the purple appeared, around 0.7 s typically.
+   - The ball arrived 217 ms to 3.35 s after the purple appeared, around 0.7 s typically, and up to 9 s when
+     it took a long way round.
    - Successful presses came 10–250 ms before the ball arrived (470 ms at most).
    - A press 1.8 s early was wasted.
    - The ball's color near the character preceded 33 of 40 arrivals, by a median of 67 ms. It also came near 10
      times without arriving, for example deflected after a block, so it's no better a trigger than the
      highlight.
+6. **Who pressed can't be told from the video.**
+   - Replaying the recording's own settings (`#8300AA`, 3×3, *Gone after* 40 ms) at every position within 24
+     px of the head reproduces at most 10 of the 48 presses, at scattered positions: chance.
+   - No press came within 50 ms of the highlight's onset; most came 17–470 ms before the ball, the way a player
+     times a block.
+   - So the findings here rest on replays of the frames and on the game's timing, not on the recorded presses.
+7. **What a highlight trigger can do here, in the game's terms.** A replay of each setting against the 40
+   arrivals the recording blocked, with the game's rules from above:
+   - a press blocks a ball arriving 0.1 s to 0.8–0.9 s after it (W = 0.7–0.8 s);
+   - a press that blocks nothing locks the button for 1.1 s;
+   - when the highlight returns after a shield runs out, the next press is a second chance.
+
+   | Setting (`#800080`) | Balls blocked (of 40) | Presses that blocked nothing | Ignored while locked |
+   | --- | --- | --- | --- |
+   | 3×3, *Gone after* 40 ms (the owner's profile) | 21–24 | 26–28 | 33–34 |
+   | Area, *Gone after* 100 ms | 17–20 | 26–28 | 20–21 |
+   | Area, *Must last* 60 ms, *Gone after* 100 ms | **28–29** | **17–18** | **0** |
+   | Area, *Must last* 100 ms, *Gone after* 100 ms | 26–27 | 16–17 | 0 |
+   | Area, *Must last* 150–250 ms | 20–21 | 16–17 | 0 |
+   | The ball's color (`#FF00FF`), Area | 0–2 | 6–9 | 0 |
+
+   - *Must last* 60 ms with *Gone after* 100 ms is the best of these.
+   - The balls still missed are slow ones: the highlight comes up to 9 s before the ball, and a block lasts
+     0.75 s. Glint can't see how far away the ball is.
+   - "Blocked nothing" counts the presses for the six targetings whose ball the recording didn't block, so
+     it's an upper bound.
 
 **What changed (ADR 0025):**
 

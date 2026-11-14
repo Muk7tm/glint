@@ -18,11 +18,12 @@ clears the BLOCK button's cooldown early. MEASUREMENTS.md §13 has the frame-by-
 the engine's own color rules, and the presses read from the BLOCK button. It found:
 
 1. **Late and missed clicks came from the color.** The head's highlight is `#800080` (hue 328°), 14° from
-   `#8300AA`, beyond Loose+'s 12°. Only 53 frames had the 5 tight pixels a click needs. Glint pressed only when
-   something tinted the head into range. The owner has since switched to `#800080`.
-2. **The double clicks came from a flash after each block.** Purple returned for 1–3 frames (17–50 ms), 67–317 ms
-   after the shield replaced it, and Glint took it for a new appearance: 5 wasted presses, 85–117 ms after
-   successful blocks. Real appearances lasted at least 4 frames (67 ms).
+   `#8300AA`, beyond Loose+'s 12°. Only 53 frames had the 5 tight pixels a click needs, so Glint could hardly
+   ever see the highlight. The owner has since switched to `#800080`.
+2. **The double clicks came from a flash before each hit.** While the shield was up, purple returned for 1–3
+   frames (17–50 ms), right before the ball hit. A trigger that sees it presses again: the recording's 5 wasted
+   presses show 85–117 ms after successful blocks, as a press on the flash would with the game's 0.1 s delay.
+   Real appearances lasted at least 4 frames (67 ms).
 3. **A 3×3 spot is too small for a moving character.** The head slides off and back as the character dashes,
    turns and blocks. With `#800080`, 21 of 42 targetings would have been pressed more than once, and no *Gone
    after* or confirmation setting fixed both doubles and misses at the 3×3 spot.
@@ -33,6 +34,15 @@ the engine's own color rules, and the presses read from the BLOCK button. It fou
    - The game gives that time: the ball arrived 217 ms to 3.4 s after the purple.
 5. **The window couldn't set either.** A custom pattern lives only in the profile file. `confirm_min_ms` had no
    control and was capped at 50 ms, the length of the longest flash.
+6. **The game's timing limits any trigger on the highlight.** A block lasts about 0.75 s, a wasted one locks the
+   button for 1.1 s, and the highlight comes 0.1–9 s before the ball. Replayed against the 40 arrivals with
+   known times, under those rules, Area with *Must last* 60 ms and *Gone after* 100 ms blocks 28–29 of the
+   40. The owner's 3×3 profile blocks 21–24. The balls still missed are slow ones.
+
+The recorded presses themselves don't line up with a replay of the recording's own settings (at most 10 of 48,
+at any position near the head), and most came just before the ball, the way a player times a block. So the
+video can't show which were Glint's; the findings rest on the frames and the game's timing (MEASUREMENTS.md §13,
+corrected the same day).
 
 ## Decision
 
@@ -60,7 +70,8 @@ the engine's own color rules, and the presses read from the BLOCK button. It fou
 
 - A flash shorter than *Must last* never clicks, and every click comes that much later. 60 ms clears the
   3-frame flashes (50 ms) and leaves real appearances (67 ms and more) a margin.
-- In this game the purple can appear up to 3.4 s before the ball arrives, while the recording's successful blocks
-  were pressed at most 470 ms before it. A press the instant the purple appears can come too early for a slow
-  ball; Glint can't see the ball's distance. The report to the owner says so.
+- In this game the purple can appear up to 9 s before the ball arrives, and a block lasts about 0.75 s. A press
+  the instant the purple appears comes too early for a slow ball, and Glint can't see the ball's distance. When
+  the purple comes back after the shield, Glint presses again, which catches some of them. The report to the
+  owner says so.
 - An Area pattern reads 63×63 px per check, about 16 KB, through shared memory.

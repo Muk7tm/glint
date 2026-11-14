@@ -48,6 +48,9 @@ Games often move the highlighted thing around the spot, and flash the color brie
 - **Set *Must last*** a little longer than the flashes, for example 60 ms. A flash shorter than that never
   clicks; every click then comes that much later.
 - **Raise *Gone after*** (for example to 100 ms), so short gaps inside one appearance don't end it.
+- **Check what the color announces.** Some games show it well before the moment to act, for example as soon as
+  a ball is aimed at you rather than when it arrives. A click at the color then comes too early when the ball
+  is slow, and Glint can't see the ball.
 
 MEASUREMENTS.md §13 shows how these were worked out from a recording.
 

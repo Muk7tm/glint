@@ -156,13 +156,15 @@ listed in §13 (written as their content appears).
   was analyzed with the engine's color rules, and the presses were read from the game's BLOCK button
   (MEASUREMENTS.md §13).
   - **Late clicks:** the color was 14° of hue off the highlight.
-  - **Double clicks:** 1–3 frame flashes after each block.
+  - **Double clicks:** 1–3 frame flashes just before each hit, while the shield is up.
   - **Both:** made worse by a 3×3 spot on a moving character.
 
   New: an Area pattern (8×8 grid over 63×63 px) and *Must last* (`confirm_min_ms`, up to 250 ms) in DETECTION,
   and `glint-lab --pattern`. Replayed on the recording, Area with *Must last* and *Gone after* 100 ms pressed
-  once for each of 46 appearances and never on a flash. Tests: the pattern table, the bindings, and the lab's
-  `basic` and `boundary-noise` with Area. Checked in a window on Xvfb.)*
+  once for each of 46 appearances and never on a flash. Against the game's rules (a block lasts about 0.75 s),
+  it blocks 28–29 of the 40 balls with known arrival times, against 21–24 for the owner's 3×3 profile; the rest
+  arrive too long after the highlight for any press at the highlight. Tests: the pattern table, the bindings,
+  and the lab's `basic` and `boundary-noise` with Area. Checked in a window on Xvfb.)*
 - **Exit:** the v1.0 definition of done below.
 
 **Definition of done for v1.0:** every lab scenario passes 10,000 trials on the owner's machine (ADR 0021);
