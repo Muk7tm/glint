@@ -32,6 +32,7 @@ use std::time::{Duration, Instant};
 
 pub use canvas::{BACKGROUND, Canvas, Drawn, GREEN, Input, InputKind};
 use glint_core::Profile;
+use glint_core::pattern::PatternKind;
 use glint_core::profile::{Backend, Speed};
 use glint_ipc::{Client, Event, Request, StateSnapshot};
 pub use host::{Host, RealDesktop, Sandbox};
@@ -70,6 +71,8 @@ pub struct Options {
     pub speed: Speed,
     /// How the engine reads the screen (§5.2); window mode can read the window's own image.
     pub backend: Backend,
+    /// The sample pattern; `None` keeps the lab profile's 3×3 (ADR 0025 adds `Area`).
+    pub pattern: Option<PatternKind>,
     /// How long `soak` runs.
     pub duration: Duration,
 }
@@ -81,6 +84,7 @@ impl Default for Options {
             seed: 1,
             speed: Speed::Balanced,
             backend: Backend::Auto,
+            pattern: None,
             duration: Duration::from_secs(3600),
         }
     }
@@ -120,7 +124,11 @@ impl<'h> Session<'h> {
 
     /// The run's settings for a report title.
     pub fn tags(&self) -> String {
-        format!("speed {} · backend {}", speed_name(self.opts.speed), self.backend)
+        let mut tags = format!("speed {} · backend {}", speed_name(self.opts.speed), self.backend);
+        if let Some(pattern) = self.opts.pattern {
+            tags.push_str(&format!(" · pattern {}", pattern_name(pattern)));
+        }
+        tags
     }
 
     /// A report title in the §16 form.
@@ -133,6 +141,12 @@ impl<'h> Session<'h> {
         let mut p = lab_profile();
         p.sampling.speed = self.opts.speed;
         p.sampling.backend = self.opts.backend;
+        if let Some(pattern) = self.opts.pattern {
+            // A new pattern takes its own Must match, as in the window.
+            p.sampling.pattern = pattern;
+            p.sampling.k_enter = None;
+            p.sampling.k_stay = None;
+        }
         p
     }
 
@@ -222,6 +236,31 @@ pub fn parse_backend(text: &str) -> Result<Backend, String> {
         "window-buffer" => Ok(Backend::WindowBuffer),
         "damage" => Ok(Backend::Damage),
         n => Err(format!("{n:?}: use auto, screen, screen-shm, window-buffer or damage")),
+    }
+}
+
+/// `--pattern`: the sample patterns the window offers (§5.3, ADR 0025).
+pub fn parse_pattern(text: &str) -> Result<PatternKind, String> {
+    match text {
+        "pixel" => Ok(PatternKind::Pixel),
+        "2x2" => Ok(PatternKind::Center2x2),
+        "3x3" => Ok(PatternKind::Square3),
+        "5x5" => Ok(PatternKind::Square5),
+        "plus" => Ok(PatternKind::Plus),
+        "area" => Ok(PatternKind::Area),
+        n => Err(format!("{n:?}: use pixel, 2x2, 3x3, 5x5, plus or area")),
+    }
+}
+
+fn pattern_name(p: PatternKind) -> &'static str {
+    match p {
+        PatternKind::Pixel => "pixel",
+        PatternKind::Center2x2 => "2x2",
+        PatternKind::Square3 => "3x3",
+        PatternKind::Square5 => "5x5",
+        PatternKind::Plus => "plus",
+        PatternKind::Area => "area",
+        PatternKind::Custom => "custom",
     }
 }
 

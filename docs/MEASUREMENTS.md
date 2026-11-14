@@ -407,6 +407,75 @@ about 1.3 CPU-seconds per edit. Watching itself is the checking thread's 1.7%.
 Both meet the v1.0 definition of done: the engine at Balanced is within the 10% budget, and the window's idle
 CPU is about 0% while hidden. The owner's 60-minute soak repeats the engine measurement on the real desktop.
 
+## 13. The owner's training recording: double and late clicks in a game
+
+**The recording.** The owner recorded a Roblox block-training mode in Sober, with Glint running
+(`docs/recordings/202611140300.mp4`, kept out of git):
+
+- 2 min 14 s, 1920×1080 at 60 fps, 8,068 frames;
+- an OBS display capture, cropped and scaled, so the screen's center sits at video x 1077, on the character's
+  head (the owner's account, and the centered "Waiting for players…" text);
+- while OBS recorded, Glint's window showed reads at p99 3.32 ms and 1,859 checks/s.
+
+The game highlights the targeted character in purple. A press shows a shield, and a successful block clears the
+BLOCK button's 1.1 s cooldown early, so the button's brightness gives every press and its outcome. Over the
+recording: **48 presses, 40 blocked and 8 wasted.**
+
+**Glint's settings in the recording** (its window, at 5–13 s):
+
+- color `#8300AA`, Loose+ (OKLCh ±0.22 L, ±0.08 C, ±12° h), 3×3, *Must match* 5;
+- Balanced, *Gone after* 40 ms, *Min gap* 25 ms;
+- Hold to watch on Mouse5, the action key `e`, *Click if it's already there when I start* off.
+
+**Method:**
+
+- Every frame was classified with the engine's rules: a table over all 24-bit colors that matched the
+  engine's `classify` on every sample.
+- Glint's trigger was replayed on the frames: 5 tight pixels to start, 3 to stay, re-arm after *Gone after*.
+- The replay assumes Glint watched throughout, because the Mouse5 holds aren't visible.
+- The video's compression shifts colors slightly.
+
+**Findings:**
+
+1. **The color was off by 14° of hue.**
+   - The head's highlight is `#800080`: L 0.42, C 0.194, h 328°. `#8300AA` has h 315°, beyond Loose+'s 12°.
+   - With `#8300AA`, only 53 frames had 5 tight pixels at the spot; with `#800080`, 2,021 did.
+   - Glint therefore pressed only when something tinted the head into range: late, or not at all.
+2. **Each double click was a flash after a successful block.**
+   - After the shield had replaced the purple for 67–317 ms, the purple came back for 1–3 frames (17–50 ms).
+   - Five wasted presses came 85–117 ms after the end of a successful block, at 68.38, 86.50, 105.80, 122.07
+     and 125.00 s.
+   - Purple runs at the spot lasted, in frames: 1: 18, 2: 20, 3: 2, 4: 1, 5: 1, 6: 8, 7: 4, 8 or more: 50.
+     Flashes are 1–3 frames; real appearances are 4 or more.
+3. **A 3×3 spot on a moving character makes doubles and misses.**
+   - The character dashes, turns and blocks around the spot. Replayed with `#800080`, the 3×3 spot pressed 83
+     times, more than once in 21 of 42 targetings.
+   - No *Gone after* or confirmation setting fixed both doubles and misses at that spot.
+4. **An Area grid fixes both** (8×8 points over 63×63 screen px, centered just below the head, 8 of 64 needed):
+
+   | *Gone after* | Color required for | Presses | On 1–3 frame flashes | Real appearances missed |
+   | --- | --- | --- | --- | --- |
+   | 40 ms | 1 frame | 74 | 26 | 1 of 47 |
+   | 100 ms | 1 frame | 66 | 20 | 0 of 46 |
+   | 100 ms | 3 frames | 47 | 1 | 0 of 46 |
+   | 100 ms | 4 frames | **46** | **0** | **0 of 46** |
+   | 200 ms | 4 frames | 45 | 0 | 0 of 45 |
+
+   With the color required for 4 frames, each press came 50 ms after the purple appeared.
+5. **When to block.**
+   - The ball arrived 217 ms to 3.35 s after the purple appeared, around 0.7 s typically.
+   - Successful presses came 10–250 ms before the ball arrived (470 ms at most).
+   - A press 1.8 s early was wasted.
+   - The ball's color near the character preceded 33 of 40 arrivals, by a median of 67 ms. It also came near 10
+     times without arriving, for example deflected after a block, so it's no better a trigger than the
+     highlight.
+
+**What changed (ADR 0025):**
+
+- an Area pattern;
+- *Must last* (`confirm_min_ms`, now up to 250 ms) in DETECTION;
+- for the owner's profile: `#800080` Loose+, Area, *Must last* 60 ms, *Gone after* 100 ms.
+
 ## Conclusions for the defaults (Phase 0 exit)
 
 - **Speed preset: Balanced (2,000/s) confirmed.** Paced response is dominated by the server's own busy periods

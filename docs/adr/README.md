@@ -29,6 +29,7 @@ plan also updates the affected plan section in the same commit.
 | [0022](0022-packaging.md) | Packaging: a static engine built apart from the window, staged files, an Ubuntu 22.04 build in CI, and the engine copied out of the AppImage | Accepted | §13, §14, §18, §19 |
 | [0023](0023-click-if-already-there.md) | *Click if it's already there when I start*: a switch for `fire_if_present_on_start` | Accepted (owner request) | §5.5, §9, §12.3, §16 |
 | [0024](0024-sleep-without-spinning.md) | The hot loop sleeps to each check's deadline, without spinning | Accepted | §5.6, §19, A.2 |
+| [0025](0025-area-pattern-and-must-last.md) | The Area pattern and *Must last*, from the owner's training recording | Accepted (from the owner's recording and request) | §5.3, §5.5, §12.4, §16 |
 
 ## Template
 

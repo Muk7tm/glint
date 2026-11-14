@@ -38,6 +38,9 @@ struct Cli {
     /// window's own image), or damage (checks when the screen reports a change).
     #[arg(long, default_value = "auto", value_parser = glint_lab::parse_backend)]
     backend: Backend,
+    /// pixel, 2x2, 3x3, 5x5, plus or area (an 8×8 grid over 63×63 px); default: the lab profile's 3x3.
+    #[arg(long, value_parser = glint_lab::parse_pattern)]
+    pattern: Option<glint_core::pattern::PatternKind>,
     /// How long `soak` runs.
     #[arg(long, default_value_t = 60.0)]
     minutes: f64,
@@ -86,6 +89,7 @@ fn main() -> ExitCode {
         seed: cli.seed,
         speed: cli.speed,
         backend: cli.backend,
+        pattern: cli.pattern,
         duration: Duration::from_secs_f64(cli.minutes.max(0.0) * 60.0),
     };
     if cli.real_desktop {

@@ -37,6 +37,20 @@ whenever it stops, and once more each time it starts.
 Some games show a lighter or darker shade for a few frames before the real color. *Record 5 s* shows those
 shades. *Loose+* also takes much lighter and darker versions of the color; *Also match* adds one exact shade.
 
+## In a game: two clicks for one appearance, or clicks that come late
+
+Games often move the highlighted thing around the spot, and flash the color briefly after your click.
+
+- **Check the color itself.** *Pick* it straight from the highlight. A few degrees of hue off, and Glint
+  only sees it when something happens to tint it into range: late, or not at all.
+- **Use *More options → Detection → Pattern: Area*.** It watches 64 points over a 63×63 px area instead of 9,
+  so a character that dashes or turns stays in view. *Offset* moves the area onto the body.
+- **Set *Must last*** a little longer than the flashes, for example 60 ms. A flash shorter than that never
+  clicks; every click then comes that much later.
+- **Raise *Gone after*** (for example to 100 ms), so short gaps inside one appearance don't end it.
+
+MEASUREMENTS.md §13 shows how these were worked out from a recording.
+
 ## "Another engine is already running"
 
 Only one engine runs per display. `glint-ctl status` shows the one that runs, and `glint-ctl quit` stops it. A

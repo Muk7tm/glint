@@ -48,9 +48,15 @@ pub enum PatternKind {
     Square5,
     /// The anchor plus four pixels at `plus_distance` left, right, above and below.
     Plus,
+    /// 64 points in an 8×8 grid about 9 px apart, 63×63 px in all: for a target that moves
+    /// around the spot, such as a game character (ADR 0025).
+    Area,
     /// Up to 64 offsets of your own.
     Custom,
 }
+
+/// The rows and columns of [`PatternKind::Area`]: within [`MAX_REACH`] of the anchor, symmetric.
+const AREA_STEPS: [i16; 8] = [-31, -22, -13, -4, 4, 13, 22, 31];
 
 impl PatternKind {
     /// The pixel offsets from the anchor. `plus_distance` is used by `Plus` only, `custom` by
@@ -66,6 +72,10 @@ impl PatternKind {
                 let d = i16::try_from(plus_distance).unwrap_or(i16::MAX);
                 vec![(0, 0), (-d, 0), (d, 0), (0, -d), (0, d)]
             }
+            Self::Area => AREA_STEPS
+                .iter()
+                .flat_map(|&y| AREA_STEPS.iter().map(move |&x| (x, y)))
+                .collect(),
             Self::Custom => custom.iter().map(|&[x, y]| (x, y)).collect(),
         }
     }
@@ -79,6 +89,8 @@ impl PatternKind {
             Self::Square3 => 5,
             Self::Square5 => 13,
             Self::Plus => 4,
+            // An eighth of the grid: part of a target the size of the area is enough.
+            Self::Area => 8,
             Self::Custom => u8::try_from(pixels / 2 + 1).unwrap_or(u8::MAX),
         }
     }
@@ -344,6 +356,8 @@ mod tests {
             (PatternKind::Square3, 9, 5, 3, (3, 3)),
             (PatternKind::Square5, 25, 13, 7, (5, 5)),
             (PatternKind::Plus, 5, 4, 2, (5, 5)),
+            // ADR 0025: the 8×8 grid fills MAX_POINTS and reaches MAX_REACH on every side.
+            (PatternKind::Area, 64, 8, 4, (63, 63)),
         ] {
             let p = default_pattern(kind);
             assert_eq!(

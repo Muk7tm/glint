@@ -125,7 +125,8 @@ pub fn profile(p: &Profile) -> Report {
 
     let t = &p.trigger;
     r.range("trigger.confirm_samples", t.confirm_samples, 1, 10);
-    r.range("trigger.confirm_min_ms", t.confirm_min_ms, 0, 50);
+    // Up to 250 ms: a game's brief flashes can outlast a few frames (ADR 0025).
+    r.range("trigger.confirm_min_ms", t.confirm_min_ms, 0, 250);
     r.range("trigger.rearm_absent_ms", t.rearm_absent_ms, 0, 2000);
     if t.rearm_absent_ms < 15 {
         r.warn(
@@ -407,7 +408,7 @@ mod tests {
             ),
             (
                 vec!["trigger.confirm_min_ms"],
-                Box::new(|p| p.trigger.confirm_min_ms = 51),
+                Box::new(|p| p.trigger.confirm_min_ms = 251),
             ),
             (
                 vec!["trigger.rearm_absent_ms"],

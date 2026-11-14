@@ -152,6 +152,17 @@ listed in §13 (written as their content appears).
   `fire-on-start` scenario passes: 6 appearances, 6 clicks, 0 on the restart while the color shows.
   `arm-while-present` and `live-edit` still pass. Checked in a window on Xvfb: the switch writes the profile,
   and both notes show.)*
+- [x] Owner request: fix what the training recording shows, with settings that work (ADR 0025). *(Every frame
+  was analyzed with the engine's color rules, and the presses were read from the game's BLOCK button
+  (MEASUREMENTS.md §13).
+  - **Late clicks:** the color was 14° of hue off the highlight.
+  - **Double clicks:** 1–3 frame flashes after each block.
+  - **Both:** made worse by a 3×3 spot on a moving character.
+
+  New: an Area pattern (8×8 grid over 63×63 px) and *Must last* (`confirm_min_ms`, up to 250 ms) in DETECTION,
+  and `glint-lab --pattern`. Replayed on the recording, Area with *Must last* and *Gone after* 100 ms pressed
+  once for each of 46 appearances and never on a flash. Tests: the pattern table, the bindings, and the lab's
+  `basic` and `boundary-noise` with Area. Checked in a window on Xvfb.)*
 - **Exit:** the v1.0 definition of done below.
 
 **Definition of done for v1.0:** every lab scenario passes 10,000 trials on the owner's machine (ADR 0021);

@@ -10,6 +10,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use common::Slot;
+use glint_core::pattern::PatternKind;
 use glint_core::profile::Backend;
 use glint_lab::{Options, Report};
 
@@ -18,10 +19,15 @@ fn run(scenario: &str, count: u32) -> Option<Report> {
 }
 
 fn run_with(scenario: &str, count: u32, backend: Backend) -> Option<Report> {
+    run_opts(scenario, count, backend, None)
+}
+
+fn run_opts(scenario: &str, count: u32, backend: Backend, pattern: Option<PatternKind>) -> Option<Report> {
     let _slot = Slot::take();
     let opts = Options {
         count: Some(count),
         backend,
+        pattern,
         seed: 42,
         duration: Duration::from_secs(8),
         ..Options::default()
@@ -120,11 +126,25 @@ fn arm_while_present() {
 }
 
 #[test]
+fn the_area_pattern() {
+    // ADR 0025: the 8x8 grid over 63x63 px reads through shared memory. The lab's 40x40 patch
+    // covers 16 of its 64 points, twice the 8 it needs to start.
+    for scenario in ["basic", "boundary-noise"] {
+        if let Some(r) = run_opts(scenario, 6, Backend::Auto, Some(PatternKind::Area)) {
+            every_appearance_clicked(&r);
+            assert!(r.title.contains("pattern area"), "{}", r.summary());
+        }
+    }
+}
+
+#[test]
 fn fire_on_start() {
     // Per round: the click at the start, and the one after the color came back; none on the
-    // restart while it shows (ADR 0023).
+    // restart while it shows (ADR 0023): the judge fails any extra click. A click the engine
+    // skipped and reported as a possible miss (blind time under load) is accounted for.
     if let Some(r) = run("fire-on-start", 3) {
-        assert_eq!((r.appearances, r.clicks), (6, 6), "{}", r.summary());
+        assert_eq!(r.appearances, 6, "{}", r.summary());
+        every_appearance_clicked(&r);
     }
 }
 

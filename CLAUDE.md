@@ -88,7 +88,7 @@ hotkeys), and only when they are actually reached.
 
 ## Environment notes
 
-- Rust is Arch's system package (1.99.1), with no rustup: `rust-toolchain.toml` is inert here and the musl
-  target is not installed (needed only for Phase 7).
+- Rust is Arch's system package (1.99.1), with no rustup: `rust-toolchain.toml` is inert here. The musl
+  target comes from Arch's `rust-musl` package, installed 2026-11-13 for the static engine.
 - Session: Xorg 21.1.26, LXQt + Openbox, NVIDIA proprietary driver, one 1920×1080 @ 60 Hz monitor, no
   compositor by default (picom is installed). Details in `docs/MEASUREMENTS.md`.

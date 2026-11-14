@@ -29,12 +29,13 @@ const SHADES: [ShadePreset; 4] = [
 ];
 const CLOSING: [ClosePolicy; 3] = [ClosePolicy::Ask, ClosePolicy::KeepRunning, ClosePolicy::Quit];
 /// *Pattern* (§12.4); a custom pattern selects none.
-const PATTERNS: [PatternKind; 5] = [
+const PATTERNS: [PatternKind; 6] = [
     PatternKind::Pixel,
     PatternKind::Center2x2,
     PatternKind::Square3,
     PatternKind::Square5,
     PatternKind::Plus,
+    PatternKind::Area,
 ];
 /// *Checks*; a number of checks per second selects none.
 const SPEEDS: [Speed; 3] = [Speed::Eco, Speed::Balanced, Speed::Max];
@@ -134,6 +135,8 @@ pub struct Detection {
     /// *Must match*: `k_enter`, of `pixels`.
     pub must_match: i32,
     pub pixels: i32,
+    /// *Must last*: `confirm_min_ms`, how long the color must show before Glint clicks (ADR 0025).
+    pub must_last: i32,
     /// An index into [`SPEEDS`]; -1 for a number of checks per second.
     pub speed: i32,
     pub speed_text: String,
@@ -169,6 +172,7 @@ fn detection(profile: &Profile) -> Detection {
         pattern: index_of(&PATTERNS, &s.pattern),
         must_match,
         pixels,
+        must_last: t.confirm_min_ms as i32,
         speed: index_of(&SPEEDS, &s.speed),
         speed_text: match s.speed.checks_per_second() {
             Some(n) => format!("{}/sec", thousands(n)),
@@ -212,6 +216,9 @@ fn edit_detection(p: &mut Profile, d: &Detection, before: &Detection) {
         p.sampling.backend = backend;
     }
     let t = &mut p.trigger;
+    if d.must_last != before.must_last {
+        t.confirm_min_ms = d.must_last.clamp(0, 250) as u32;
+    }
     if d.gone_after != before.gone_after {
         t.rearm_absent_ms = d.gone_after.clamp(0, 2000) as u32;
     }
@@ -448,6 +455,7 @@ pub fn apply(ui: &AppWindow, f: &Fields, hero: &Hero) {
     form.set_pattern_index(d.pattern);
     form.set_must_match(d.must_match);
     form.set_pattern_pixels(d.pixels);
+    form.set_must_last(d.must_last);
     form.set_speed_index(d.speed);
     form.set_speed_text(d.speed_text.as_str().into());
     form.set_gone_after(d.gone_after);
@@ -511,6 +519,7 @@ pub fn read(ui: &AppWindow, shown: &Fields) -> Fields {
         detection: Detection {
             pattern: form.get_pattern_index(),
             must_match: form.get_must_match(),
+            must_last: form.get_must_last(),
             speed: form.get_speed_index(),
             gone_after: form.get_gone_after(),
             min_gap: form.get_min_gap(),
@@ -644,6 +653,26 @@ mod tests {
         assert_eq!(p3.trigger.min_fire_interval_ms, p.trigger.min_fire_interval_ms);
         assert_eq!(thousands(500), "500");
         assert_eq!(thousands(10_000), "10,000");
+    }
+
+    #[test]
+    fn the_area_pattern_and_must_last() {
+        // ADR 0025: Area is the sixth pattern, 64 points needing 8; Must last is confirm_min_ms.
+        let s = Settings::default();
+        let p = green();
+        assert_eq!(fields(&p, &s).detection.must_last, 0);
+        let mut g = fields(&p, &s);
+        g.detection.pattern = 5;
+        g.detection.must_last = 60;
+        let (p2, _) = edited(&p, &s, &g);
+        assert_eq!((p2.sampling.pattern, p2.sampling.k_enter), (PatternKind::Area, None));
+        assert_eq!(p2.trigger.confirm_min_ms, 60);
+        let d = fields(&p2, &s).detection;
+        assert_eq!((d.pattern, d.must_match, d.pixels, d.must_last), (5, 8, 64, 60));
+        // Must last stays within what validation accepts.
+        let mut g = fields(&p2, &s);
+        g.detection.must_last = 900;
+        assert_eq!(edited(&p2, &s, &g).0.trigger.confirm_min_ms, 250);
     }
 
     #[test]

@@ -308,6 +308,7 @@ Validation enforces `k_stay ≤ k_enter ≤ n`, and the tight range is always in
 | **Square 3×3 (default)** | 9 | 5 | 3 | General use; ignores single-pixel noise and edges |
 | Square 5×5 | 25 | 13 | 7 | Large color areas or noisy content |
 | Plus | 5 (center + 4 at distance d = `plus_distance`, 1–31, default 2) | 4 | 2 | Thin shapes crossing the center |
+| Area | 64: an 8×8 grid about 9 px apart, 63×63 px in all | 8 | 4 | A target that moves around the spot, such as a highlighted game character (ADR 0025) |
 | Custom | `offsets = [[dx, dy], …]`: up to 64, within ±31 px | yours (default: a majority) | yours | Anything else |
 
 Pixel agreement is Glint's main noise filter, and it adds zero delay: a single odd pixel (anti-aliasing, a dithered gradient, a one-pixel overlay) can't make or break an appearance. The UI shows one "Must match" control; `k_stay` is derived as `⌈k_enter / 2⌉`, which reproduces every row of the table (the earlier `⌈0.6 × k_enter⌉` gave 8 for 5×5 and 3 for Plus; ADR 0006), and can be overridden in the profile file. A pattern captures its bounding rectangle, so a plus pattern reads (2d + 1)² pixels and counts 5 of them.
@@ -388,7 +389,7 @@ States: **Stopped** · **Paused** (started, but the target window isn't in front
 
 **Why absence is counted from observed checks only.** If the engine stalls for 30 ms (a system hiccup) and the next check finds the color gone, the color may only have blinked for 1 ms. Counting from the last time it was *present* would re-arm on an absence nobody actually saw, and could double-click. Counting only observed absence is never wrong in the dangerous direction. The same goes for gaps *inside* an absence: if a stall hides the color between two short dropouts, two absent checks 45 ms apart don't prove 45 ms of absence, and neither do 31 ms watched before a stall plus 8 ms after it. So only a run of absent checks with no blind gap counts: two checks further apart than the check gap (four check periods, the stall threshold of §5.6, and at least 2 ms) start the run over, and so does a late first check after a (re)start. Anything on screen for longer than the check gap can't slip between two watched checks, and a frame lasts 4.2 ms even at 240 Hz, so a watched run proves the color really left: a stall can delay re-arming, never cause it. When blind time *may* have hidden a long enough disappearance, Glint doesn't click and reports a possible miss, so a miss is never silent (ADR 0007).
 
-**Why confirmation is off by default.** Glint checks far faster than any screen refreshes, so two consecutive checks usually see the same frame; "confirm over 2 checks" adds delay without proving anything. Pixel agreement (§5.3) filters noise at zero cost. If you do want time-based confirmation, set `confirm_min_ms` to at least one frame (7 ms at 144 Hz) and accept that delay.
+**Why confirmation is off by default.** Glint checks far faster than any screen refreshes, so two consecutive checks usually see the same frame; "confirm over 2 checks" adds delay without proving anything. Pixel agreement (§5.3) filters noise at zero cost. If you do want time-based confirmation, set `confirm_min_ms` to at least one frame (7 ms at 144 Hz) and accept that delay. A game that flashes the color for a few frames after each click needs it longer than those flashes: 60 ms against the 3-frame flashes in the owner's recording (ADR 0025).
 
 **Invariants** (property-tested in §16):
 
@@ -402,7 +403,7 @@ States: **Stopped** · **Paused** (started, but the target window isn't in front
 | Setting | Default | Range | Meaning |
 |---|---|---|---|
 | `confirm_samples` | 1 | 1–10 | Matching checks needed before firing |
-| `confirm_min_ms` | 0 | 0–50 | Minimum match duration before firing |
+| `confirm_min_ms` | 0 | 0–250 | Minimum match duration before firing: *Must last* in DETECTION (ADR 0025) |
 | `rearm_absent_ms` | 40 | 0–2000 | Gaps shorter than this belong to the same appearance |
 | `rearm_absent_samples` | 2 | 1–100 | Absent checks needed on top of the time |
 | `min_fire_interval_ms` | 25 | 0–1000 | Absolute floor between two clicks; the engine uses at least `hold_ms` + 1 |
@@ -727,8 +728,9 @@ The hero card works exactly like Pulse's: one big button and a status line. **CO
 ▾ More options
 ┌──────────────────────────────────────────────────────────────┐
 │ DETECTION                                                    │
-│ Pattern         ( Pixel  2×2  [3×3]  5×5  Plus )             │
+│ Pattern         ( Pixel  2×2  [3×3]  5×5  Plus  Area )       │
 │ Must match      [ -   5   + ]  of 9 pixels                   │
+│ Must last       [ -   0   + ]  ms: clicks at once            │
 │ Checks          ( Eco  [Balanced]  Max )  2,000/sec          │
 │ Gone after      [ -  10   + ]  ms without the color          │
 │ ▲ Under 15 ms, flicker can count as a new appearance.        │
@@ -766,7 +768,7 @@ The hero card works exactly like Pulse's: one big button and a status line. **CO
 └──────────────────────────────────────────────────────────────┘
 ```
 
-The labels are plain words for the settings in §5: *Must match* is `k_enter` (with `k_stay` derived), *Gone after* is `rearm_absent_ms`, *Min gap* is `min_fire_interval_ms`, *Safety stop* is `max_clicks_per_sec`, and *Read from* is the capture backend. Each shade strip is a row of 16 swatches generated around your color and classified by the engine (`classify`): swatches that count are drawn at full color, the rest dimmed to 25%, so you can *see* where your range starts and stops. *Check hex*, a recorded swatch and *Sample center* all put a color in one place, with *Also match* and *Never match* to add it; the latency test runs `glint-lab basic` in a test X server; *Import* and *Export* use the desktop's file dialog (xdg-desktop-portal); *Copy diagnostics* copies the §17 text block (ADR 0019). *Start the engine when I log in* writes or removes an XDG autostart entry (§18, ADR 0021).
+The labels are plain words for the settings in §5: *Must match* is `k_enter` (with `k_stay` derived), *Must last* is `confirm_min_ms` (ADR 0025), *Gone after* is `rearm_absent_ms`, *Min gap* is `min_fire_interval_ms`, *Safety stop* is `max_clicks_per_sec`, and *Read from* is the capture backend. Each shade strip is a row of 16 swatches generated around your color and classified by the engine (`classify`): swatches that count are drawn at full color, the rest dimmed to 25%, so you can *see* where your range starts and stops. *Check hex*, a recorded swatch and *Sample center* all put a color in one place, with *Also match* and *Never match* to add it; the latency test runs `glint-lab basic` in a test X server; *Import* and *Export* use the desktop's file dialog (xdg-desktop-portal); *Copy diagnostics* copies the §17 text block (ADR 0019). *Start the engine when I log in* writes or removes an XDG autostart entry (§18, ADR 0021).
 
 ### 12.5 Close dialog
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // More options → DETECTION (PLAN §12.4): plain words for the settings of §5. *Must match* is
-// k_enter, *Gone after* rearm_absent_ms, *Min gap* min_fire_interval_ms, *Safety stop*
-// max_clicks_per_sec, and *Read from* the capture backend.
+// k_enter, *Must last* confirm_min_ms (ADR 0025), *Gone after* rearm_absent_ms, *Min gap*
+// min_fire_interval_ms, *Safety stop* max_clicks_per_sec, and *Read from* the capture backend.
 
 import { Theme } from "../pulse/theme.slint";
 import { Card, Segmented, FieldRow, NumberField, Select } from "../pulse/components.slint";
@@ -20,7 +20,7 @@ export component DetectionCard inherits Card {
         label: "Pattern";
         Segmented {
             width: 240px;
-            options: ["Pixel", "2×2", "3×3", "5×5", "Plus"];
+            options: ["Pixel", "2×2", "3×3", "5×5", "Plus", "Area"];
             current <=> Form.pattern-index;
             enabled: Form.editable;
             changed => {
@@ -43,6 +43,24 @@ export component DetectionCard inherits Card {
 
         Unit {
             text: "of " + Form.pattern-pixels + (Form.pattern-pixels == 1 ? " pixel" : " pixels");
+        }
+    }
+
+    // ADR 0025: a flash shorter than this never clicks; 0 clicks on the first check.
+    FieldRow {
+        label: "Must last";
+        NumberField {
+            value <=> Form.must-last;
+            minimum: 0;
+            maximum: 250;
+            enabled: Form.editable;
+            edited => {
+                Actions.form-changed();
+            }
+        }
+
+        Unit {
+            text: Form.must-last == 0 ? "ms: clicks at once" : "ms before it clicks";
         }
     }
 
