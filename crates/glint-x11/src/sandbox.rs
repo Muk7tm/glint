@@ -2,7 +2,7 @@
 //! A throwaway X server for tests: Xvfb on a display it picks itself, stopped when dropped.
 //!
 //! Everything that injects input runs in one of these (or in Xephyr) until Phase 2's exit, never
-//! on the real desktop (CLAUDE.md). Xvfb chooses a free display number and reports it once it
+//! on the real desktop. Xvfb chooses a free display number and reports it once it
 //! accepts connections (`-displayfd`), so tests running in parallel can't collide.
 
 use std::io::{BufRead, BufReader};

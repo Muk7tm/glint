@@ -43,7 +43,7 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 ## Scaffold
 
 - [x] Workspace layout (§13) with stub crates, `Cargo.toml` and `rust-toolchain.toml` (§14), `LICENSE`
-- [x] `CLAUDE.md`, `docs/PROGRESS.md`, `docs/MEASUREMENTS.md`, `docs/adr/`
+- [x] `docs/PROGRESS.md`, `docs/MEASUREMENTS.md`, `docs/adr/`
 
 Not created yet, because nothing can verify them until their phase: `deny.toml` and `.github/workflows/ci.yml`
 (Phase 3), the `glint-ui-view` crate with the Slint UI files and `build.rs` (Phase 4, ADR 0002), `assets/` and `packaging/` (Phase 7), and the other docs
