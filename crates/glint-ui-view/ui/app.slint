@@ -22,15 +22,32 @@ export component AppWindow inherits Window {
     title: "Glint";
     // The same icon as the apps-menu entry (PLAN §18).
     icon: @image-url("../../../assets/glint.svg");
-    preferred-width: 400px;
-    preferred-height: 720px;
-    min-width: 380px;
-    min-height: 520px;
+    // Two columns of cards (ADR 0027): each at least 360 px, the width Pulse's cards were made for.
+    preferred-width: 780px;
+    preferred-height: root.fit-height;
+    min-width: 760px;
+    min-height: 360px;
     background: Theme.bg;
     default-font-size: Theme.font-body;
 
     callback keep-running();
     callback quit-app();
+    // Asks the Rust side to make the window this size (ADR 0027).
+    callback fit(length, length);
+
+    // The height that shows every card without scrolling, up to 960 px so the window stays on a
+    // 1080 px screen; past that it scrolls. The window follows it: when it's first laid out, when
+    // *More options* opens or closes, and when a warning appears or goes.
+    out property <length> fit-height: min(960px, Theme.gap-m * 3 + cards.preferred-height + footer.preferred-height + (Ui.banner != "" ? 28px : 0px));
+    changed fit-height => {
+        // Until the window manager gives the window its first size, Slint reports the minimum; the
+        // preferred size applies then.
+        if root.width > root.min-width || root.height > root.min-height {
+            root.fit(root.width, self.fit-height);
+        }
+    }
+    // One column: half the cards' width, minus the scrollbar's gutter and the gap between columns.
+    property <length> column: max(360px, (scroll.visible-width - 10px - Theme.gap-s) / 2);
 
     // *Copy diagnostics* (§12.4): Slint copies to the clipboard from a text input, so an invisible
     // one holds the text.
@@ -66,18 +83,35 @@ export component AppWindow inherits Window {
         scroll := ScrollView {
             vertical-stretch: 1;
             content-width: self.visible-width;
-            VerticalLayout {
+            cards := VerticalLayout {
                 width: scroll.visible-width;
                 padding-right: 10px;
                 spacing: Theme.gap-s;
                 alignment: start;
-                HeroCard { }
+                // Two cards to a row, sharing its height (ADR 0027): starting beside the game
+                // window, then the color beside the clicking. Each More options card sits under
+                // the main card it belongs with.
+                HorizontalLayout {
+                    spacing: Theme.gap-s;
+                    HeroCard {
+                        width: root.column;
+                    }
 
-                ColorCard { }
+                    WindowCard {
+                        width: root.column;
+                    }
+                }
 
-                ClickingCard { }
+                HorizontalLayout {
+                    spacing: Theme.gap-s;
+                    ColorCard {
+                        width: root.column;
+                    }
 
-                WindowCard { }
+                    ClickingCard {
+                        width: root.column;
+                    }
+                }
 
                 Disclosure {
                     text: "More options";
@@ -87,15 +121,27 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if Ui.more-open: DetectionCard { }
+                if Ui.more-open: HorizontalLayout {
+                    spacing: Theme.gap-s;
+                    RangeCard {
+                        width: root.column;
+                    }
 
-                if Ui.more-open: RangeCard { }
+                    DetectionCard {
+                        width: root.column;
+                    }
+                }
 
-                if Ui.more-open: EngineCard { }
+                if Ui.more-open: HorizontalLayout {
+                    alignment: start;
+                    EngineCard {
+                        width: root.column;
+                    }
+                }
             }
         }
 
-        HorizontalLayout {
+        footer := HorizontalLayout {
             padding-right: 10px;
             spacing: Theme.gap-s;
             Text {

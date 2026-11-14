@@ -674,7 +674,7 @@ The typeface looks like the desktop's default sans (Noto Sans); check Pulse's so
 
 | Element | Measurement |
 |---|---|
-| Window | ~400 px wide, ~640 px of content, native window-manager title bar |
+| Window | ~400 px wide, ~640 px of content, native window-manager title bar (Glint: two columns of cards, 780 px, ADR 0027) |
 | Outer padding | 16 px left and right, 12 px top |
 | Card | 368 px wide, 1 px border, corner radius ≈ 8–10 px, 14 px inner padding, 8 px between cards |
 | Rows | 32 px tall controls on a 40 px pitch; label column ≈ 104 px |
@@ -687,42 +687,31 @@ The typeface looks like the desktop's default sans (Noto Sans); check Pulse's so
 ### 12.3 Main window
 
 ```text
-┌───────────────────────────── Glint ──────────────────────────────┐
-│ ┌──────────────────────────────────────────────────────────────┐ │
-│ │ [                         ▶  Start                         ] │ │
-│ │ Switch to Sober and press F7 to start · F8 stops everything  │ │
-│ └──────────────────────────────────────────────────────────────┘ │
-│ ┌──────────────────────────────────────────────────────────────┐ │
-│ │ COLOR                                                        │ │
-│ │ Color           [■ #3BD16F         ]   [ Pick ]              │ │
-│ │ Shades          ( Tight  [Normal]  Loose  Loose+ )           │ │
-│ │ Seeing          ■ #1E2A20 · no match                         │ │
-│ │ Watch           ( Screen center  [Window center] )           │ │
-│ └──────────────────────────────────────────────────────────────┘ │
-│ ┌──────────────────────────────────────────────────────────────┐ │
-│ │ CLICKING                                                     │ │
-│ │ Click           [ Mouse button   ▾ ]  [ Left      ▾ ]        │ │
-│ │ Hold (ms)       [ -   10   + ]  released after 10 ms         │ │
-│ │ Mode            ( [Press to toggle]  Hold to watch )         │ │
-│ │ Start/stop key  [ F7     ▾ ]  Emergency stop: F8             │ │
-│ │ (○ ) Click if it's already there when I start                │ │
-│ │ (○ ) Keep the hotkeys from the game                          │ │
-│ └──────────────────────────────────────────────────────────────┘ │
-│ ┌──────────────────────────────────────────────────────────────┐ │
-│ │ GAME WINDOW                                                  │ │
-│ │ Sober                                        [ Pick window ] │ │
-│ │ In front                                                     │ │
-│ │ (━●) Only click in this window                               │ │
-│ └──────────────────────────────────────────────────────────────┘ │
-│ ▸ More options                                                   │
-│                                                                  │
-│                                                   [ Quit Glint ] │
-└──────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────── Glint ────────────────────────────────────┐
+│ ┌────────────────────────────────────┐ ┌────────────────────────────────────┐ │
+│ │ [            ▶  Start            ] │ │ GAME WINDOW                        │ │
+│ │    Switch to Sober and press F7    │ │ Sober                [Pick window] │ │
+│ │   to start · F8 stops everything   │ │ In front                           │ │
+│ │                                    │ │ (━●) Only click in this window     │ │
+│ └────────────────────────────────────┘ └────────────────────────────────────┘ │
+│ ┌────────────────────────────────────┐ ┌────────────────────────────────────┐ │
+│ │ COLOR                              │ │ CLICKING                           │ │
+│ │ Color    [■ #3BD16F ]   [ Pick ]   │ │ Click    [ Mouse ▾ ]  [ Left ▾ ]   │ │
+│ │ Shades   ( Tight [Normal] Loose …) │ │ Hold     [ - 10 + ]  released …    │ │
+│ │ Seeing   ■ #1E2A20 · no match      │ │ Mode     ( [Press to toggle] … )   │ │
+│ │ Watch    ( Screen [Window] )       │ │ Key      [ F7 ▾ ]  Emergency: F8   │ │
+│ │                                    │ │ (○ ) Click if it's already there … │ │
+│ │                                    │ │ (○ ) Keep the hotkeys from the …   │ │
+│ └────────────────────────────────────┘ └────────────────────────────────────┘ │
+│ ▸ More options                                                                │
+│                                                                               │
+│ Settings save automatically.                        [ About ]  [ Quit Glint ] │
+└───────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Legend: `[ ]` field or button · `( )` segmented control with the selected option in `[brackets]` · `▾` dropdown · `(━●)` toggle switched on. Numbers are illustrative.
 
-The hero card works exactly like Pulse's: one big button and a status line. **COLOR** is new and sits directly under it, because it's what makes Glint different; its *Seeing* row is the live swatch of what the engine sees at the watched spot. **CLICKING** and **GAME WINDOW** keep Pulse's rows and wording so the two apps feel like one family. *Mode* reads "Hold to watch" instead of Pulse's "Hold to click", because holding the key makes Glint *watch*, not click (ADR 0013). Everything else lives under **More options**, closed by default. In screen-center mode the GAME WINDOW card still matters: with *Only click in this window* on, clicks only happen while that window is in front. The color field also takes a typed hex code (`#3BD16F`, `3bd16f` or `#3D7`; Enter applies it with the chosen shades), and *Start/stop key* takes a mouse side button.
+The cards sit two to a row, each row as tall as its taller card (ADR 0027): the hero beside **GAME WINDOW**, since both say what Start will act on, then **COLOR** beside **CLICKING**. The hero card works exactly like Pulse's: one big button and a status line. **COLOR** is new and sits directly under it, because it's what makes Glint different; its *Seeing* row is the live swatch of what the engine sees at the watched spot. **CLICKING** and **GAME WINDOW** keep Pulse's rows and wording so the two apps feel like one family. *Mode* reads "Hold to watch" instead of Pulse's "Hold to click", because holding the key makes Glint *watch*, not click (ADR 0013). Everything else lives under **More options**, closed by default. In screen-center mode the GAME WINDOW card still matters: with *Only click in this window* on, clicks only happen while that window is in front. The color field also takes a typed hex code (`#3BD16F`, `3bd16f` or `#3D7`; Enter applies it with the chosen shades), and *Start/stop key* takes a mouse side button.
 
 ### 12.4 More options
 
@@ -769,6 +758,8 @@ The hero card works exactly like Pulse's: one big button and a status line. **CO
 │ [ Copy diagnostics ]   [ Import ]   [ Export ]               │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+The sketch shows each card's rows; in the window the cards keep the two columns (ADR 0027): **COLOR RANGE** under COLOR beside **DETECTION** under CLICKING, then **ENGINE** below COLOR RANGE.
 
 The labels are plain words for the settings in §5: *Must match* is `k_enter` (with `k_stay` derived), *Must last* is `confirm_min_ms` (ADR 0025), *Gone after* is `rearm_absent_ms`, *Min gap* is `min_fire_interval_ms`, *Safety stop* is `max_clicks_per_sec`, and *Read from* is the capture backend. Each shade strip is a row of 16 swatches generated around your color and classified by the engine (`classify`): swatches that count are drawn at full color, the rest dimmed to 25%, so you can *see* where your range starts and stops. *Check hex*, a recorded swatch and *Sample center* all put a color in one place, with *Also match* and *Never match* to add it; the latency test runs `glint-lab basic` in a test X server; *Import* and *Export* use the desktop's file dialog (xdg-desktop-portal); *Copy diagnostics* copies the §17 text block (ADR 0019). *Start the engine when I log in* writes or removes an XDG autostart entry (§18, ADR 0021).
 
@@ -826,7 +817,7 @@ Write the way Pulse does: short, plain, sentence case, status facts joined with 
 ### 12.8 Slint implementation notes
 
 - **Files:** `ui/app.slint` (the window), `ui/cards/*.slint` (one file per card), `ui/dialogs.slint`; the copied Pulse pieces live in `ui/pulse/` (§12.1). They live in `glint-ui-view`, whose `build.rs` compiles them with `slint-build` and whose only Rust is the re-export of the generated components. Slint's generated code carries `allow(unsafe_code)`, which `#![forbid(unsafe_code)]` rejects, so all hand-written UI code lives in `glint-ui` under `forbid` (ADR 0002).
-- **Window:** native decorations, like Pulse (it uses the window manager's title bar). Fixed width of 400 px; the content sits in a `Flickable` that only scrolls once *More options* is open. Set the XDG app id to `glint` so the window manager matches the window to `glint.desktop` (check the current Slint API for the app-id setter).
+- **Window:** native decorations, like Pulse (it uses the window manager's title bar). Two columns of cards, 780 px wide by default and at least 760 px, so each card keeps at least the 360 px Pulse's cards were made for (ADR 0027). The window's height follows its cards: it grows when *More options* opens and shrinks when it closes, up to 960 px, past which the content scrolls. A maximized or full-screen window keeps its size. Set the XDG app id to `glint` so the window manager matches the window to `glint.desktop` (check the current Slint API for the app-id setter).
 - **Renderer:** the software renderer keeps the UI completely off the GPU. Select it with `SLINT_BACKEND=winit-software` in the `.desktop` file, or with Slint's `BackendSelector` API.
 - **Threads:** an IO thread reads the socket and hands each event to the UI with `slint::Weak::upgrade_in_event_loop`; telemetry is coalesced to at most 15 updates per second. Callbacks only enqueue requests and never block.
 - **Closing:** `window().on_close_requested(...)` shows the overlay dialog and returns `CloseRequestResponse::KeepWindowShown` (Appendix A.6).

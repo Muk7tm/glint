@@ -106,7 +106,21 @@ fn main() -> Result<(), slint::PlatformError> {
     actions.on_close_window(|| app::with(App::close_requested));
     ui.on_keep_running(|| app::with(App::keep_running));
     ui.on_quit_app(|| app::with(App::quit));
+    let weak = ui.as_weak();
+    ui.on_fit(move |width, height| fit(&weak, width, height));
     ui.run()
+}
+
+/// Resizes the window to show every card without scrolling, keeping its width (ADR 0027). A window
+/// not laid out yet (no width) opens at its preferred size, which is the same; a minimized,
+/// maximized or full-screen one keeps its size.
+fn fit(ui: &slint::Weak<AppWindow>, width: f32, height: f32) {
+    let Some(ui) = ui.upgrade() else { return };
+    let window = ui.window();
+    if width <= 0.0 || !window.is_visible() || window.is_maximized() || window.is_fullscreen() {
+        return;
+    }
+    window.set_size(slint::LogicalSize::new(width, height));
 }
 
 #[cfg(test)]

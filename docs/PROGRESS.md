@@ -195,3 +195,13 @@ stuck-input test passes (SIGTERM, SIGINT, panic, SIGKILL + restart).
 | The engine's CPU at Balanced, measured (≤ 10%) | Met: the checking thread used 1.1% of one core in the soak on the real desktop (MEASUREMENTS.md §15), and the whole engine 1.8% while watching on Xvfb (§12). |
 | Stuck-input tests | Met in every test run: `signals_stop_gracefully` (SIGTERM, SIGINT, SIGHUP), `panic_releases_input`, `starting_while_present_waits_and_sigterm_exits_cleanly`, `release_all_works_without_an_engine`, and the lab's `kill-mid-press` (SIGKILL, then a restart: at 10,000 trials, the restarted engine released the held input after every kill). |
 | Every lab scenario at 10,000 trials | Met (MEASUREMENTS.md §14): all 20 scenarios passed, and no run sent an extra click. 12 passed overnight on 2026-11-14, and `live-edit` and `fire-on-start` on rerun. The other six failed for gaps in the lab's evidence, not wrong clicks; with the gaps closed (ADR 0026), `fade`, `focus`, `ui-overlap`, `action-matrix`, `kill-mid-press` and `feedback` passed with 5fec163. |
+
+## After v1.0 — owner requests
+
+- [x] A horizontal window that doesn't take much space (ADR 0027). *(The cards sit two to a row: Start beside
+  GAME WINDOW, COLOR beside CLICKING; *More options* adds COLOR RANGE beside DETECTION, then ENGINE. The window
+  is 780 px wide, and its height follows the cards: 542 px with *More options* closed, 960 px at most with it
+  open, past which the cards scroll. Only the layout changed: the cards, the style and the behavior are as
+  before. The owner chose two columns over three (1200 px) and a card-sized Start button. Checked on Xvfb with
+  Openbox: opening closed and open, opening and closing *More options*, widening, maximizing, and the close
+  dialog.)*
