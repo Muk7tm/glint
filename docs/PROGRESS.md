@@ -5,10 +5,11 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 ## Status
 
-- **Active phase:** Phase 7 (packaging and release), started 2026-11-13. v1.0 is checked on the owner's
-  machine, nothing is published, and `install.sh` installs Glint (owner decisions, ADR 0021). Items 1–4
-  are done, and every lab scenario has passed 10,000 trials (MEASUREMENTS.md §14). Left: the owner's
-  60-minute soak on the real desktop.
+- **Active phase:** none. Phase 7 (packaging and release) is complete, and with it v1.0 (2026-11-14): every
+  row of the definition of done is met (the table under Phase 7). The last was the owner's 60-minute soak on
+  the real desktop: 6,858 clicks for 6,858 appearances, 0 extra, 0 missed, p99 0.70 ms, max 1.01 ms
+  (MEASUREMENTS.md §15). PLAN §19 has no phase after 7; what comes next waits for the owner. v1.0 is checked
+  on the owner's machine, nothing is published, and `install.sh` installs Glint (owner decisions, ADR 0021).
 - Phase 6 is complete: the exit run passed on 2026-11-13 (`glint-lab basic --count 10000 --real-desktop`:
   10,000 clicks for 10,000 appearances, 0 extra, 0 missed, p50 0.44 ms, p99 0.72 ms, max 1.05 ms, no X server
   stall; MEASUREMENTS.md §11). Phases 4 and 5 are complete.
@@ -150,7 +151,11 @@ listed in §13 (written as their content appears).
   has it at its root. The `.deb` has `/usr/share/doc/glint/copyright`. `glint`, `glintd`, `glint-ctl` and
   `glint-lab` print "0.1.0 · MIT · source: https://github.com/Muk7tm/glint", and so does the first line of
   the diagnostics. `glint --version` no longer opens a window.)*
-- [ ] 60-minute soak on the owner's machine (ADR 0021).
+- [x] 60-minute soak on the owner's machine (ADR 0021). *(Passed 2026-11-14 on the owner's desktop with no
+  compositor: 6,858 clicks for 6,858 appearances over 4,600 random steps, 0 extra, 0 missed, 0 possible
+  misses; p50 0.40 ms, p99 0.70 ms, max 1.01 ms; 4 X server stalls, none during a trial. The checking thread
+  used 1.1% of one core. Memory rose the same 5 MiB as in the 8-second and 2-minute soaks (MEASUREMENTS.md
+  §15).)*
 - [x] Owner request: *Click if it's already there when I start* (ADR 0023). *(A switch in CLICKING for the
   profile's `fire_if_present_on_start`, which the trigger and engine already had (ADR 0007): a start you make
   clicks a color already showing once; restarts still never fire. The note under it says so, and for a mouse
@@ -172,7 +177,7 @@ listed in §13 (written as their content appears).
   arrive too long after the highlight for any press at the highlight. Tests: the pattern table, the bindings,
   and the lab's `basic` and `boundary-noise` with Area. Checked in a window on Xvfb. Applied to the owner's
   profile on 2026-11-14 at 13:01: Area, *Must last* 60 ms, *Gone after* 100 ms, offset Y 18.)*
-- **Exit:** the v1.0 definition of done below.
+- **Exit:** the v1.0 definition of done below. *(Met 2026-11-14: every row of the table below.)*
 
 **Definition of done for v1.0:** every lab scenario passes 10,000 trials on the owner's machine (ADR 0021);
 engine response p99 ≤ 2 ms at Balanced and never above 10 ms; zero extra clicks and zero missed appearances; UI
@@ -183,9 +188,9 @@ stuck-input test passes (SIGTERM, SIGINT, panic, SIGKILL + restart).
 
 | Check | State |
 | --- | --- |
-| Response p99 ≤ 2 ms and max ≤ 10 ms, no compositor | Met in Phase 6's run: p99 0.72 ms, max 1.05 ms (MEASUREMENTS.md §11). The pacing has changed since (ADR 0024), so the soak measures it again. |
-| 0 extra and 0 missed | 0 in every run, including all 20 scenarios at 10,000 trials. The soak checks it on the real desktop. |
+| Response p99 ≤ 2 ms and max ≤ 10 ms, no compositor | Met: the soak, with the new pacing (ADR 0024), measured p99 0.70 ms and max 1.01 ms, with no trial during an X server stall (MEASUREMENTS.md §15). Phase 6's run, before the pacing changed: p99 0.72 ms, max 1.05 ms (§11). |
+| 0 extra and 0 missed | Met: 0 in every run, including all 20 scenarios at 10,000 trials and the soak on the real desktop (6,858 clicks for 6,858 appearances). |
 | The window's CPU about 0% while hidden | Met: 0.00–0.03% (MEASUREMENTS.md §12). |
-| The engine's CPU at Balanced, measured (≤ 10%) | 1.8% of one core on Xvfb (MEASUREMENTS.md §12). The soak measures it on the real desktop. |
+| The engine's CPU at Balanced, measured (≤ 10%) | Met: the checking thread used 1.1% of one core in the soak on the real desktop (MEASUREMENTS.md §15), and the whole engine 1.8% while watching on Xvfb (§12). |
 | Stuck-input tests | Met in every test run: `signals_stop_gracefully` (SIGTERM, SIGINT, SIGHUP), `panic_releases_input`, `starting_while_present_waits_and_sigterm_exits_cleanly`, `release_all_works_without_an_engine`, and the lab's `kill-mid-press` (SIGKILL, then a restart: at 10,000 trials, the restarted engine released the held input after every kill). |
 | Every lab scenario at 10,000 trials | Met (MEASUREMENTS.md §14): all 20 scenarios passed, and no run sent an extra click. 12 passed overnight on 2026-11-14, and `live-edit` and `fire-on-start` on rerun. The other six failed for gaps in the lab's evidence, not wrong clicks; with the gaps closed (ADR 0026), `fade`, `focus`, `ui-overlap`, `action-matrix`, `kill-mid-press` and `feedback` passed with 5fec163. |

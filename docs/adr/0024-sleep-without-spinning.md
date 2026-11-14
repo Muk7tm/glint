@@ -45,3 +45,5 @@ already 250 µs on average at Balanced, and the measured p99 response is 0.72 ms
   core back.
 - On Xvfb, `basic` with 200 appearances clicked every one: 0.31 ms p50, 0.56 ms p99, the engine at 1.9% of a
   core. The owner's 60-minute soak on the real desktop measures the same with a GPU.
+- It did on 2026-11-14: the checking thread used 1.1% of one core, and the response was 0.70 ms at p99 and
+  1.01 ms at most, against 0.72 and 1.05 ms with the spin in Phase 6 (MEASUREMENTS.md §15).

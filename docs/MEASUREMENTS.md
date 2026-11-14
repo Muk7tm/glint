@@ -405,7 +405,8 @@ about 1.3 CPU-seconds per edit. Watching itself is the checking thread's 1.7%.
 | shown | watching | 0.00% |
 
 Both meet the v1.0 definition of done: the engine at Balanced is within the 10% budget, and the window's idle
-CPU is about 0% while hidden. The owner's 60-minute soak repeats the engine measurement on the real desktop.
+CPU is about 0% while hidden. The owner's 60-minute soak repeated the engine measurement on the real desktop:
+the checking thread used 1.1% of one core (§15).
 
 ## 13. The owner's training recording: double and late clicks in a game
 
@@ -588,6 +589,37 @@ connection after 663 s ("engine: unexpected end of file"), and 5fec163 passed in
 
 These rates of reported possible misses (up to 37%) come from the starvation. On the owner's desktop, with
 real-time priority, Phase 6's run clicked 10,000 of 10,000 (§11).
+
+## 15. Phase 7: the 60-minute soak on the real desktop
+
+`glint-lab soak --real-desktop` (60 minutes), run by the owner on 2026-11-14 in their normal session, with the
+environment above and the installed release build (the engine's source is unchanged since 5fec163):
+
+- No compositor: the report notes any compositor the engine sees, and noted none.
+- Balanced, the `screen` backend, a 3×3 pattern.
+- The engine's default settings, so real-time was `auto`: rtkit, SCHED_RR 10 on this machine. The report
+  doesn't print it.
+- 4,600 random steps, each drawn from nine equally likely kinds: a plain appearance (two of the nine), a tight
+  shade, a flicker, boundary jitter, a fade, a rapid round, a near-miss color or a distractor beside the spot,
+  and three profile edits around an appearance of another color.
+
+| Scenario | Appearances | Clicks | Extra | Missed | Possible misses | Response p50 / p95 / p99 / max |
+| --- | --- | --- | --- | --- | --- | --- |
+| `soak` (60 min) | 6,858 | 6,858 | 0 | 0 | 0 | 0.40 / 0.64 / 0.70 / 1.01 ms |
+
+- **Verdict: PASS**, with 0 extra and 0 missed. The soak doesn't judge timing, but its timing meets the v1.0
+  targets (p99 ≤ 2 ms, max ≤ 10 ms) with ADR 0024's pacing. Phase 6's `basic` run, which still spun before
+  each check, measured p99 0.72 ms and max 1.05 ms (§11).
+- **X server stalls:** 4 in the hour, the worst 5.09 ms. No trial coincided with one, so none was set apart.
+- **No measurable server tax:** the probe's round trips were 0.07 ms at p99 before watching and 0.06 ms while
+  watching.
+- **Median by stage:** waiting 0.252 ms, capture 0.019 ms, decision 0.001 ms, injection 0.001 ms, delivery
+  0.121 ms (0.168 ms in §11).
+- **CPU:** the checking thread used 1.1% of one core, within the 10% budget. The whole engine used 42.6%,
+  almost all of it to rebuild color tables: one step in nine makes three profile edits (about 1,500 in the
+  hour), and each rebuilds the 4 MiB table on every core, about 1 CPU-second each (§12).
+- **Memory:** 10.6 → 15.8 MiB, the same +5 MiB as the 8-second and 2-minute soaks (§9): the allocator keeps one
+  freed color table after the first edit. The growth doesn't depend on the run's length.
 
 ## Conclusions for the defaults (Phase 0 exit)
 
