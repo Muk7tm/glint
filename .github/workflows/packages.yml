@@ -1,5 +1,6 @@
 # Builds every package in an Ubuntu 22.04 container, so the window needs no glibc newer than 2.35, and
-# checks what each holds (PLAN §18, ADR 0022). Nothing is uploaded: Glint isn't published (ADR 0021).
+# checks what each holds (PLAN §18, ADR 0022). The run keeps the three packages for 30 days, for the owner's
+# GitHub releases (ADR 0021).
 name: Packages
 
 on:
@@ -28,7 +29,7 @@ env:
 
 jobs:
   packages:
-    name: build and check the packages (not uploaded)
+    name: build and check the packages
     runs-on: ubuntu-24.04
     container: ubuntu:22.04
     steps:
@@ -84,3 +85,13 @@ jobs:
           squashfs-root/AppRun glintd --version
           squashfs-root/AppRun glint-ctl --version
           squashfs-root/AppRun glint-lab --version
+      - name: Keep the packages for a release
+        uses: actions/upload-artifact@v7
+        with:
+          name: glint-packages
+          path: |
+            dist/Glint-*-x86_64.AppImage
+            dist/glint_*.deb
+            dist/glint-*.rpm
+          if-no-files-found: error
+          retention-days: 30

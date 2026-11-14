@@ -205,3 +205,7 @@ stuck-input test passes (SIGTERM, SIGINT, panic, SIGKILL + restart).
   before. The owner chose two columns over three (1200 px) and a card-sized Start button. Checked on Xvfb with
   Openbox: opening closed and open, opening and closing *More options*, scrolling, widening, maximizing, and
   the close dialog.)*
+- [x] Release 0.2.0 on GitHub with the new window (owner request; ADR 0021 amendment). *(The version is
+  0.2.0. CI's packages workflow now keeps the AppImage, `.deb` and `.rpm` it builds in Ubuntu 22.04, and the
+  release attaches them; their window needs glibc 2.35, where 0.1.0's, built on the owner's Arch machine,
+  needed 2.43.)*

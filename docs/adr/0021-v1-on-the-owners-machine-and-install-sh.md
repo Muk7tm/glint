@@ -1,6 +1,6 @@
 # 0021. Phase 7: v1.0 is checked on the owner's machine, nothing is published, and `install.sh` installs it
 
-- **Status:** Accepted (owner decisions)
+- **Status:** Accepted (owner decisions); amended 2026-11-14: the owner publishes GitHub releases
 - **Date:** 2026-11-13
 - **Plan sections:** §12.4, §13, §17, §18, §19
 
@@ -70,3 +70,10 @@ Building §19's second item also showed:
 - The owner installs with `./install.sh` and updates by running it again.
 - The window shows the same icon as the menu entry. Slint renders `Window.icon` at 64×64 for
   `_NET_WM_ICON`.
+
+## Amendment (2026-11-14)
+
+The owner published release 0.1.0 on GitHub themselves, and asked for 0.2.0. Releases on GitHub are now
+the owner's choice: CI's packages workflow keeps the AppImage, `.deb` and `.rpm` it builds in Ubuntu 22.04
+(the window needs glibc 2.35 or newer), and a release attaches them. Nothing else changes: no AUR packages,
+no `glint-bin`.
