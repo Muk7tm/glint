@@ -23,6 +23,7 @@
 mod canvas;
 mod host;
 mod judge;
+mod link;
 mod probe;
 mod scenarios;
 mod trace;
@@ -34,9 +35,10 @@ pub use canvas::{BACKGROUND, Canvas, Drawn, GREEN, Input, InputKind};
 use glint_core::Profile;
 use glint_core::pattern::PatternKind;
 use glint_core::profile::{Backend, Speed};
-use glint_ipc::{Client, Event, Request, StateSnapshot};
+use glint_ipc::{Event, Request, StateSnapshot};
 pub use host::{Host, RealDesktop, Sandbox};
-pub use judge::{Change, Evidence, JudgeCfg, Mark, Report, Shown, Split, judge};
+pub use judge::{Change, Evidence, JudgeCfg, Mark, NoPress, Report, Shown, Split, judge, no_press};
+pub use link::Link;
 pub use probe::{Probe, ProbeResult};
 pub use scenarios::{LATER, Rng, SCENARIOS, Scenario, lab_profile, near_miss_colors};
 pub use trace::TraceTap;
@@ -97,7 +99,7 @@ impl Default for Options {
 pub struct Session<'h> {
     pub host: &'h mut dyn Host,
     pub canvas: Canvas,
-    pub engine: Client,
+    pub engine: Link,
     pub opts: Options,
     backend: String,
 }
@@ -105,7 +107,7 @@ pub struct Session<'h> {
 impl<'h> Session<'h> {
     pub fn new(host: &'h mut dyn Host, opts: Options) -> Result<Self, LabError> {
         let canvas = Canvas::open(host.display(), host.monitor()?)?;
-        let engine = host.client()?;
+        let engine = Link::new(host.client()?)?;
         let mut s = Self {
             host,
             canvas,

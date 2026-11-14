@@ -307,6 +307,28 @@ pub enum HotEvent {
     DamageUnreliable {
         at: Instant,
     },
+    /// The ring was full, so the records from `from` to `to` were dropped; it comes right before
+    /// the first record that fit again.
+    Lost {
+        from: Instant,
+        to: Instant,
+    },
+}
+
+impl HotEvent {
+    /// The earliest moment this record speaks for, if it carries a time.
+    fn earliest(&self) -> Option<Instant> {
+        match *self {
+            Self::Check { t_req, .. } | Self::Fired { t_req, .. } => Some(t_req),
+            Self::Suppressed { at }
+            | Self::MaybeMissed { at }
+            | Self::Stall { at, .. }
+            | Self::Stopped { at, .. }
+            | Self::DamageUnreliable { at } => Some(at),
+            Self::Lost { from, .. } => Some(from),
+            Self::InputError { .. } | Self::Exited => None,
+        }
+    }
 }
 
 /// What the UI's live swatch shows (§12.3 *Seeing*): the color at the watched spot and the verdict.
@@ -323,8 +345,49 @@ pub struct Hot {
     pub shared: Arc<HotShared>,
     pub capture: Box<dyn Capture>,
     pub injector: Injector,
-    pub events: rtrb::Producer<HotEvent>,
+    pub events: EventSink,
     pub preview: triple_buffer::Input<Preview>,
+}
+
+/// The hot thread's end of the event ring. It never waits: a full ring drops the record and
+/// counts it, and once there is room again a [`HotEvent::Lost`] goes first, so the gap shows in
+/// the stream instead of passing for blind time, or for nothing at all.
+pub struct EventSink {
+    ring: rtrb::Producer<HotEvent>,
+    /// Records have been dropped since then, and no [`HotEvent::Lost`] says so yet.
+    lost_since: Option<Instant>,
+}
+
+impl EventSink {
+    pub fn new(ring: rtrb::Producer<HotEvent>) -> Self {
+        Self { ring, lost_since: None }
+    }
+
+    /// Hands `event` on; `dropped` counts the records that didn't fit.
+    pub fn push(&mut self, event: HotEvent, dropped: &AtomicU64) {
+        if let Some(from) = self.lost_since {
+            if self.ring.slots() < 2 {
+                self.drop_record(&event, dropped);
+                return;
+            }
+            // Two free slots, and only the consumer can change that, by freeing more: neither
+            // push below can fail.
+            let _ = self.ring.push(HotEvent::Lost {
+                from,
+                to: Instant::now(),
+            });
+            self.lost_since = None;
+        }
+        if self.ring.push(event).is_err() {
+            self.drop_record(&event, dropped);
+        }
+    }
+
+    fn drop_record(&mut self, event: &HotEvent, dropped: &AtomicU64) {
+        dropped.fetch_add(1, Ordering::Relaxed);
+        let at = event.earliest().unwrap_or_else(Instant::now);
+        self.lost_since = Some(self.lost_since.map_or(at, |t| t.min(at)));
+    }
 }
 
 enum Flow {
@@ -492,9 +555,7 @@ pub fn run(mut h: Hot) {
 }
 
 fn push(h: &mut Hot, event: HotEvent) {
-    if h.events.push(event).is_err() {
-        h.shared.dropped.fetch_add(1, Ordering::Relaxed);
-    }
+    h.events.push(event, &h.shared.dropped);
 }
 
 /// Stops watching from inside the hot thread: release, disarm with a fresh epoch, report.
@@ -559,7 +620,7 @@ impl HotHandle {
             shared: Arc::clone(&shared),
             capture,
             injector,
-            events,
+            events: EventSink::new(events),
             preview,
         };
         let thread = std::thread::Builder::new()
@@ -776,5 +837,48 @@ mod tests {
             t.join().unwrap();
         }
         assert_eq!(word.load().epoch, 4000);
+    }
+
+    #[test]
+    fn a_full_ring_marks_what_it_dropped() {
+        let (ring, mut out) = rtrb::RingBuffer::new(4);
+        let mut sink = EventSink::new(ring);
+        let dropped = AtomicU64::new(0);
+        // Records in the past, as the hot thread's always are.
+        let t0 = Instant::now() - Duration::from_secs(1);
+        let check = |ms: u64| {
+            let t = t0 + Duration::from_millis(ms);
+            HotEvent::Check {
+                t_req: t,
+                t_cap: t,
+                verdict: Verdict::Absent,
+            }
+        };
+        for ms in 0..6 {
+            sink.push(check(ms), &dropped);
+        }
+        assert_eq!(dropped.load(Ordering::Relaxed), 2, "4 fit, 2 didn't");
+        // One free slot isn't room for the marker and a record.
+        assert_eq!(out.pop(), Ok(check(0)));
+        sink.push(check(6), &dropped);
+        assert_eq!(dropped.load(Ordering::Relaxed), 3);
+        assert_eq!(out.pop(), Ok(check(1)));
+        sink.push(check(7), &dropped);
+        let rest: Vec<HotEvent> = std::iter::from_fn(|| out.pop().ok()).collect();
+        assert_eq!(rest.len(), 4, "{rest:?}");
+        assert_eq!(rest[..2], [check(2), check(3)]);
+        match rest[2] {
+            HotEvent::Lost { from, to } => {
+                assert_eq!(from, t0 + Duration::from_millis(4), "from the first record dropped");
+                assert!(to >= t0 + Duration::from_millis(6) && to <= Instant::now());
+            }
+            other => panic!("expected the marker, got {other:?}"),
+        }
+        assert_eq!(rest[3], check(7));
+        // Once the ring keeps up, nothing more is marked.
+        sink.push(check(8), &dropped);
+        assert_eq!(out.pop(), Ok(check(8)));
+        assert!(out.pop().is_err());
+        assert_eq!(dropped.load(Ordering::Relaxed), 3);
     }
 }

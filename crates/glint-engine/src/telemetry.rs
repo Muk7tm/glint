@@ -51,6 +51,11 @@ pub enum TraceNotice {
         at: Instant,
         reason: StopReason,
     },
+    /// The hot thread's records between `from` and `to` were dropped (the ring was full).
+    Lost {
+        from: Instant,
+        to: Instant,
+    },
 }
 
 /// The engine's live statistics (§17).
@@ -123,6 +128,7 @@ impl Collector {
             }),
             HotEvent::MaybeMissed { at } => Some(TraceNotice::MaybeMissed { at }),
             HotEvent::Stopped { at, reason } => Some(TraceNotice::Stopped { at, reason }),
+            HotEvent::Lost { from, to } => Some(TraceNotice::Lost { from, to }),
             _ => None,
         }
     }
@@ -172,6 +178,12 @@ impl Collector {
             }
             HotEvent::Exited => Some(Notice::Exited),
             HotEvent::DamageUnreliable { .. } => Some(Notice::DamageUnreliable),
+            // The checks in the gap are unknown, not missing: the next one starts afresh rather
+            // than reporting the whole gap as blind time.
+            HotEvent::Lost { .. } => {
+                self.last_cap = None;
+                None
+            }
         }
     }
 
@@ -352,5 +364,35 @@ mod tests {
             })
         );
         assert_eq!(c.trace(&HotEvent::Suppressed { at: t0 }, gap), None);
+    }
+
+    #[test]
+    fn records_the_ring_dropped_are_unknown_not_blind() {
+        let mut c = Collector::new();
+        let t0 = Instant::now();
+        let gap = Duration::from_millis(2);
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let check = |ms: u64| HotEvent::Check {
+            t_req: at(ms),
+            t_cap: at(ms),
+            verdict: Verdict::Absent,
+        };
+        let lost = HotEvent::Lost {
+            from: at(1),
+            to: at(30),
+        };
+        let mut trace = Vec::new();
+        for e in [check(0), lost, check(30), check(31)] {
+            trace.extend(c.trace(&e, gap));
+            c.record(e);
+        }
+        // The checks from 1 to 30 ms are gone, not late: no blind time across the gap.
+        assert_eq!(
+            trace,
+            [TraceNotice::Lost {
+                from: at(1),
+                to: at(30)
+            }]
+        );
     }
 }

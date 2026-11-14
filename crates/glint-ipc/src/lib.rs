@@ -14,6 +14,7 @@ use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use glint_core::{Class, Profile, Rgb, Settings, Verdict};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// The protocol version both sides must agree on.
@@ -242,6 +243,10 @@ pub enum Trace {
     Blind { from_ns: u64, to_ns: u64 },
     /// The hot thread stopped watching on its own.
     Stopped { at_ns: u64, cause: StopCause },
+    /// The hot thread's records between these two times were dropped, because the telemetry
+    /// thread fell behind and the ring between them was full: what the engine saw or did in
+    /// between is unknown. A click still shows on the screen; a possible-miss report may be gone.
+    Lost { from_ns: u64, to_ns: u64 },
 }
 
 /// Why the hot thread stopped watching on its own.
@@ -457,6 +462,11 @@ pub fn encode<T: Serialize>(message: &Envelope<T>) -> String {
     line
 }
 
+/// One line (without its newline) as a message.
+pub fn decode<T: DeserializeOwned>(line: &str) -> Result<Envelope<T>, ReadError> {
+    Ok(serde_json::from_str(line)?)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ReadError {
     #[error(transparent)]
@@ -515,9 +525,15 @@ impl Client {
     pub fn next_event(&mut self, timeout: Duration) -> Result<Envelope<Event>, ReadError> {
         self.reader.get_ref().set_read_timeout(Some(timeout))?;
         match read_line(&mut self.reader)? {
-            Some(line) => Ok(serde_json::from_str(&line)?),
+            Some(line) => decode(&line),
             None => Err(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
         }
+    }
+
+    /// The connection's reading half (with whatever it has buffered), its writing half, and the
+    /// next request id, for a reader on a thread of its own.
+    pub fn into_parts(self) -> (BufReader<UnixStream>, UnixStream, u64) {
+        (self.reader, self.writer, self.next_id)
     }
 
     /// Sends a request and waits for its reply, skipping unrelated events.
@@ -675,6 +691,7 @@ mod tests {
                 at_ns: 7,
                 cause: StopCause::SafetyStop,
             }),
+            Event::Trace(Trace::Lost { from_ns: 10, to_ns: 12 }),
         ];
         for e in events {
             let line = encode(&Envelope::new(None, e.clone()));
@@ -705,6 +722,11 @@ mod tests {
         );
         let line = encode(&Envelope::new(None, Event::Trace(Trace::MaybeMissed { at_ns: 42 })));
         assert_eq!(line, "{\"type\":\"trace\",\"kind\":\"maybe_missed\",\"at_ns\":42}\n");
+        let line = encode(&Envelope::new(None, Event::Trace(Trace::Lost { from_ns: 1, to_ns: 2 })));
+        assert_eq!(
+            line,
+            "{\"type\":\"trace\",\"kind\":\"lost\",\"from_ns\":1,\"to_ns\":2}\n"
+        );
     }
 
     #[test]

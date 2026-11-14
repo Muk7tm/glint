@@ -509,6 +509,63 @@ recording: **48 presses, 40 blocked and 8 wasted.**
 - *Must last* (`confirm_min_ms`, now up to 250 ms) in DETECTION;
 - for the owner's profile: `#800080` Loose+, Area, *Must last* 60 ms, *Gone after* 100 ms.
 
+## 14. Phase 7: the 10,000-trial runs, side by side at idle priority
+
+Started 2026-11-14 at 02:47 with the 8fdb09f build, on the owner's machine (12 threads); the last run ended at 08:12:
+
+- twenty scenarios at once, 10,000 trials each (`action-matrix`: 345 rounds of its 29 cases);
+- each scenario with its own Xvfb (1280×720) and its own engine, without real-time priority, as in every
+  sandbox;
+- at `nice 19`, then at idle priority (`SCHED_IDLE`) from 03:49, so the desktop wasn't disturbed;
+- builds and tests ran next to them at times, some at normal priority.
+
+Timing isn't judged under Xvfb. The response times below show how starved the engines were, not what Glint
+does on a desktop.
+
+**Passed, 0 extra and 0 missed:**
+
+| Scenario | Appearances | Clicks | Reported possible misses | Response p50 / p99 / max |
+| --- | --- | --- | --- | --- |
+| `basic` | 10,000 | 8,526 | 1,474 | 0.47 / 6.78 / 33.39 ms |
+| `arm-while-present` | 10,000 | 6,246 | 3,754 | 0.44 / 5.64 / 44.02 ms |
+| `boundary-noise` | 10,000 | 7,571 | 2,428 | 0.51 / 6.76 / 45.86 ms |
+| `flicker` | 10,534 | 7,600 | 2,427 | 0.49 / 6.75 / 41.75 ms |
+| `shades` | 10,000 | 8,255 | 1,745 | 0.47 / 6.06 / 44.95 ms |
+| `stall` (the engine frozen around each edge) | 8,821 | 4,252 | 4,492 | 4.16 / 20.83 / 52.87 ms |
+| `distractor` (and 8,000 distractors) | 2,000 | 1,996 | 4 | 0.49 / 5.71 / 27.45 ms |
+| `move` (20,000 moves, 10,000 resizes) | 20,000 | 16,220 | 3,780 | 0.40 / 5.42 / 55.63 ms |
+| `rapid` | 60,355 | 46,028 | 13,978 | 0.36 / 4.26 / 34.28 ms |
+| `near-miss` | none due | 0 | 0 | |
+
+`two-engines` and `action-equals-hotkey` passed their single checks. `basic` measured the engine at 1.8% of one
+core.
+
+**Failed, every time for a gap in the evidence, never for a wrong click (ADR 0026):**
+
+| Scenario | What happened | Fix |
+| --- | --- | --- |
+| `live-edit` | The engine let the lab's trace reader go when it fell behind, and the judge took the cut-off trace for a whole one: 51 "misses" in the run's last four minutes. | Commit f3098e2 |
+| `fire-on-start` | Its trace reader fell behind the same way, and the run was stopped. | Commit f3098e2 |
+| `kill-mid-press` | A restarted engine took more than 5 s to listen at idle priority. | Commit c9c6982 (30 s) |
+| `fade` | 19 appearances in 24 seconds (03:50:20–03:50:44) got no click and no report. That minute a normal-priority lab test and a window ran next to the newly idle runs. The engine's ring can drop records when its telemetry thread is starved, and nothing said so. | The hot thread marks dropped records |
+| `focus`, `ui-overlap` | "engine: unexpected end of file" after 3.1 and 4.7 hours. The engine let the lab's control connection go: the lab read it only while waiting for a reply, and each focus change or overlap adds a broadcast. | The lab reads it on a thread of its own |
+| `action-matrix` | 105 of 10,005 trials got no press. Starved, the engine reported possible misses, which this scenario didn't look at. | Per-trial scenarios read the trace |
+| `feedback` | 105 of 10,000 rounds ended without a safety stop. Starved, the engine reported possible misses instead of clicking, so one click too many never came due within a second. | Such a round is noted, not failed |
+
+**Reruns with c9c6982, from 04:43:**
+
+| Scenario | Appearances | Clicks | Reported | Verdict |
+| --- | --- | --- | --- | --- |
+| `live-edit` (1,000 rounds, 5,000 profile edits) | 3,000 | 2,633 | 367 | PASS |
+| `fire-on-start` | 20,000 | 19,326 | 674 | PASS |
+| `kill-mid-press` | 10,000 | 9,996 | | FAIL: 4 rounds without a press, the same gap as `action-matrix` |
+
+The `kill-mid-press` rerun passed every stuck-input check: each of its 9,996 kills left the input held, and
+the restarted engine released it.
+
+These rates of reported possible misses (up to 37%) come from the starvation. On the owner's desktop, with
+real-time priority, Phase 6's run clicked 10,000 of 10,000 (§11).
+
 ## Conclusions for the defaults (Phase 0 exit)
 
 - **Speed preset: Balanced (2,000/s) confirmed.** Paced response is dominated by the server's own busy periods

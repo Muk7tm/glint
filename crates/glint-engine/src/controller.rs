@@ -155,6 +155,10 @@ fn trace_entry(t: TraceNotice) -> Trace {
                 StopReason::InputFailed => StopCause::InputFailed,
             },
         },
+        TraceNotice::Lost { from, to } => Trace::Lost {
+            from_ns: monotonic_ns(from),
+            to_ns: monotonic_ns(to),
+        },
     }
 }
 

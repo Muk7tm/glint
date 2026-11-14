@@ -181,4 +181,4 @@ stuck-input test passes (SIGTERM, SIGINT, panic, SIGKILL + restart).
 | The window's CPU about 0% while hidden | Met: 0.00–0.03% (MEASUREMENTS.md §12). |
 | The engine's CPU at Balanced, measured (≤ 10%) | 1.8% of one core on Xvfb (MEASUREMENTS.md §12). The soak measures it on the real desktop. |
 | Stuck-input tests | Met in every test run: `signals_stop_gracefully` (SIGTERM, SIGINT, SIGHUP), `panic_releases_input`, `starting_while_present_waits_and_sigterm_exits_cleanly`, `release_all_works_without_an_engine`, and the lab's `kill-mid-press` (SIGKILL, then a restart). |
-| Every lab scenario at 10,000 trials | Not run yet. |
+| Every lab scenario at 10,000 trials | First pass overnight on 2026-11-14 (MEASUREMENTS.md §14): 12 passed, none sent an extra click, and every failure was a gap in the lab's evidence, now closed (ADR 0026). `live-edit` and `fire-on-start` passed on rerun. Left to run with the new build: `fade`, `focus`, `ui-overlap`, `action-matrix`, `kill-mid-press` and `feedback`. |

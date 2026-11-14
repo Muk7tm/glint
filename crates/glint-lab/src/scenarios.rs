@@ -18,10 +18,10 @@ use rustix::process::Signal;
 
 use crate::canvas::{Area, BACKGROUND, Canvas, Drawn, GREEN, Input, InputKind, PATCH};
 use crate::host::Host;
-use crate::judge::{Change, Evidence, JudgeCfg, Mark, Report, Shown, judge};
+use crate::judge::{Change, Evidence, JudgeCfg, Mark, NoPress, Report, Shown, judge, no_press};
 use crate::probe::Probe;
-use crate::trace::TraceTap;
-use crate::{LabError, Session};
+use crate::trace::{TraceTap, Traced};
+use crate::{LabError, Link, Session};
 
 /// A second color for profile edits: a blue, far from the green.
 const BLUE: u32 = 0x3B_6F_D1;
@@ -1180,7 +1180,9 @@ fn feedback(s: &mut Session) -> Result<Report, LabError> {
     let limit = profile.trigger.max_clicks_per_sec;
     let mut run = Run::begin(s, &profile, Duration::ZERO)?;
     run.cfg.expect_stop = Some(StopCause::SafetyStop);
+    // The first click of each round that ended in a stop, and how many rounds didn't.
     let mut firsts = Vec::new();
+    let mut unstopped = 0;
     for round in 0..n {
         run.clear(s)?;
         // A Start keeps the clicks of the last second in the count (the stricter choice), so a
@@ -1205,8 +1207,16 @@ fn feedback(s: &mut Session) -> Result<Report, LabError> {
             sleep(Duration::from_millis(50));
             run.show(s, GREEN)?;
         }
-        firsts.push(first);
-        run.started = false; // the engine stopped itself (or the check below fails)
+        if s.state()?.started {
+            // A starved engine reports possible misses instead of clicking, so one click too many
+            // may never be due within a second. The judge still accounts for every appearance,
+            // and the rate check below still covers every click.
+            run.stop(s)?;
+            unstopped += 1;
+        } else {
+            firsts.push(first);
+            run.started = false; // the engine stopped itself
+        }
     }
     let mut r = run.finish(s, title, false)?;
     // The safety stop's rule (§5.5), checked against the engine's own click times: no second ever
@@ -1221,8 +1231,19 @@ fn feedback(s: &mut Session) -> Result<Report, LabError> {
         .filter(|(_, c)| *c == StopCause::SafetyStop)
         .map(|(t, _)| *t)
         .collect();
-    if stops.len() != n as usize {
-        r.problems.push(format!("{} safety stops in {n} rounds", stops.len()));
+    if stops.len() != firsts.len() {
+        r.problems.push(format!(
+            "{} safety stops for {} rounds that ended in one",
+            stops.len(),
+            firsts.len()
+        ));
+    }
+    if stops.is_empty() {
+        r.problems.push(format!("no safety stop in {n} rounds"));
+    } else if unstopped > 0 {
+        r.notes.push(format!(
+            "{unstopped} of {n} rounds ended after 5 s without a safety stop: never one click too many within a second, with possible misses reported instead"
+        ));
     }
     let fired = &r.fired_at;
     for (k, &f) in fired.iter().enumerate() {
@@ -1232,24 +1253,36 @@ fn feedback(s: &mut Session) -> Result<Report, LabError> {
             break;
         }
     }
-    for (round, (first, &stop)) in firsts.iter().zip(&stops).enumerate() {
+    let mut after_first = Vec::new();
+    for (k, (first, &stop)) in firsts.iter().zip(&stops).enumerate() {
         let before = fired.iter().filter(|&&f| f <= stop && stop - f < second + edge).count();
         if before != limit as usize {
             r.problems.push(format!(
-                "round {}: the stop came after {before} clicks in the last second, not {limit}",
-                round + 1
+                "stop {}: it came after {before} clicks in the last second, not {limit}",
+                k + 1
             ));
         }
         if fired.iter().any(|&f| f > stop && f - stop < second) {
-            r.problems.push(format!("round {}: a click after the stop", round + 1));
+            r.problems.push(format!("stop {}: a click after it", k + 1));
         }
         if let Some(f) = first {
-            r.notes.push(format!(
-                "round {}: safety stop {} ms after the first click",
-                round + 1,
-                stop.saturating_duration_since(*f).as_millis()
-            ));
+            after_first.push(stop.saturating_duration_since(*f));
         }
+    }
+    after_first.sort_unstable();
+    let ms = |d: &Duration| d.as_millis();
+    match (after_first.first(), after_first.last()) {
+        (Some(lo), Some(hi)) if lo == hi => r.notes.push(format!(
+            "the safety stop came {} ms after each round's first click",
+            ms(lo)
+        )),
+        (Some(lo), Some(hi)) => r.notes.push(format!(
+            "the safety stop came {}–{} ms after a round's first click, {} ms at the median",
+            ms(lo),
+            ms(hi),
+            ms(&after_first[after_first.len() / 2])
+        )),
+        _ => {}
     }
     Ok(r)
 }
@@ -1257,14 +1290,20 @@ fn feedback(s: &mut Session) -> Result<Report, LabError> {
 /// Shows the green until the engine responds, up to `attempts` times, and returns its first
 /// input. Right after a Start or a profile change the engine re-arms only once it has watched
 /// 40 ms of absence, and on a busy machine blind time can start that over: then it reports a
-/// possible miss instead of clicking, and the next showing gets the click.
-fn show_until_input(s: &Session, attempts: u32) -> Result<Option<Input>, LabError> {
+/// possible miss instead of clicking, and the next showing gets the click. `on_screen` gets when
+/// each showing that drew no input was surely on screen, for [`no_press`].
+fn show_until_input(
+    s: &Session,
+    attempts: u32,
+    on_screen: &mut Vec<(Instant, Instant)>,
+) -> Result<Option<Input>, LabError> {
     for _ in 0..attempts {
-        s.canvas.show(GREEN)?;
+        let shown = s.canvas.show(GREEN)?;
         if let Some(i) = s.canvas.next_input(Duration::from_millis(400)) {
             return Ok(Some(i));
         }
-        s.canvas.clear()?;
+        let cleared = s.canvas.clear()?;
+        on_screen.push((shown.drawn, cleared.sent));
         sleep(Duration::from_millis(150));
         // A response that came late still counts, rather than going unnoticed.
         if let Some(i) = s.canvas.next_input(Duration::ZERO) {
@@ -1272,6 +1311,60 @@ fn show_until_input(s: &Session, attempts: u32) -> Result<Option<Input>, LabErro
         }
     }
     Ok(None)
+}
+
+/// Trials that got no press, and what the engine's trace says about each: the scenarios that
+/// check an action's exact input trial by trial excuse only what [`judge`] would.
+#[derive(Default)]
+struct Unpressed {
+    /// Trials waiting for their trace.
+    pending: Vec<Trial>,
+    untraced: u32,
+}
+
+/// A trial that got no press.
+struct Trial {
+    /// The problem, if nothing explains it.
+    problem: String,
+    from: Instant,
+    to: Instant,
+    /// When its color was surely on screen, if that covers every showing.
+    on_screen: Vec<(Instant, Instant)>,
+}
+
+impl Unpressed {
+    fn add(&mut self, problem: String, from: Instant, to: Instant, on_screen: Vec<(Instant, Instant)>) {
+        self.pending.push(Trial {
+            problem,
+            from,
+            to,
+            on_screen,
+        });
+    }
+
+    /// Explains the trials added so far by `traced`: counts the ones the engine reported or
+    /// couldn't see, and lists the rest as problems.
+    fn explain(&mut self, traced: &Traced, r: &mut Report) {
+        for t in self.pending.drain(..) {
+            match no_press(&traced.entries, traced.lost, t.from, t.to, &t.on_screen) {
+                NoPress::Reported => r.reported += 1,
+                NoPress::Unseen => r.unseen += 1,
+                NoPress::Untraced => self.untraced += 1,
+                NoPress::Unexplained => r.problems.push(t.problem),
+            }
+        }
+    }
+
+    /// Fails the run for the trials whose trace was incomplete.
+    fn finish(self, r: &mut Report) {
+        if self.untraced > 0 {
+            r.untraced += self.untraced;
+            r.problems.push(format!(
+                "{} trials got no press while the engine's trace was incomplete (the lab fell behind reading it, or the engine fell behind passing it on), so whether the engine reported them as possible misses is unknown. Run it again on a quieter machine",
+                self.untraced
+            ));
+        }
+    }
 }
 
 /// The key named `name` on this keyboard.
@@ -1377,17 +1470,21 @@ fn action_matrix(s: &mut Session) -> Result<Report, LabError> {
     let base = s.profile();
     s.canvas.clear()?;
     s.set_profile(&base)?;
+    let tap = TraceTap::connect(s.host.socket())?;
     s.start()?;
     let mut holds = Vec::new();
+    let mut unpressed = Unpressed::default();
     for _ in 0..rounds {
         for (label, action) in &cases {
+            let from = Instant::now();
             let mut p = base.clone();
             p.action = action.clone();
             s.set_profile(&p)?; // restarts, latched
             sleep(Duration::from_millis(80)); // a watched absence re-arms
             s.canvas.take_inputs();
             let want = expected_inputs(&keymap, action)?;
-            let mut got: Vec<Input> = show_until_input(s, 3)?.into_iter().collect();
+            let mut on_screen = Vec::new();
+            let mut got: Vec<Input> = show_until_input(s, 3, &mut on_screen)?.into_iter().collect();
             let deadline = Instant::now() + Duration::from_millis(800 + u64::from(action.hold_ms));
             while got.len() < want.len() {
                 match s.canvas.next_input(deadline.saturating_duration_since(Instant::now())) {
@@ -1406,7 +1503,12 @@ fn action_matrix(s: &mut Session) -> Result<Report, LabError> {
                 .count() as u32;
             let kinds: Vec<InputKind> = got.iter().map(|i| i.kind).collect();
             if kinds != want {
-                r.problems.push(format!("{label}: expected {want:?}, got {kinds:?}"));
+                let problem = format!("{label}: expected {want:?}, got {kinds:?}");
+                if kinds.is_empty() {
+                    unpressed.add(problem, from, Instant::now(), on_screen);
+                } else {
+                    r.problems.push(problem);
+                }
                 continue;
             }
             let at = |k: InputKind| got.iter().find(|i| i.kind == k).map(|i| i.server_ms);
@@ -1417,6 +1519,8 @@ fn action_matrix(s: &mut Session) -> Result<Report, LabError> {
         }
     }
     s.stop()?;
+    unpressed.explain(&tap.finish(), &mut r);
+    unpressed.finish(&mut r);
     r.extra = r.clicks.saturating_sub(r.appearances);
     r.notes.push(format!("{} cases", cases.len()));
     for hold in [0, 10, 50] {
@@ -1437,6 +1541,9 @@ fn kill_mid_press(s: &mut Session) -> Result<Report, LabError> {
     let keymap = s.canvas.keymap()?;
     let a = key_spec(&keymap, "a")?;
     let ctrl = modifier_keycode(&keymap, Modifier::Ctrl)?;
+    let mut unpressed = Unpressed::default();
+    // Rounds whose press the restarted engine let go: the button's, then Ctrl+a's.
+    let mut released = [0u32; 2];
     for round in 0..rounds {
         let button = round % 2 == 0;
         let (label, action) = if button {
@@ -1450,6 +1557,9 @@ fn kill_mid_press(s: &mut Session) -> Result<Report, LabError> {
         // The store writes the profile (300 ms debounce), so the next engine knows its key.
         sleep(Duration::from_millis(400));
         s.canvas.clear()?;
+        // Each round's engine is a new one, with a trace of its own.
+        let tap = TraceTap::connect(s.host.socket())?;
+        let from = Instant::now();
         s.start()?;
         sleep(Duration::from_millis(100));
         s.canvas.take_inputs();
@@ -1458,17 +1568,25 @@ fn kill_mid_press(s: &mut Session) -> Result<Report, LabError> {
         } else {
             InputKind::KeyPress(a.keycode)
         };
-        let mut pressed = show_until_input(s, 3)?.is_some_and(|i| i.kind == press);
+        let mut on_screen = Vec::new();
+        let first = show_until_input(s, 3, &mut on_screen)?;
+        let mut pressed = first.is_some_and(|i| i.kind == press);
         let deadline = Instant::now() + Duration::from_secs(1);
         while !pressed && let Some(i) = s.canvas.next_input(deadline.saturating_duration_since(Instant::now())) {
             pressed = i.kind == press;
         }
         r.appearances += 1;
         if !pressed {
-            r.problems.push(format!("{label}: no press"));
+            // A showing still on screen after another input isn't in `on_screen`.
+            if first.is_some() {
+                on_screen.clear();
+            }
             s.stop()?;
+            unpressed.add(format!("{label}: no press"), from, Instant::now(), on_screen);
+            unpressed.explain(&tap.finish(), &mut r);
             continue;
         }
+        drop(tap);
         r.clicks += 1;
         s.host.kill_engine()?;
         let held = |s: &Session, all: bool| -> Result<bool, LabError> {
@@ -1484,7 +1602,7 @@ fn kill_mid_press(s: &mut Session) -> Result<Report, LabError> {
         }
         s.canvas.clear()?;
         s.host.restart_engine()?;
-        s.engine = s.host.client()?;
+        s.engine = Link::new(s.host.client()?)?;
         let deadline = Instant::now() + Duration::from_secs(2);
         while held(s, false)? && Instant::now() < deadline {
             sleep(Duration::from_millis(10));
@@ -1493,8 +1611,15 @@ fn kill_mid_press(s: &mut Session) -> Result<Report, LabError> {
             r.problems
                 .push(format!("{label}: still held after the engine restarted"));
         } else {
+            released[usize::from(!button)] += 1;
+        }
+    }
+    unpressed.finish(&mut r);
+    for (label, n) in ["the left button", "Ctrl+a"].into_iter().zip(released) {
+        if n > 0 {
+            let times = if n == 1 { "once".into() } else { format!("{n} times") };
             r.notes.push(format!(
-                "{label}: held after the kill, released by the restarted engine"
+                "{label}: held after the kill, released by the restarted engine ({times})"
             ));
         }
     }
@@ -1533,17 +1658,31 @@ fn action_equals_hotkey(s: &mut Session) -> Result<Report, LabError> {
     let p = s.profile();
     s.set_profile(&p)?;
     s.canvas.clear()?;
+    let tap = TraceTap::connect(s.host.socket())?;
+    let from = Instant::now();
     s.start()?;
     sleep(Duration::from_millis(100));
     s.canvas.take_inputs();
     r.appearances = 1;
-    if show_until_input(s, 3)?.is_some_and(|i| i.kind == InputKind::ButtonPress(1)) {
-        r.clicks = 1;
-    }
-    if r.clicks == 0 {
-        r.problems.push("no click after the rejected changes".into());
-    }
+    let mut on_screen = Vec::new();
+    let first = show_until_input(s, 3, &mut on_screen)?;
     s.stop()?;
+    if first.is_some_and(|i| i.kind == InputKind::ButtonPress(1)) {
+        r.clicks = 1;
+    } else {
+        if first.is_some() {
+            on_screen.clear();
+        }
+        let mut unpressed = Unpressed::default();
+        unpressed.add(
+            "no click after the rejected changes".into(),
+            from,
+            Instant::now(),
+            on_screen,
+        );
+        unpressed.explain(&tap.finish(), &mut r);
+        unpressed.finish(&mut r);
+    }
     Ok(r)
 }
 

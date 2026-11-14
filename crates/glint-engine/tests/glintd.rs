@@ -870,6 +870,7 @@ fn the_hot_thread_s_scheduling() {
         other => panic!("{other:?}"),
     };
     let s = state(&mut c);
+    let started = thread_sched(pid, "glintd").1;
     let (_, policy, rt_priority, cpus) = thread_sched(pid, "glintd-hot");
     assert_eq!((s.cpu.as_deref(), cpus.as_str()), (Some("core 0"), "0"));
     let realtime = s.realtime.unwrap();
@@ -878,7 +879,7 @@ fn the_hot_thread_s_scheduling() {
         assert_eq!((policy, rt_priority), (2, p.parse().unwrap()));
     } else {
         assert!(realtime.starts_with("off: "), "{realtime}");
-        assert_eq!(policy, 0);
+        assert_eq!(policy, started);
         return;
     }
     // Max never runs real-time; back at Balanced it does again.
@@ -905,9 +906,10 @@ fn the_hot_thread_s_scheduling() {
     p.sampling.speed = glint_core::profile::Speed::Balanced;
     applied(&mut c, &p);
     assert_eq!(thread_sched(pid, "glintd-hot").1, 2);
-    // Every other thread stays normal.
+    // Every other thread keeps the policy the engine started with: normal, or idle when the
+    // tests run at idle priority.
     for name in ["glintd-x", "glintd-ipc", "glintd-telemetr"] {
-        assert_eq!(thread_sched(pid, name).1, 0, "{name}");
+        assert_eq!(thread_sched(pid, name).1, started, "{name}");
     }
 }
 

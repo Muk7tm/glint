@@ -148,7 +148,8 @@ pub struct Report {
     pub unseen: u32,
     /// Missing clicks once the engine had stopped itself.
     pub after_stop: u32,
-    /// Missing clicks after the trace was cut off: a report may have been lost with it.
+    /// Missing clicks after the trace was cut off, or while the engine was dropping its own
+    /// records: a report may have been lost with them.
     pub untraced: u32,
     /// Responses of the clicked appearances that no X server stall touched.
     pub latencies: Vec<Duration>,
@@ -472,12 +473,61 @@ fn episodes(marks: &[Mark], end: Instant, cfg: &JudgeCfg) -> Vec<Episode> {
     out
 }
 
+/// Why a trial that showed the color got no press, by the engine's own trace. For the scenarios
+/// that check an action's exact input trial by trial instead of replaying a run through
+/// [`judge`], by the same standard.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NoPress {
+    /// The engine reported a possible miss during the trial (ADR 0007).
+    Reported,
+    /// Every showing came and went while the engine was blind.
+    Unseen,
+    /// The engine's record of the trial is incomplete, so a report may be missing from it.
+    Untraced,
+    /// Nothing in the trace explains it.
+    Unexplained,
+}
+
+/// Explains a trial from `from` to `to` that got no press. `shown` is when each showing was
+/// surely on screen; leave it empty unless it covers them all. `cut` says the trace was cut off
+/// (see [`Evidence::trace_lost`]).
+pub fn no_press(trace: &[Trace], cut: bool, from: Instant, to: Instant, shown: &[(Instant, Instant)]) -> NoPress {
+    let during = |ns: u64| (from..to).contains(&instant_at(ns));
+    if trace
+        .iter()
+        .any(|t| matches!(*t, Trace::MaybeMissed { at_ns } if during(at_ns)))
+    {
+        return NoPress::Reported;
+    }
+    let cut_short = cut
+        && trace
+            .iter()
+            .map(entry_ns)
+            .max()
+            .is_none_or(|last| instant_at(last) < to);
+    let lost = trace
+        .iter()
+        .any(|t| matches!(*t, Trace::Lost { from_ns, to_ns } if instant_at(from_ns) < to && instant_at(to_ns) >= from));
+    if cut_short || lost {
+        return NoPress::Untraced;
+    }
+    let blind = |vs: Instant, ve: Instant| {
+        trace.iter().any(
+            |t| matches!(*t, Trace::Blind { from_ns, to_ns } if instant_at(from_ns) <= vs && ve <= instant_at(to_ns)),
+        )
+    };
+    if !shown.is_empty() && shown.iter().all(|&(vs, ve)| blind(vs, ve)) {
+        return NoPress::Unseen;
+    }
+    NoPress::Unexplained
+}
+
 /// The latest moment a trace entry speaks for.
 fn entry_ns(t: &Trace) -> u64 {
     match *t {
         Trace::Fired { sent_ns, .. } => sent_ns,
         Trace::MaybeMissed { at_ns } | Trace::Stopped { at_ns, .. } => at_ns,
-        Trace::Blind { to_ns, .. } => to_ns,
+        Trace::Blind { to_ns, .. } | Trace::Lost { to_ns, .. } => to_ns,
     }
 }
 
@@ -537,6 +587,7 @@ pub fn judge(title: String, cfg: &JudgeCfg, ev: &Evidence) -> Report {
     let mut fired = Vec::new();
     let mut maybe = Vec::new();
     let mut blind = Vec::new();
+    let mut lost = Vec::new();
     for t in ev.trace {
         match *t {
             Trace::Fired {
@@ -548,6 +599,7 @@ pub fn judge(title: String, cfg: &JudgeCfg, ev: &Evidence) -> Report {
             Trace::MaybeMissed { at_ns } => maybe.push(instant_at(at_ns)),
             Trace::Blind { from_ns, to_ns } => blind.push((instant_at(from_ns), instant_at(to_ns))),
             Trace::Stopped { at_ns, cause } => r.self_stops.push((instant_at(at_ns), cause)),
+            Trace::Lost { from_ns, to_ns } => lost.push((instant_at(from_ns), instant_at(to_ns))),
         }
     }
     r.fired_at = fired.iter().map(|f| f[3]).collect();
@@ -585,6 +637,8 @@ pub fn judge(title: String, cfg: &JudgeCfg, ev: &Evidence) -> Report {
     }
 
     let mut stages: [Vec<Duration>; 5] = Default::default();
+    // Missing clicks whose report may have gone with the engine's dropped records.
+    let mut in_lost = 0;
     for (k, ep) in episodes.iter().enumerate() {
         let window_end = episodes.get(k + 1).map_or(ev.end + TAIL, |e| e.start);
         let clicks = &per[k];
@@ -603,6 +657,10 @@ pub fn judge(title: String, cfg: &JudgeCfg, ev: &Evidence) -> Report {
                     r.reported += 1;
                 } else if traced_until.is_some_and(|t| window_end > t) {
                     r.untraced += 1;
+                } else if lost.iter().any(|&(f, t)| f < window_end && t >= ep.present_from) {
+                    // Not unseen either: blind time in the gap can't be told from records lost.
+                    r.untraced += 1;
+                    in_lost += 1;
                 } else if ve.saturating_duration_since(vs) < MIN_VISIBLE
                     || blind.iter().any(|&(f, t)| f <= vs && ve <= t)
                 {
@@ -649,14 +707,30 @@ pub fn judge(title: String, cfg: &JudgeCfg, ev: &Evidence) -> Report {
             "the engine's trace stops at {} ms: the lab fell behind reading it, and the engine let it go",
             at(t, t0)
         );
-        if r.untraced > 0 {
+        let after = r.untraced - in_lost;
+        if after > 0 {
             r.problems.push(format!(
-                "{cut}. {} appearances after that got no click, and whether the engine reported them as possible misses is unknown. Run it again on a quieter machine",
-                r.untraced
+                "{cut}. {after} appearances after that got no click, and whether the engine reported them as possible misses is unknown. Run it again on a quieter machine"
             ));
         } else {
             r.notes
                 .push(format!("{cut}, but every later appearance is accounted for"));
+        }
+    }
+    if !lost.is_empty() {
+        let total: Duration = lost.iter().map(|&(f, t)| t.saturating_duration_since(f)).sum();
+        let gaps = format!(
+            "the engine dropped its own records {} times, {} ms in all: starved of CPU, it fell behind passing them on",
+            lost.len(),
+            ms(total)
+        );
+        if in_lost > 0 {
+            r.problems.push(format!(
+                "{gaps}. {in_lost} appearances in those times got no click, and whether the engine reported them as possible misses is unknown. Run it again on a quieter machine"
+            ));
+        } else {
+            r.notes
+                .push(format!("{gaps}, but every appearance then is accounted for"));
         }
     }
     let median = |v: &mut Vec<Duration>| {
@@ -1000,6 +1074,108 @@ mod tests {
         // Nothing traced at all: the cut counts from the run's start.
         let r = judge_with(&[100], &[], true);
         assert_eq!(r.untraced, 1, "{}", r.summary());
+    }
+
+    #[test]
+    fn a_trial_without_a_press_by_the_trace() {
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let ns = |ms: u64| glint_ipc::monotonic_ns(at(ms));
+        let shown = [(at(100), at(500)), (at(650), at(1050))];
+        let explain = |trace: &[Trace], cut: bool| no_press(trace, cut, at(0), at(1200), &shown);
+        assert_eq!(explain(&[], false), NoPress::Unexplained);
+        // A report during the trial explains it; one from another trial doesn't.
+        assert_eq!(
+            explain(&[Trace::MaybeMissed { at_ns: ns(120) }], false),
+            NoPress::Reported
+        );
+        assert_eq!(
+            explain(&[Trace::MaybeMissed { at_ns: ns(1300) }], false),
+            NoPress::Unexplained
+        );
+        // Blind through every showing, or only through one.
+        let blind = |f: u64, t: u64| Trace::Blind {
+            from_ns: ns(f),
+            to_ns: ns(t),
+        };
+        assert_eq!(explain(&[blind(90, 510), blind(640, 1060)], false), NoPress::Unseen);
+        assert_eq!(explain(&[blind(90, 510)], false), NoPress::Unexplained);
+        assert_eq!(
+            no_press(&[blind(90, 510)], false, at(0), at(1200), &[]),
+            NoPress::Unexplained,
+            "unseen needs every showing"
+        );
+        // Dropped records during the trial, or a trace cut off before its end.
+        let lost = Trace::Lost {
+            from_ns: ns(600),
+            to_ns: ns(700),
+        };
+        assert_eq!(explain(&[lost], false), NoPress::Untraced);
+        assert_eq!(explain(&[blind(90, 510)], true), NoPress::Untraced);
+        assert_eq!(
+            explain(&[blind(90, 510), blind(1250, 1300)], true),
+            NoPress::Unexplained
+        );
+    }
+
+    #[test]
+    fn records_the_engine_dropped_leave_their_misses_unjudged() {
+        // A starved engine can fall behind passing its own records on. It marks the gap, and a
+        // missing click whose report may have been in it is unknown: not missed, and not unseen
+        // either, though the gap would look like blind time without the mark.
+        let t0 = Instant::now();
+        let spec = [
+            (0, Absent, Restart),
+            (100, Tight, Draw),
+            (200, Absent, Draw),
+            (400, Tight, Draw),
+            (500, Absent, Draw),
+        ];
+        let ns = |ms: u64| glint_ipc::monotonic_ns(t0 + Duration::from_millis(ms));
+        let m = marks(t0, &spec);
+        let judge_with = |presses: &[u64], trace: &[Trace]| {
+            let inputs: Vec<Input> = presses.iter().map(|&p| press(t0, p)).collect();
+            judge(
+                "test".into(),
+                &JudgeCfg::new(G, None),
+                &Evidence {
+                    marks: &m,
+                    end: t0 + Duration::from_millis(700),
+                    inputs: &inputs,
+                    trace,
+                    trace_lost: false,
+                    probe: None,
+                },
+            )
+        };
+        let lost = Trace::Lost {
+            from_ns: ns(350),
+            to_ns: ns(450),
+        };
+        let r = judge_with(&[100], &[lost]);
+        assert_eq!((r.missed, r.unseen, r.untraced), (0, 0, 1), "{}", r.summary());
+        assert!(!r.passed());
+        let s = r.summary();
+        assert!(
+            s.contains("the engine dropped its own records 1 times, 100.00 ms in all"),
+            "{s}"
+        );
+        assert!(s.contains("1 appearances in those times got no click"), "{s}");
+        // A report that got through still explains its appearance.
+        let r = judge_with(&[100], &[lost, Trace::MaybeMissed { at_ns: ns(460) }]);
+        assert_eq!((r.missed, r.untraced, r.reported), (0, 0, 1), "{}", r.summary());
+        assert!(r.passed(), "{}", r.summary());
+        // A gap away from any missing click costs nothing, and the report says so.
+        let early = Trace::Lost {
+            from_ns: ns(10),
+            to_ns: ns(20),
+        };
+        let r = judge_with(&[100, 400], &[early]);
+        assert!(r.passed(), "{}", r.summary());
+        assert!(r.summary().contains("but every appearance then is accounted for"));
+        // Without the mark, the same missing click is a miss.
+        let r = judge_with(&[100], &[]);
+        assert_eq!(r.missed, 1, "{}", r.summary());
     }
 
     #[test]
