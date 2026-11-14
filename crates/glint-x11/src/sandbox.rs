@@ -82,6 +82,11 @@ impl Xvfb {
     pub fn display(&self) -> LocalDisplay {
         self.display
     }
+
+    /// The server's process id, for tests that freeze it.
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
 }
 
 impl Drop for Xvfb {

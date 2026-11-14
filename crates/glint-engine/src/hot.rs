@@ -235,6 +235,19 @@ pub struct HotShared {
     pub tracing: AtomicBool,
     /// The hot thread's kernel thread id, once it runs: the controller schedules it (§5.6).
     pub tid: AtomicI32,
+    /// When the controller last changed the control word, in nanoseconds after `base`. A
+    /// (re)start counts from the moment it was asked for: a hot thread that gets to it late was
+    /// blind in between, and the trigger has to know (ADR 0011).
+    asked_ns: AtomicU64,
+    base: Instant,
+}
+
+impl HotShared {
+    /// When the controller last asked for a change.
+    fn asked_at(&self) -> Option<Instant> {
+        self.base
+            .checked_add(Duration::from_nanos(self.asked_ns.load(Ordering::Acquire)))
+    }
 }
 
 /// Why the hot thread stopped watching on its own.
@@ -356,10 +369,13 @@ pub fn run(mut h: Hot) {
                 h.capture.set_shm(profile.shm);
                 trigger.set_cfg(profile.trigger);
                 let now = Instant::now();
+                // From when it was asked for: if this thread got to it late, the time in between
+                // was blind, and a color found now may have come after the request.
+                let asked = h.shared.asked_at().map_or(now, |t| t.min(now));
                 match (was_armed, ctl.armed) {
                     (_, false) => trigger.stop(),
-                    (false, true) => trigger.start(now),  // a manual Start
-                    (true, true) => trigger.restart(now), // moved, profile swapped, back in front
+                    (false, true) => trigger.start(asked),  // a manual Start
+                    (true, true) => trigger.restart(asked), // moved, profile swapped, back in front
                 }
                 if ctl.armed && !ctl.gate {
                     trigger.pause();
@@ -534,6 +550,8 @@ impl HotHandle {
             dropped: AtomicU64::new(0),
             tracing: AtomicBool::new(false),
             tid: AtomicI32::new(0),
+            asked_ns: AtomicU64::new(0),
+            base: Instant::now(),
         });
         let (events, consumer) = rtrb::RingBuffer::new(EVENT_RING);
         let (preview, preview_out) = triple_buffer::TripleBuffer::new(&Preview::default()).split();
@@ -582,6 +600,12 @@ impl HotHandle {
 
     /// Changes the control word and wakes the hot thread.
     pub fn update(&self, f: impl Fn(Control) -> Control) -> Control {
+        // Stamped before the change is published, so the hot thread that sees the change also sees
+        // this time (or a later one's).
+        let asked = Instant::now().saturating_duration_since(self.shared.base);
+        self.shared
+            .asked_ns
+            .store(u64::try_from(asked.as_nanos()).unwrap_or(u64::MAX), Ordering::Release);
         let c = self.shared.control.update(f);
         if let Some(t) = &self.thread {
             t.thread().unpark();

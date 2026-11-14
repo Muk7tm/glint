@@ -28,7 +28,7 @@ use x11rb::wrapper::ConnectionExt as _;
 const GREEN: u32 = 0x3B_D1_6F;
 
 struct Stage {
-    _x: Xvfb,
+    x: Xvfb,
     conn: RustConnection,
     clicks: u32,
     color: u32,
@@ -84,7 +84,7 @@ impl Stage {
         let injector = Injector::new(b, root, caps.xtest_opcode, compiled.action).unwrap();
         let (hot, events, _preview) = HotHandle::spawn(Box::new(capture), injector, compiled).unwrap();
         Some(Self {
-            _x: x,
+            x,
             conn,
             clicks,
             color,
@@ -116,6 +116,24 @@ impl Stage {
             }
         }
         (press, release)
+    }
+
+    /// Freezes (`STOP`) or thaws (`CONT`) the X server: every read the hot thread sends waits.
+    fn freeze_server(&self, signal: &str) {
+        let status = std::process::Command::new("kill")
+            .args([format!("-{signal}"), self.x.pid().to_string()])
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    /// The possible misses the hot thread has reported since the last call.
+    fn maybe_missed(&mut self) -> u32 {
+        let mut n = 0;
+        while let Ok(e) = self.events.pop() {
+            n += u32::from(matches!(e, HotEvent::MaybeMissed { .. }));
+        }
+        n
     }
 
     fn stops(&mut self) -> Vec<StopReason> {
@@ -174,6 +192,34 @@ fn starting_while_the_color_shows_waits_for_it_to_leave() {
     s.hot.set_gate(true);
     assert_eq!(s.presses(100), (0, 0));
     assert!(s.stops().is_empty());
+}
+
+#[test]
+fn a_restart_the_hot_thread_reaches_late_counts_the_delay_as_blind() {
+    // The hot thread is stuck in a read when the controller asks for a restart, and the color
+    // shows up before the thread gets there. The restart counts from when it was asked for, so the
+    // time in between was blind: the color may have come after a long enough absence to deserve
+    // a click. It's reported, never clicked, and never taken for one that was already there
+    // (ADR 0011).
+    let mut profile = Profile::new("test");
+    profile.trigger.rearm_absent_ms = 100;
+    let Some(mut s) = Stage::new(profile) else { return };
+    s.hot.start(s.origin, true);
+    assert_eq!(s.presses(200), (0, 0)); // absent long enough: armed
+    s.maybe_missed();
+    s.freeze_server("STOP");
+    // A Balanced check every 0.5 ms: by now the thread waits on a read.
+    std::thread::sleep(Duration::from_millis(10));
+    s.hot.restart(s.origin);
+    std::thread::sleep(Duration::from_millis(250));
+    s.freeze_server("CONT");
+    // The read sent before the restart comes back first, with the color still absent; 20 ms of
+    // watched absence can't re-arm under a 100 ms Gone after.
+    std::thread::sleep(Duration::from_millis(20));
+    s.show(true);
+    assert_eq!(s.presses(200), (0, 0));
+    assert_eq!(s.maybe_missed(), 1);
+    assert!(s.hot.control().armed, "no self-stop");
 }
 
 #[test]

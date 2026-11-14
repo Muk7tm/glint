@@ -226,27 +226,30 @@ impl Trigger {
         self.cfg = cfg;
     }
 
-    /// A manual Start at `now`: the Start button, the hotkey, a `start` request or
+    /// A manual Start, asked for at `asked`: the Start button, the hotkey, a `start` request or
     /// `--start-on-launch`. Watching begins latched, so the color has to be seen absent before
-    /// anything can fire (R7, ADR 0007), unless `fire_if_present_on_start` is on. Does nothing
-    /// while already started.
-    pub fn start(&mut self, now: Instant) {
+    /// anything can fire (R7, ADR 0007), unless `fire_if_present_on_start` is on. A first check
+    /// that comes later than the check gap after `asked` was blind (§5.5). Does nothing while
+    /// already started.
+    pub fn start(&mut self, asked: Instant) {
         if self.phase == Phase::Stopped {
             self.phase = if self.cfg.fire_if_present_on_start {
                 Phase::Idle
             } else {
-                Phase::Latched(Latch::began(now))
+                Phase::Latched(Latch::began(asked))
             };
         }
     }
 
-    /// Watching restarts cleanly at `now`: the target moved or was resized, the monitors changed,
-    /// the profile was swapped, or the target window came back to the front. It begins latched with
-    /// a fresh absence count whatever the color is doing. Does nothing while stopped, so only a
-    /// manual Start ever starts watching, including after a safety stop (ADR 0007).
-    pub fn restart(&mut self, now: Instant) {
+    /// Watching restarts cleanly, as asked for at `asked`: the target moved or was resized, the
+    /// monitors changed, the profile was swapped, or the target window came back to the front. It
+    /// begins latched with a fresh absence count whatever the color is doing, and a first check
+    /// that comes later than the check gap after `asked` was blind (§5.5). Does nothing while
+    /// stopped, so only a manual Start ever starts watching, including after a safety stop
+    /// (ADR 0007).
+    pub fn restart(&mut self, asked: Instant) {
         if self.phase != Phase::Stopped {
-            self.phase = Phase::Latched(Latch::began(now));
+            self.phase = Phase::Latched(Latch::began(asked));
         }
     }
 
