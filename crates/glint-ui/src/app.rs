@@ -18,6 +18,7 @@ use crate::bind::{self, Fields};
 
 mod engine;
 mod range;
+mod sync;
 use crate::client::{FromEngine, Link};
 use crate::keys::{self, Resolver};
 
@@ -38,6 +39,8 @@ pub struct App {
     offline: String,
     /// The active profile and the settings, as the engine has them (defaults until it says).
     profile: Profile,
+    /// Follows changes to the profile made elsewhere, so an edit here never undoes them.
+    sync: sync::ProfileSync,
     settings: Settings,
     state: StateSnapshot,
     /// The engine's display is XWayland.
@@ -87,6 +90,7 @@ impl App {
             starting: true,
             offline: "Starting Glint's engine…".into(),
             profile: Profile::default(),
+            sync: sync::ProfileSync::default(),
             settings: Settings::default(),
             state: StateSnapshot::default(),
             xwayland: false,
@@ -219,15 +223,12 @@ impl App {
                 self.xwayland = xwayland;
                 self.starting = false;
                 self.last_geometry = None;
-                for request in [
-                    self.subscription(LIVE_HZ),
-                    Request::GetState,
-                    Request::GetProfile { name: None },
-                    Request::GetSettings,
-                    Request::ListProfiles,
-                ] {
-                    self.link.send(request);
-                }
+                self.sync.reset();
+                self.link.send(self.subscription(LIVE_HZ));
+                self.link.send(Request::GetState);
+                self.fetch_profile();
+                self.link.send(Request::GetSettings);
+                self.link.send(Request::ListProfiles);
             }
             FromEngine::Disconnected(why) => {
                 self.connected = false;
@@ -240,6 +241,20 @@ impl App {
         self.refresh();
     }
 
+    /// Asks the engine for the active profile.
+    fn fetch_profile(&mut self) {
+        self.sync.fetch();
+        self.link.send(Request::GetProfile { name: None });
+    }
+
+    /// Sends `profile` as the active profile.
+    fn put_profile(&mut self, profile: Profile) {
+        self.sync.edit();
+        self.link.send(Request::SetProfile {
+            profile: Box::new(profile),
+        });
+    }
+
     fn on_event(&mut self, event: Event) {
         match event {
             Event::State(s) => {
@@ -248,14 +263,20 @@ impl App {
                     self.toast(&why, Tone::Warning);
                 }
                 if s.profile != self.state.profile && !s.profile.is_empty() {
-                    self.link.send(Request::GetProfile { name: None });
                     self.link.send(Request::ListProfiles);
+                }
+                // A change made elsewhere: another profile, an import, or the picked window.
+                if self.sync.changed(s.revision) {
+                    self.fetch_profile();
                 }
                 self.state = s;
             }
+            Event::ProfileApplied { rev } => self.sync.applied(rev),
             Event::Profile { profile } => {
-                self.profile = *profile;
-                self.classify_range();
+                if self.sync.arrived() {
+                    self.profile = *profile;
+                    self.classify_range();
+                }
             }
             Event::Classified { verdicts } => self.classified(&verdicts),
             Event::Palette { entries } => self.recorded(&entries),
@@ -279,7 +300,7 @@ impl App {
                 self.range.sample_to_check = false;
                 self.toast(&message, Tone::Error);
                 // What the window sent was refused: show what the engine really has.
-                self.link.send(Request::GetProfile { name: None });
+                self.fetch_profile();
                 self.link.send(Request::GetSettings);
             }
             Event::Warning { message, .. } => self.toast(&message, Tone::Warning),
@@ -421,9 +442,7 @@ impl App {
             profile.action = self.profile.action.clone();
         }
         if profile != self.profile {
-            self.link.send(Request::SetProfile {
-                profile: Box::new(profile.clone()),
-            });
+            self.put_profile(profile.clone());
             self.profile = profile;
             self.classify_range();
         }

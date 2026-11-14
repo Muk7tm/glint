@@ -317,6 +317,69 @@ fn watching_and_clicking_through_the_socket() {
     assert!(!engine.socket.exists());
 }
 
+/// The window keeps its copy of the profile by the engine's revisions (§10; the window's
+/// `ProfileSync`). Its own change is answered with the revision it became before any state names
+/// that revision. Another client's change under the same name reaches it only as a newer one.
+#[test]
+fn a_profile_change_is_answered_before_its_state_is_broadcast() {
+    let Some(mut engine) = Engine::start() else { return };
+    let mut window = engine.client();
+    let mut ctl = engine.client();
+    let Event::State(s) = window.call(Request::GetState, WAIT).unwrap() else {
+        panic!()
+    };
+    let before = s.revision;
+
+    let id = window
+        .send(Request::SetProfile {
+            profile: Box::new(green_profile()),
+        })
+        .unwrap();
+    let rev = loop {
+        let e = window.next_event(WAIT).unwrap();
+        match e.body {
+            Event::ProfileApplied { rev } if e.id == Some(id) => break rev,
+            Event::State(s) => assert!(s.revision <= before, "a state named the change before its reply: {s:?}"),
+            event => assert!(e.id.is_none(), "{event:?}"),
+        }
+    };
+    assert!(rev > before);
+    let state = loop {
+        if let Event::State(s) = window.next_event(WAIT).unwrap().body {
+            break s;
+        }
+    };
+    assert_eq!(state.revision, rev);
+
+    // The same profile changed elsewhere, as `glint-ctl profile import` does: the name stays.
+    let mut imported = green_profile();
+    imported.target.offset.y = 18;
+    assert!(matches!(
+        ctl.call(
+            Request::SetProfile {
+                profile: Box::new(imported)
+            },
+            WAIT
+        )
+        .unwrap(),
+        Event::ProfileApplied { rev: r } if r == rev + 1
+    ));
+    let state = loop {
+        match window.next_event(WAIT).unwrap().body {
+            Event::State(s) => break s,
+            event => assert!(!matches!(event, Event::ProfileApplied { .. }), "{event:?}"),
+        }
+    };
+    assert_eq!((state.profile.as_str(), state.revision), ("Green", rev + 1));
+    assert!(matches!(
+        window.call(Request::GetProfile { name: None }, WAIT).unwrap(),
+        Event::Profile { profile } if profile.target.offset.y == 18
+    ));
+
+    assert!(matches!(window.call(Request::Quit, WAIT).unwrap(), Event::Bye));
+    assert!(engine.wait().success());
+}
+
 #[test]
 fn starting_while_present_waits_and_sigterm_exits_cleanly() {
     let Some(mut engine) = Engine::start() else { return };

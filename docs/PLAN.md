@@ -578,6 +578,8 @@ Hotkeys live in the engine, so they keep working with the UI closed, which is wh
 
 **Rates and backpressure.** Telemetry is sent at most 10 times a second and the live swatch at most 20 times a second, and only while a UI is subscribed and visible. Each client has an outbound queue of 256 messages; when it fills, the oldest telemetry and live messages are dropped, and the controller never blocks. The hot thread is three hops away from any socket (ring → telemetry thread → controller), so no client can ever slow it down.
 
+**Order and revisions.** The engine answers each client's requests in order, and a request's reply goes out before any broadcast the request causes. Every change of the active profile raises the revision in `state`, whoever made it: a `set_profile` from any client, `use_profile`, or the engine itself when a window pick names the profile's window. The UI sends whole profiles built on its copy, so it follows the revision, or its next edit would undo a change made elsewhere. A `profile_applied {rev}` reply names its own change. A newer revision in `state` is someone else's, and the UI fetches the profile again. It ignores a fetched profile if it sent a change after asking, because the engine applies that change last.
+
 **Versioning.** `protocol` is an integer. Adding fields or message types keeps the number; breaking changes bump it. On a mismatch the UI offers **Restart engine**.
 
 **Debugging by hand**

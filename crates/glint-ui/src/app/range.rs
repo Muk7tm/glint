@@ -236,9 +236,7 @@ impl App {
 
     /// Sends `p` as the profile, shows it, and asks for the strips again.
     pub(super) fn send_profile(&mut self, p: Profile) {
-        self.link.send(Request::SetProfile {
-            profile: Box::new(p.clone()),
-        });
+        self.put_profile(p.clone());
         self.profile = p;
         self.refresh();
         self.classify_range();
