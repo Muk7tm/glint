@@ -43,6 +43,9 @@ pub use trace::TraceTap;
 
 /// How long the lab waits for the engine.
 pub(crate) const WAIT: Duration = Duration::from_secs(5);
+/// How long a new engine may take to listen. It builds its color table first (16,777,216 entries), which on
+/// a busy machine, or at idle priority, can take far longer than usual; no scenario times the start.
+pub(crate) const START_WAIT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 pub enum LabError {

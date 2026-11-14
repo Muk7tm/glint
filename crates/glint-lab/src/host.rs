@@ -13,7 +13,7 @@ use rustix::process::{Pid, Signal, kill_process};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::ConnectionExt as _;
 
-use crate::{LabError, WAIT, engine_err, x};
+use crate::{LabError, START_WAIT, WAIT, engine_err, x};
 
 /// An engine the lab can drive.
 pub trait Host {
@@ -71,7 +71,7 @@ pub trait Host {
 /// Waits until `child` accepts connections on `socket`. A stale socket file from a killed
 /// engine refuses them, so this connects rather than looking for the file.
 fn wait_until_listening(child: &mut Child, socket: &Path, glintd: &Path) -> Result<(), LabError> {
-    let deadline = Instant::now() + WAIT;
+    let deadline = Instant::now() + START_WAIT;
     loop {
         if let Some(status) = child.try_wait().map_err(x)? {
             return Err(LabError::Engine(if status.code() == Some(3) {
