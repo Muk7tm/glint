@@ -75,3 +75,5 @@ corrected the same day).
   the purple comes back after the shield, Glint presses again, which catches some of them. The report to the
   owner says so.
 - An Area pattern reads 63×63 px per check, about 16 KB, through shared memory.
+- The owner played with these settings on 2026-11-14 (Area, *Must last* 60 ms, *Gone after* 100 ms, offset
+  Y 18) and reported that the problem seems fixed.

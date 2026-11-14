@@ -176,7 +176,8 @@ listed in §13 (written as their content appears).
   it blocks 28–29 of the 40 balls with known arrival times, against 21–24 for the owner's 3×3 profile; the rest
   arrive too long after the highlight for any press at the highlight. Tests: the pattern table, the bindings,
   and the lab's `basic` and `boundary-noise` with Area. Checked in a window on Xvfb. Applied to the owner's
-  profile on 2026-11-14 at 13:01: Area, *Must last* 60 ms, *Gone after* 100 ms, offset Y 18.)*
+  profile on 2026-11-14 at 13:01: Area, *Must last* 60 ms, *Gone after* 100 ms, offset Y 18. The owner played
+  with them, unchanged, and reported that the problem seems fixed.)*
 - **Exit:** the v1.0 definition of done below. *(Met 2026-11-14: every row of the table below.)*
 
 **Definition of done for v1.0:** every lab scenario passes 10,000 trials on the owner's machine (ADR 0021);
