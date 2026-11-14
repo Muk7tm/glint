@@ -200,8 +200,8 @@ stuck-input test passes (SIGTERM, SIGINT, panic, SIGKILL + restart).
 
 - [x] A horizontal window that doesn't take much space (ADR 0027). *(The cards sit two to a row: Start beside
   GAME WINDOW, COLOR beside CLICKING; *More options* adds COLOR RANGE beside DETECTION, then ENGINE. The window
-  is 780 px wide, and its height follows the cards: 542 px with *More options* closed, 960 px at most with it
-  open, past which the cards scroll. Only the layout changed: the cards, the style and the behavior are as
+  is 780 × 542 px, and keeps that height when *More options* opens: its cards scroll (owner request; a first
+  version grew the window to 960 px). Only the layout changed: the cards, the style and the behavior are as
   before. The owner chose two columns over three (1200 px) and a card-sized Start button. Checked on Xvfb with
-  Openbox: opening closed and open, opening and closing *More options*, widening, maximizing, and the close
-  dialog.)*
+  Openbox: opening closed and open, opening and closing *More options*, scrolling, widening, maximizing, and
+  the close dialog.)*

@@ -35,10 +35,10 @@ export component AppWindow inherits Window {
     // Asks the Rust side to make the window this size (ADR 0027).
     callback fit(length, length);
 
-    // The height that shows every card without scrolling, up to 960 px so the window stays on a
-    // 1080 px screen; past that it scrolls. The window follows it: when it's first laid out, when
-    // *More options* opens or closes, and when a warning appears or goes.
-    out property <length> fit-height: min(960px, Theme.gap-m * 3 + cards.preferred-height + footer.preferred-height + (Ui.banner != "" ? 28px : 0px));
+    // The height that shows the main cards and the *More options* line without scrolling; the More
+    // options cards scroll below them, so opening them doesn't change it (ADR 0027). The window
+    // follows it: when it's first laid out, and when a warning appears or the cards' text rewraps.
+    out property <length> fit-height: Theme.gap-m * 3 + main.preferred-height + footer.preferred-height + (Ui.banner != "" ? 28px : 0px);
     changed fit-height => {
         // Until the window manager gives the window its first size, Slint reports the minimum; the
         // preferred size applies then.
@@ -90,34 +90,38 @@ export component AppWindow inherits Window {
                 alignment: start;
                 // Two cards to a row, sharing its height (ADR 0027): starting beside the game
                 // window, then the color beside the clicking. Each More options card sits under
-                // the main card it belongs with.
-                HorizontalLayout {
+                // the main card it belongs with. The window's height fits the part always shown;
+                // the More options cards below it scroll.
+                main := VerticalLayout {
                     spacing: Theme.gap-s;
-                    HeroCard {
-                        width: root.column;
+                    HorizontalLayout {
+                        spacing: Theme.gap-s;
+                        HeroCard {
+                            width: root.column;
+                        }
+
+                        WindowCard {
+                            width: root.column;
+                        }
                     }
 
-                    WindowCard {
-                        width: root.column;
-                    }
-                }
+                    HorizontalLayout {
+                        spacing: Theme.gap-s;
+                        ColorCard {
+                            width: root.column;
+                        }
 
-                HorizontalLayout {
-                    spacing: Theme.gap-s;
-                    ColorCard {
-                        width: root.column;
+                        ClickingCard {
+                            width: root.column;
+                        }
                     }
 
-                    ClickingCard {
-                        width: root.column;
-                    }
-                }
-
-                Disclosure {
-                    text: "More options";
-                    open <=> Ui.more-open;
-                    toggled => {
-                        Actions.more-toggled();
+                    Disclosure {
+                        text: "More options";
+                        open <=> Ui.more-open;
+                        toggled => {
+                            Actions.more-toggled();
+                        }
                     }
                 }
 

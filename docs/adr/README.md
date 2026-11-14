@@ -31,7 +31,7 @@ plan also updates the affected plan section in the same commit.
 | [0024](0024-sleep-without-spinning.md) | The hot loop sleeps to each check's deadline, without spinning | Accepted | §5.6, §19, A.2 |
 | [0025](0025-area-pattern-and-must-last.md) | The Area pattern and *Must last*, from the owner's training recording | Accepted (from the owner's recording and request) | §5.3, §5.5, §12.4, §16 |
 | [0026](0026-whole-evidence-in-the-lab.md) | The lab's evidence must be whole: dropped engine records are marked, and the lab reads every connection | Accepted | §10, §16 |
-| [0027](0027-two-column-window.md) | The window shows its cards in two columns, and its height follows them | Accepted (owner request) | §12.2, §12.3, §12.4, §12.8 |
+| [0027](0027-two-column-window.md) | The window shows its cards in two columns, and *More options* scrolls | Accepted (owner request) | §12.2, §12.3, §12.4, §12.8 |
 
 ## Template
 
