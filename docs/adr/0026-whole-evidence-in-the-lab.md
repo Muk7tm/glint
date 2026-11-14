@@ -78,7 +78,8 @@ decision by the engine:
 
 - A run can still fail under heavy load, but only for a stated reason: a wrong click, an unexplained miss, or
   incomplete evidence. It never passes on incomplete evidence, and never fails on a properly reported miss.
-- The overnight results stand where they passed. The failed scenarios run again with this build.
+- The overnight results stand where they passed. The failed scenarios run again with this build. They did,
+  with 5fec163, and all six passed 10,000 trials (MEASUREMENTS.md §14).
 - Side by side at idle priority is a fair test of correctness, but not of how often Glint clicks.
   `arm-while-present` reported 37% of its appearances as possible misses there. On the owner's desktop, with
   real-time priority, Phase 6's run clicked 10,000 of 10,000.

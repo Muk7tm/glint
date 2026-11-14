@@ -325,13 +325,25 @@ impl Report {
                 ),
             );
         }
-        for (_, cause) in &self.self_stops {
-            let expected = if Some(*cause) == self.expect_stop {
+        // One line per cause: `feedback` asks for a stop in every round, 10,000 of them.
+        let mut stops: Vec<(StopCause, usize)> = Vec::new();
+        for &(_, cause) in &self.self_stops {
+            match stops.iter_mut().find(|(c, _)| *c == cause) {
+                Some((_, n)) => *n += 1,
+                None => stops.push((cause, 1)),
+            }
+        }
+        for (cause, n) in stops {
+            let expected = if Some(cause) == self.expect_stop {
                 "expected"
             } else {
                 "unexpected"
             };
-            line("stopped", format!("the engine stopped itself: {cause:?} ({expected})"));
+            let times = if n > 1 { format!(" · {n} times") } else { String::new() };
+            line(
+                "stopped",
+                format!("the engine stopped itself: {cause:?} ({expected}){times}"),
+            );
         }
         if self.after_stop > 0 {
             line(
@@ -840,6 +852,29 @@ mod tests {
         assert_eq!(run_cfg(&cfg, &spec, &[300], &[]).missed, 1);
         // Without the option, the click at the start is extra (arm-while-present).
         assert_eq!(run(&spec, &[0, 300], &[]).extra, 1);
+    }
+
+    #[test]
+    fn the_report_counts_self_stops_by_cause() {
+        let t0 = Instant::now();
+        let mut r = Report::named("feedback");
+        r.expect_stop = Some(StopCause::SafetyStop);
+        r.self_stops = vec![
+            (t0, StopCause::SafetyStop),
+            (t0, StopCause::TargetGone),
+            (t0, StopCause::SafetyStop),
+            (t0, StopCause::SafetyStop),
+        ];
+        let s = r.summary();
+        let stopped: Vec<&str> = s.lines().filter(|l| l.starts_with("stopped")).collect();
+        assert_eq!(
+            stopped,
+            [
+                "stopped     the engine stopped itself: SafetyStop (expected) · 3 times",
+                "stopped     the engine stopped itself: TargetGone (unexpected)",
+            ]
+        );
+        assert!(!r.passed(), "an unexpected stop still fails the run");
     }
 
     #[test]

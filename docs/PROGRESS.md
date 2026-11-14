@@ -7,7 +7,8 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
 
 - **Active phase:** Phase 7 (packaging and release), started 2026-11-13. v1.0 is checked on the owner's
   machine, nothing is published, and `install.sh` installs Glint (owner decisions, ADR 0021). Items 1–4
-  are done. Left: the owner's 60-minute soak on the real desktop, and the 10,000-trial runs.
+  are done, and every lab scenario has passed 10,000 trials (MEASUREMENTS.md §14). Left: the owner's
+  60-minute soak on the real desktop.
 - Phase 6 is complete: the exit run passed on 2026-11-13 (`glint-lab basic --count 10000 --real-desktop`:
   10,000 clicks for 10,000 appearances, 0 extra, 0 missed, p50 0.44 ms, p99 0.72 ms, max 1.05 ms, no X server
   stall; MEASUREMENTS.md §11). Phases 4 and 5 are complete.
@@ -20,6 +21,11 @@ pass. Deviations from the plan are listed in `docs/adr/README.md`.
     misses.
   - It now takes reports from the moment the color was present again, with a unit test. No extra click
     appeared in any of these runs.
+- **Fixed (2026-11-14):** the window undid profile changes made elsewhere. It sends whole profiles built on
+  its copy, and fetched the profile again only when its name changed. So its next edit put back the old
+  settings after `glint-ctl profile import` under the same name, and the old game window after a window pick.
+  It now follows the profile's revision (PLAN §10). Tests in the window and the engine, and both cases checked
+  in Xvfb with the old and the fixed window (commit 0fa84ea).
 - Glint copies Pulse's Slint files and never changes Pulse (ADR 0012).
 - Glint is MIT since 2026-11-13 (owner decision; the About dialog shows AboutSlint, ADR 0016).
   All 17 lab scenarios pass in CI (https://github.com/Muk7tm/glint/actions/runs/43426780742) and at full count
@@ -164,7 +170,8 @@ listed in §13 (written as their content appears).
   once for each of 46 appearances and never on a flash. Against the game's rules (a block lasts about 0.75 s),
   it blocks 28–29 of the 40 balls with known arrival times, against 21–24 for the owner's 3×3 profile; the rest
   arrive too long after the highlight for any press at the highlight. Tests: the pattern table, the bindings,
-  and the lab's `basic` and `boundary-noise` with Area. Checked in a window on Xvfb.)*
+  and the lab's `basic` and `boundary-noise` with Area. Checked in a window on Xvfb. Applied to the owner's
+  profile on 2026-11-14 at 13:01: Area, *Must last* 60 ms, *Gone after* 100 ms, offset Y 18.)*
 - **Exit:** the v1.0 definition of done below.
 
 **Definition of done for v1.0:** every lab scenario passes 10,000 trials on the owner's machine (ADR 0021);
@@ -177,8 +184,8 @@ stuck-input test passes (SIGTERM, SIGINT, panic, SIGKILL + restart).
 | Check | State |
 | --- | --- |
 | Response p99 ≤ 2 ms and max ≤ 10 ms, no compositor | Met in Phase 6's run: p99 0.72 ms, max 1.05 ms (MEASUREMENTS.md §11). The pacing has changed since (ADR 0024), so the soak measures it again. |
-| 0 extra and 0 missed | 0 in every run so far. The soak and the 10,000-trial runs settle it. |
+| 0 extra and 0 missed | 0 in every run, including all 20 scenarios at 10,000 trials. The soak checks it on the real desktop. |
 | The window's CPU about 0% while hidden | Met: 0.00–0.03% (MEASUREMENTS.md §12). |
 | The engine's CPU at Balanced, measured (≤ 10%) | 1.8% of one core on Xvfb (MEASUREMENTS.md §12). The soak measures it on the real desktop. |
-| Stuck-input tests | Met in every test run: `signals_stop_gracefully` (SIGTERM, SIGINT, SIGHUP), `panic_releases_input`, `starting_while_present_waits_and_sigterm_exits_cleanly`, `release_all_works_without_an_engine`, and the lab's `kill-mid-press` (SIGKILL, then a restart). |
-| Every lab scenario at 10,000 trials | First pass overnight on 2026-11-14 (MEASUREMENTS.md §14): 12 passed, none sent an extra click, and every failure was a gap in the lab's evidence, now closed (ADR 0026). `live-edit` and `fire-on-start` passed on rerun. Left to run with the new build: `fade`, `focus`, `ui-overlap`, `action-matrix`, `kill-mid-press` and `feedback`. |
+| Stuck-input tests | Met in every test run: `signals_stop_gracefully` (SIGTERM, SIGINT, SIGHUP), `panic_releases_input`, `starting_while_present_waits_and_sigterm_exits_cleanly`, `release_all_works_without_an_engine`, and the lab's `kill-mid-press` (SIGKILL, then a restart: at 10,000 trials, the restarted engine released the held input after every kill). |
+| Every lab scenario at 10,000 trials | Met (MEASUREMENTS.md §14): all 20 scenarios passed, and no run sent an extra click. 12 passed overnight on 2026-11-14, and `live-edit` and `fire-on-start` on rerun. The other six failed for gaps in the lab's evidence, not wrong clicks; with the gaps closed (ADR 0026), `fade`, `focus`, `ui-overlap`, `action-matrix`, `kill-mid-press` and `feedback` passed with 5fec163. |

@@ -563,6 +563,29 @@ core.
 The `kill-mid-press` rerun passed every stuck-input check: each of its 9,996 kills left the input held, and
 the restarted engine released it.
 
+**Reruns with 5fec163 (ADR 0026), the six failed scenarios at once at idle priority, from 08:22:**
+
+| Scenario | Appearances | Clicks | Reported | Response p50 / p99 / max | Hours | Verdict |
+| --- | --- | --- | --- | --- | --- | --- |
+| `action-matrix` (345 rounds of its 29 cases) | 10,005 | 10,005 | 0 | | 1.3 | PASS |
+| `kill-mid-press` | 10,000 | 10,000 | 0 | | 2.8 | PASS |
+| `fade` | 10,000 | 10,000 | 0 | 0.35 / 4.20 / 24.06 ms | 3.0 | PASS |
+| `focus` (10,000 focus changes away and back) | 20,000 | 18,331 | 1,669 | 0.38 / 3.16 / 23.09 ms | 3.1 | PASS |
+| `feedback` | 44,148 | 30,013 | 4,135 | 0.42 / 1.67 / 18.30 ms | 4.4 | PASS |
+| `ui-overlap` (10,000 covers and uncovers) | 10,000 | 9,999 | 1 | 0.38 / 3.53 / 25.19 ms | 4.7 | PASS |
+
+- `focus` and `ui-overlap` ran 3.1 and 4.7 hours, as long as the overnight runs that lost their control
+  connection, and kept it to the end.
+- `kill-mid-press`: every kill left the input held (the left button 5,000 times, Ctrl+a 5,000 times), and the
+  restarted engine released it every time.
+- `feedback`: every one of the 10,000 rounds ended in its safety stop, 150–1,879 ms after the round's first
+  click (151 ms at the median). No round needed ending after 5 s.
+- `action-matrix`: for holds of 0, 10 and 50 ms the server saw 0–2, 8–13 and 49–53 ms between press and release.
+
+Before these, a 600-round `focus` run compared the two builds on the same machine: c9c6982 lost its control
+connection after 663 s ("engine: unexpected end of file"), and 5fec163 passed in 665 s (1,200 appearances,
+979 clicks, 221 reported).
+
 These rates of reported possible misses (up to 37%) come from the starvation. On the owner's desktop, with
 real-time priority, Phase 6's run clicked 10,000 of 10,000 (§11).
 
